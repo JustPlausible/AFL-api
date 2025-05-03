@@ -1,0 +1,43 @@
+# Byte-compiled / cache files
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Playwright downloads
+playwright/.cache/
+.playwright/
+
+# Environment + config
+.env
+.env.*
+
+# VS Code config
+.vscode/
+
+# Docker logs / temp
+*.log
+*.pid
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Python virtualenvs
+.venv/
+env/
+venv/
+
+# Test results
+htmlcov/
+.coverage
+.pytest_cache/
+
+# Scraped or output data
+data/*.json
+
+# Optional: compiled docs or builds
+dist/
+build/
+
+# Temp or old files
+_old/
