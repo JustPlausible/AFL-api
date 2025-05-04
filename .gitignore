@@ -35,6 +35,7 @@ htmlcov/
 
 # Scraped or output data
 data/*.json
+data/*.db
 
 # Optional: compiled docs or builds
 dist/
