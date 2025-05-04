@@ -4,8 +4,13 @@ from utils.log import log
 import json
 import re
 
-def scrape_club_players(club_name: str, url: str) -> list[dict]:
-    log(f"🌐 Scraping squad for: {club_name.title()}", "INFO")
+def scrape_club_players(club: dict) -> list[dict]:
+    club_name = club["name"]
+    slug = club["slug"]
+    url = club["squad_url"]
+    website = club["website"]
+
+    log(f"🌐 Scraping squad for: {club_name}", "INFO")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -26,13 +31,19 @@ def scrape_club_players(club_name: str, url: str) -> list[dict]:
         for card in cards:
             link = card.query_selector("a.player-item")
             href = link.get_attribute("href") if link else None
-            profile_url = f"https://www.{club_name.lower()}fc.com.au{href}" if href else None
+            profile_url = f"{website}{href}" if href else None
 
             first_name_el = card.query_selector("h1.player-item__name")
             last_name_el = card.query_selector(".player-item__last-name")
             position_el = card.query_selector(".player-item__position")
             guernsey_el = card.query_selector(".player-item__jumper-number")
             id_div = card.query_selector(".js-player-image")
+
+            image_el = card.query_selector("img.picture__img")
+            raw_image_url = image_el.get_attribute("src") if image_el else None
+            image_url = f"https:{raw_image_url.split('?')[0]}" if raw_image_url else None
+            if image_url and image_url.startswith("//"):
+                image_url = "https:" + image_url
 
             first_name = first_name_el.inner_text().split()[0].strip() if first_name_el else ""
             last_name = last_name_el.inner_text().strip() if last_name_el else ""
@@ -45,26 +56,27 @@ def scrape_club_players(club_name: str, url: str) -> list[dict]:
             players.append({
                 "full_name": full_name,
                 "nickname": full_name,
-                "club": club_name.title(),
+                "club": club_name,
                 "guernsey": guernsey,
                 "position": position,
                 "profile_url": profile_url,
+                "image_url": image_url,
                 "afl_id": int(afl_id) if afl_id else None
             })
 
         browser.close()
         return players
 
-def save_club_players_to_json(club_name: str, url: str, skip_existing=False):
-
-    output_file = Path(f"data/players-{club_name.lower()}-raw.json")
+def save_club_players_to_json(club: dict, skip_existing=False):
+    slug = club["slug"]
+    output_file = Path(f"data/players-{slug}-raw.json")
     if skip_existing and output_file.exists():
-        log(f"Skipping {club_name.title()} (raw file exists)", "DEBUG")
+        log(f"Skipping {club['name']} (raw file exists)", "DEBUG")
         return
 
-    players = scrape_club_players(club_name, url)
+    players = scrape_club_players(club)
     output_file.parent.mkdir(parents=True, exist_ok=True)
     with output_file.open("w") as f:
         json.dump(players, f, indent=2)
 
-    log(f"✓ Saved {len(players)} players for {club_name.title()} → {output_file}", "INFO")
+    log(f"✓ Saved {len(players)} players for {club['name']} → {output_file}", "INFO")

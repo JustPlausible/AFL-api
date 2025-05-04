@@ -1,20 +1,108 @@
-# AFL Player Scraper & Enrichment Tool
+# 🏉 AFL Player Scraper & Enrichment Tool
 
-Scrapes AFL club websites and enriches player data with official AFL IDs, Champion Data IDs, and profile links.
+This project scrapes, enriches, and serves AFL player data across all clubs. It provides a FastAPI-powered JSON API and supports data persistence via SQLite for both player and API key data.
 
-## Features
+---
 
-- 🏉 Scrape club squad lists from official club websites
-- 🔍 Resolve player names to AFL.com.au profile IDs
-- 📄 Output enriched JSON files (per club)
-- 🧠 CLI interface with `--all`, `--skip-existing`, `--scrape`, `--enrich`
+## 📦 Features
 
-## Usage
+- 🌐 Scrape player data from official AFL club websites
+- 🔍 Enrich with AFL.com.au profile and Champion Data IDs
+- 🧠 Output enriched JSON files (per club)
+- 🗃 Store and serve all data via SQLite
+- 🔐 API key authentication (stored in SQLite)
+- 🧪 CLI tools for managing data and access
+- ⚙️ FastAPI server with structured routes
+
+---
+
+## 🚀 Quick Start
+
+### Prerequisites
+
+- Docker & Docker Compose installed
+- Port `9900` available on your host
+
+### 1. Clone and Run
 
 ```bash
-# Run full scrape and enrich
-python3 src/main.py --all
+git clone https://github.com/yourname/afl-api.git
+cd afl-api/src
+docker-compose up --build
+```
 
-# Scrape or enrich individually
+---
+
+## 🧩 Commands
+
+### Run full scrape and enrich:
+
+```bash
+python3 src/main.py --all
+```
+
+### Scrape or enrich individually:
+
+```bash
 python3 src/main.py --scrape richmond
 python3 src/main.py --enrich richmond
+```
+
+---
+
+## 🔐 API Key Authentication
+
+All API routes require an `x-api-key` header.
+
+Manage your keys via:
+
+```bash
+PYTHONPATH=/app python3 scripts/manage_api_keys.py --add
+```
+
+Example request:
+
+```bash
+curl -H "x-api-key: your_key_here" http://localhost:9900/players
+```
+
+---
+
+## 📡 API Endpoints
+
+| Method | Endpoint                   | Description                      |
+|--------|----------------------------|----------------------------------|
+| GET    | `/players`                | All players                      |
+| GET    | `/players?club=RIC`       | Filter by club short code        |
+| GET    | `/players/club/richmond`  | By club slug                     |
+| GET    | `/players/{afl_id}`       | Single player by AFL ID          |
+
+---
+
+## 📁 Project Structure
+
+```
+src/
+├── api/               # FastAPI routes
+├── data/              # Scraped + enriched player data
+├── db/                # Database processing
+├── enrich/            # Enrichment helpers (AFL.com.au scraping)
+├── merge/             # Data processors
+├── scraper/           # Club scraping logic
+├── scripts/           # API key + admin CLI tools
+├── utils/             # Logging, config, database
+├── cli.py             # cli entry point (scrape + database)
+└── main.py            # api entry point
+```
+
+---
+
+## 💬 Contributing
+
+PRs welcome. Please raise an issue first if you’d like to propose a major change.
+
+---
+
+## 📄 License
+
+MIT

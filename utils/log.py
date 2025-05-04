@@ -1,6 +1,6 @@
 from datetime import datetime
 
-LOG_LEVELS = ["DEBUG", "INFO", "WARN", "ERROR"]
+LOG_LEVELS = ["DEBUG", "INFO", "WARN", "ERROR", "SUCCESS"]
 
 def log(message: str, level: str = "INFO", show_time: bool = True):
     if level not in LOG_LEVELS:
@@ -11,6 +11,7 @@ def log(message: str, level: str = "INFO", show_time: bool = True):
         "INFO": "ℹ️ ",
         "WARN": "⚠️ ",
         "ERROR": "❌",
+        "SUCCESS": "✅"
     }.get(level, "")
 
     timestamp = datetime.now().strftime("%H:%M:%S") if show_time else ""
