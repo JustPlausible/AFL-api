@@ -148,11 +148,16 @@ def save_injuries_to_db(data: dict, conn: sqlite3.Connection):
             injury TEXT,
             return_info TEXT,
             updated TEXT,
+            first_updated TEXT,
             source TEXT,
             scraped_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            current INTEGER DEFAULT 1,
             UNIQUE(afl_id, updated)
         )
     """)
+
+    # Track all currently listed injuries
+    currently_listed_ids = set()
 
     for team in data["teams"]:
         club = team["club"]
@@ -161,18 +166,21 @@ def save_injuries_to_db(data: dict, conn: sqlite3.Connection):
             if not player["afl_id"]:
                 raise ValueError(f"Missing AFL ID for player {player['name']} from {club}")
 
+            afl_id = player["afl_id"]
+            currently_listed_ids.add(afl_id)
+
             cur.execute("""
                 INSERT INTO injuries (
-                    afl_id, club, player_name, injury, return_info, updated, source, scraped_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    afl_id, club, player_name, injury, return_info, updated, first_updated, source, scraped_at, current
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
                 ON CONFLICT(afl_id, updated) DO UPDATE SET
                     club = excluded.club,
                     player_name = excluded.player_name,
                     injury = excluded.injury,
                     return_info = excluded.return_info,
-                    updated = excluded.updated,
                     source = excluded.source,
-                    scraped_at = excluded.scraped_at
+                    scraped_at = excluded.scraped_at,
+                    current = 1
             """, (
                 player["afl_id"],
                 club,
@@ -180,9 +188,19 @@ def save_injuries_to_db(data: dict, conn: sqlite3.Connection):
                 player["injury"],
                 player["return"],
                 updated,
+                updated,  # first_updated = same as updated if new
                 data["source"],
-                data["scraped_at"]
+                data["scraped_at"],
             ))
+
+    # Mark previous entries as no longer current
+    if currently_listed_ids:
+        placeholders = ",".join("?" for _ in currently_listed_ids)
+        cur.execute(f"""
+            UPDATE injuries
+            SET current = 0
+            WHERE current = 1 AND afl_id NOT IN ({placeholders})
+        """, tuple(currently_listed_ids))
 
     conn.commit()
     log(f"💾 Injury data saved for {len(data['teams'])} teams", "INFO")

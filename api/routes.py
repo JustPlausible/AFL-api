@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pathlib import Path
 import json
@@ -20,7 +20,7 @@ def get_db_connection():
 def read_root():
     return {"message": "AFL Supplemental API up and running!"}
 
-@router.get("/players")
+@router.get("/api/players")
 def get_all_players(client_label: str = Depends(verify_api_key)):
     log(f"📄 {client_label} requested full player list", "INFO")
     conn = get_db_connection()
@@ -29,7 +29,7 @@ def get_all_players(client_label: str = Depends(verify_api_key)):
     return JSONResponse(content=[dict(row) for row in players])
 
 
-@router.get("/players/{afl_id}")
+@router.get("/api/players/{afl_id}")
 def get_player_by_id(afl_id: int, client_label: str = Depends(verify_api_key)):
     log(f"🔍 {client_label} requested player by AFL ID: {afl_id}", "INFO")
     conn = get_db_connection()
@@ -42,7 +42,7 @@ def get_player_by_id(afl_id: int, client_label: str = Depends(verify_api_key)):
     return JSONResponse(content=dict(player))
 
 
-@router.get("/players/club/{club_slug}")
+@router.get("/api/players/club/{club_slug}")
 def get_players_by_club(club_slug: str, client_label: str = Depends(verify_api_key)):
     log(f"📦 {client_label} requested players for club: {club_slug.upper()}", "INFO")
     conn = get_db_connection()
@@ -54,22 +54,44 @@ def get_players_by_club(club_slug: str, client_label: str = Depends(verify_api_k
     
     return JSONResponse(content=[dict(row) for row in players])
 
-@router.get("/injuries")
-def get_all_injuries(client_label: str = Depends(verify_api_key)):
-    log(f"📄 {client_label} requested full injury list", "INFO")
+@router.get("/api/injuries")
+def get_all_injuries(
+    client_label: str = Depends(verify_api_key),
+    history: int = Query(0, description="Include all historical injuries if set to 1")
+):
+    log(f"📄 {client_label} requested full injury list (history={history})", "INFO")
     conn = get_db_connection()
-    injuries = conn.execute("SELECT * FROM injuries ORDER BY updated DESC, club, player_name").fetchall()
+
+    if history:
+        query = "SELECT * FROM injuries ORDER BY updated DESC, club, player_name"
+        injuries = conn.execute(query).fetchall()
+    else:
+        query = "SELECT * FROM injuries WHERE current = 1 ORDER BY updated DESC, club, player_name"
+        injuries = conn.execute(query).fetchall()
+
     conn.close()
     return JSONResponse(content=[dict(row) for row in injuries])
 
-@router.get("/injuries/{afl_id}")
-def get_injuries_by_id(afl_id: int, client_label: str = Depends(verify_api_key)):
-    log(f"🔍 {client_label} requested player injuries by AFL ID: {afl_id}", "INFO")
+@router.get("/api/injuries/{afl_id}")
+def get_injuries_by_id(
+    afl_id: int,
+    client_label: str = Depends(verify_api_key),
+    history: int = Query(0, description="Include all historical injuries if set to 1")
+):
+    log(f"🔍 {client_label} requested player injuries by AFL ID: {afl_id} (history={history})", "INFO")
     conn = get_db_connection()
-    player = conn.execute("SELECT * FROM injuries WHERE afl_id = ?", (afl_id,)).fetchone()
+
+    if history:
+        query = "SELECT * FROM injuries WHERE afl_id = ? ORDER BY updated DESC"
+        rows = conn.execute(query, (afl_id,)).fetchall()
+    else:
+        query = "SELECT * FROM injuries WHERE afl_id = ? AND current = 1 ORDER BY updated DESC"
+        rows = conn.execute(query, (afl_id,)).fetchall()
+
     conn.close()
 
-    if not player:
-        log(f"❌ No player found with AFL ID: {afl_id}", "WARN")
+    if not rows:
+        log(f"❌ No injury record found for AFL ID: {afl_id}", "WARN")
         raise HTTPException(status_code=404, detail="Player not found")
-    return JSONResponse(content=dict(player))
+
+    return JSONResponse(content=[dict(row) for row in rows])
