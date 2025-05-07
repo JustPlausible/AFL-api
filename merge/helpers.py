@@ -1,21 +1,46 @@
+from datetime import datetime, timezone
 import re
 import json
 from pathlib import Path
 from utils.log import log
-from enrich.afl_com import resolve_player
+#from enrich.afl_com import resolve_player
 from utils.club_lookup import get_club_by_slug
 import sqlite3
 from difflib import get_close_matches
+from utils.stats_cache import ensure_leaderboard_fresh
 from utils.dictionary import KNOWN_NICKNAMES
 
 def extract_club_player_id(url: str) -> int:
     match = re.search(r"/players/(\d+)", url)
     return int(match.group(1)) if match else None
 
+def extract_champion_id(image_url: str) -> str | None:
+    match = re.search(r"/(\d+)\.png", image_url)
+    return match.group(1) if match else None
+
+LEADERBOARD_PATH = Path("data/afl_stats_leaderboard.json")
+
+def load_leaderboard_index():
+    ensure_leaderboard_fresh(max_age_hours=24)
+
+    if not LEADERBOARD_PATH.exists():
+        log("❌ Leaderboard file not found after attempted refresh!", "ERROR")
+        return {}
+
+    with LEADERBOARD_PATH.open("r") as f:
+        leaderboard = json.load(f)
+
+    index = {}
+    for player in leaderboard:
+        champ_id = player.get("champion_data_id")
+        if champ_id:
+            index[champ_id] = {
+                "afl_id": player.get("afl_id"),
+                "afl_url": player.get("afl_url"),
+            }
+    return index
+
 def resolve_players_for_club(club_slug: str, skip_existing=False):
-    """
-    Resolves all players from a club's raw JSON file and writes enriched output.
-    """
     raw_path = Path(f"data/players-{club_slug}-raw.json")
     output_path = Path(f"data/players-{club_slug}.json")
 
@@ -30,14 +55,25 @@ def resolve_players_for_club(club_slug: str, skip_existing=False):
         log(f"[!] Missing raw file for {display_name}", "ERROR")
         return
 
+    leaderboard_index = load_leaderboard_index()
+
     with raw_path.open("r") as f:
         raw_players = json.load(f)
 
     enriched_players = []
     for player in raw_players:
-        enriched = resolve_player(player)
-        if enriched:
-            enriched_players.append(enriched)
+        champ_id = player.get("champion_data_id")
+        leaderboard_data = leaderboard_index.get(champ_id)
+
+        enriched = {
+            **player,
+            "afl_id": leaderboard_data["afl_id"] if leaderboard_data else player.get("afl_id"),
+            "afl_url": leaderboard_data["afl_url"] if leaderboard_data else None,
+            "source": "afl-leaderboard" if leaderboard_data else "fallback",
+            "resolved_at": datetime.now(timezone.utc).isoformat()
+        }
+
+        enriched_players.append(enriched)
 
     with output_path.open("w") as f:
         json.dump(enriched_players, f, indent=2)
@@ -55,6 +91,15 @@ def log_nickname_suggestion(name: str, club: str):
     with NICKNAME_SUGGESTION_FILE.open("a") as f:
         f.write(f"{club},{name}\n")
 
+SUFFIXES = {"jnr", "jr", "snr", "sr"}
+
+def clean_name(name: str) -> str:
+    """Strip suffixes like 'jnr' from names."""
+    parts = name.strip().split()
+    if parts[-1].lower().strip(".") in SUFFIXES:
+        parts = parts[:-1]
+    return " ".join(parts)
+
 def match_injury_player_to_db(name: str, club_slug: str, conn: sqlite3.Connection | None = None, db_path="data/afl_players.db") -> int | None:
     """
     Attempts to match an injury player's name to the database and return their AFL ID.
@@ -68,12 +113,16 @@ def match_injury_player_to_db(name: str, club_slug: str, conn: sqlite3.Connectio
 
     cur = conn.cursor()
 
-    name = name.strip()
+    original_name = name.strip()
+    name = clean_name(original_name)  # 🧼 Clean suffix like "jnr"
+    if name != original_name:
+        log(f"🧽 Normalised injury name: '{original_name}' → '{name}'", "DEBUG")
+
     parts = name.split()
     first_name = parts[0] if len(parts) > 1 else ""
     last_name = parts[-1] if len(parts) > 1 else name
 
-    # Exact full_name match
+    # 1️⃣ Exact full_name match
     cur.execute("""
         SELECT * FROM players
         WHERE LOWER(full_name) = LOWER(?) AND LOWER(club) = LOWER(?)
@@ -83,7 +132,7 @@ def match_injury_player_to_db(name: str, club_slug: str, conn: sqlite3.Connectio
         if close_conn: conn.close()
         return row["afl_id"]
 
-    # Exact first + last match
+    # 2️⃣ Exact first + last match
     cur.execute("""
         SELECT * FROM players
         WHERE LOWER(first_name) = LOWER(?) AND LOWER(last_name) = LOWER(?) AND LOWER(club) = LOWER(?)
@@ -93,7 +142,7 @@ def match_injury_player_to_db(name: str, club_slug: str, conn: sqlite3.Connectio
         if close_conn: conn.close()
         return row["afl_id"]
 
-    # 🔁 Nickname fallback (e.g. Lachie → Lachlan)
+    # 3️⃣ Nickname fallback
     if first_name.lower() in NICKNAME_MAP:
         alt_first = NICKNAME_MAP[first_name.lower()]
         cur.execute("""
@@ -105,7 +154,7 @@ def match_injury_player_to_db(name: str, club_slug: str, conn: sqlite3.Connectio
             if close_conn: conn.close()
             return row["afl_id"]
 
-    # Loose match fallback
+    # 4️⃣ Loose fuzzy match
     cur.execute("SELECT full_name FROM players WHERE LOWER(club) = LOWER(?)", (club_slug,))
     names = [r["full_name"] for r in cur.fetchall()]
     matches = get_close_matches(name, names, n=1, cutoff=0.85)
@@ -116,10 +165,21 @@ def match_injury_player_to_db(name: str, club_slug: str, conn: sqlite3.Connectio
             if close_conn: conn.close()
             return row["afl_id"]
 
-    # After all match attempts fail:
+    # ❌ No match
     log(f"❌ No match for player '{name}' ({club_slug})", "WARN")
     log_nickname_suggestion(name, club_slug)
 
     if close_conn:
         conn.close()
     return None
+
+SEASON_ID = "2025014"  # Can be made dynamic later
+
+def extract_champion_data_id_from_html(html: str) -> tuple[str | None, str | None]:
+    """Extracts champion_data_id and image_url from any HTML block."""
+    match = re.search(r"/(\d+)\.png", html)
+    if match:
+        champ_id = match.group(1)
+        image_url = f"https://s.afl.com.au/staticfile/AFL%20Tenant/AFL/Players/ChampIDImages/AFL/{SEASON_ID}/{champ_id}.png"
+        return champ_id, image_url
+    return None, None

@@ -1,8 +1,9 @@
 import json
 import re
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
+from db.import_to_db import save_injuries_to_db
 
 from bs4 import BeautifulSoup, Comment
 from playwright.sync_api import sync_playwright
@@ -103,6 +104,7 @@ def scrape_injury_list(db_conn) -> dict:
                     })
                 elif len(cols) == 1 and "updated:" in cols[0].text.lower():
                     # Extract the update date text
+                    updated_text = None
                     match = re.search(r"updated:\s*(.+)", cols[0].text.strip(), re.IGNORECASE)
                     if match:
                         updated_text = match.group(1).strip()
@@ -112,7 +114,7 @@ def scrape_injury_list(db_conn) -> dict:
 
             results.append({
                 "club": club_code,
-                "updated": updated_text,
+                "updated": updated_text or "",
                 "player_count": len(players),
                 "players": players
             })
@@ -121,7 +123,7 @@ def scrape_injury_list(db_conn) -> dict:
 
     return {
         "source": url,
-        "scraped_at": datetime.utcnow().isoformat() + "Z",
+        "scraped_at": datetime.now(timezone.utc).isoformat(),
         "teams": results
     }
 
@@ -131,76 +133,3 @@ if __name__ == "__main__":
     result = scrape_injury_list(db_conn)
     db_conn.close()
     print(json.dumps(result, indent=2))
-
-def save_injuries_to_db(data: dict, conn: sqlite3.Connection):
-    """
-    Saves the scraped injury data to the 'injuries' table in the database.
-    Expects data as { "ADE": { "updated": "Date", "players": [ ... ] }, ... }
-    """
-    cur = conn.cursor()
-
-    # Create the table if it doesn't exist
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS injuries (
-            afl_id INTEGER NOT NULL,
-            club TEXT NOT NULL,
-            player_name TEXT NOT NULL,
-            injury TEXT,
-            return_info TEXT,
-            updated TEXT,
-            first_updated TEXT,
-            source TEXT,
-            scraped_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            current INTEGER DEFAULT 1,
-            UNIQUE(afl_id, updated)
-        )
-    """)
-
-    # Track all currently listed injuries
-    currently_listed_ids = set()
-
-    for team in data["teams"]:
-        club = team["club"]
-        updated = team.get("updated", "")
-        for player in team["players"]:
-            if not player["afl_id"]:
-                raise ValueError(f"Missing AFL ID for player {player['name']} from {club}")
-
-            afl_id = player["afl_id"]
-            currently_listed_ids.add(afl_id)
-
-            cur.execute("""
-                INSERT INTO injuries (
-                    afl_id, club, player_name, injury, return_info, updated, first_updated, source, scraped_at, current
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-                ON CONFLICT(afl_id, updated) DO UPDATE SET
-                    club = excluded.club,
-                    player_name = excluded.player_name,
-                    injury = excluded.injury,
-                    return_info = excluded.return_info,
-                    source = excluded.source,
-                    scraped_at = excluded.scraped_at,
-                    current = 1
-            """, (
-                player["afl_id"],
-                club,
-                player["name"],
-                player["injury"],
-                player["return"],
-                updated,
-                updated,  # first_updated = same as updated if new
-                data["source"],
-                data["scraped_at"],
-            ))
-
-    # Mark previous entries as no longer current
-    if currently_listed_ids:
-        placeholders = ",".join("?" for _ in currently_listed_ids)
-        cur.execute(f"""
-            UPDATE injuries
-            SET current = 0
-            WHERE current = 1 AND afl_id NOT IN ({placeholders})
-        """, tuple(currently_listed_ids))
-
-    conn.commit()
-    log(f"💾 Injury data saved for {len(data['teams'])} teams", "INFO")

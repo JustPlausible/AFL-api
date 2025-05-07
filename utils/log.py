@@ -4,7 +4,7 @@ import os
 LOG_LEVELS = ["DEBUG", "INFO", "WARN", "ERROR", "SUCCESS"]
 
 # Set the minimum log level (can override with env var)
-CURRENT_LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+CURRENT_LOG_LEVEL = os.environ.get("LOG_LEVEL", "DEBUG").upper()
 
 def log(message: str, level: str = "INFO", show_time: bool = True):
     if level not in LOG_LEVELS:

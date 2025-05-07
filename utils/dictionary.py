@@ -20,6 +20,7 @@ KNOWN_NICKNAMES = {
     "leonardo": ["leo"],
     "oliver": ["ollie"],
     "alixzander": ["alix"],
+    "matthew": ["matt"],
     # add or tune more as needed
 }
 

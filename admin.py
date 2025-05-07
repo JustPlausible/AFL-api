@@ -41,7 +41,7 @@ def view_table(
     try:
         # Count total rows for pagination
         if search:
-            cur.execute(f"SELECT COUNT(*) FROM `{safe_table}` WHERE player_name LIKE ?", (f"%{search}%",))
+            cur.execute(f"SELECT COUNT(*) FROM `{safe_table}` WHERE full_name LIKE ?", (f"%{search}%",))
         else:
             cur.execute(f"SELECT COUNT(*) FROM `{safe_table}`")
         total_rows = cur.fetchone()[0]
@@ -54,7 +54,7 @@ def view_table(
 
         # Optional search
         if search:
-            query += " WHERE player_name LIKE ?"
+            query += " WHERE full_name LIKE ?"
             params.append(f"%{search}%")
 
         query += " LIMIT ? OFFSET ?"

@@ -29,6 +29,31 @@ def import_players():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS players (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            afl_id INTEGER UNIQUE NOT NULL,
+            full_name TEXT,
+            first_name TEXT,
+            last_name TEXT,
+            nickname TEXT,
+            formatted_nickname TEXT,
+            formatted_last_name TEXT,
+            club TEXT,
+            guernsey INTEGER,
+            position TEXT,
+            club_profile_url TEXT,
+            image_url TEXT,
+            club_player_id INTEGER,
+            afl_url TEXT,
+            champion_data_id TEXT,
+            source TEXT,
+            scraped_at TEXT,
+            resolved_at TEXT,
+            last_updated TEXT
+        )
+    """)
+
     enriched_files = sorted(f for f in DATA_DIR.glob("players-*.json") if "-raw" not in f.stem)
     total_imported = 0
 
@@ -37,29 +62,36 @@ def import_players():
             players = json.load(f)
 
         for player in players:
+            if not player.get("afl_id"):
+                log(f"⚠️ Skipping player without afl_id: {player.get('full_name', 'Unknown')} in file {file.name}", "WARN")
+                continue
             cursor.execute("""
                 INSERT INTO players (
                     afl_id, full_name, first_name, last_name,
                     nickname, formatted_nickname, formatted_last_name,
                     club, guernsey, position, club_profile_url, image_url,
-                    club_player_id, afl_url, champion_data_id, last_updated
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    club_player_id, afl_url, champion_data_id,
+                    source, scraped_at, resolved_at, last_updated
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(afl_id) DO UPDATE SET
-                    full_name=excluded.full_name,
-                    first_name=excluded.first_name,
-                    last_name=excluded.last_name,
-                    nickname=excluded.nickname,
-                    formatted_nickname=excluded.formatted_nickname,
-                    formatted_last_name=excluded.formatted_last_name,
-                    club=excluded.club,
-                    guernsey=excluded.guernsey,
-                    position=excluded.position,
-                    club_profile_url=excluded.club_profile_url,
-                    image_url=excluded.image_url,
-                    club_player_id=excluded.club_player_id,
-                    afl_url=excluded.afl_url,
-                    champion_data_id=excluded.champion_data_id,
-                    last_updated=excluded.last_updated
+                    full_name = excluded.full_name,
+                    first_name = excluded.first_name,
+                    last_name = excluded.last_name,
+                    nickname = excluded.nickname,
+                    formatted_nickname = excluded.formatted_nickname,
+                    formatted_last_name = excluded.formatted_last_name,
+                    club = excluded.club,
+                    guernsey = excluded.guernsey,
+                    position = excluded.position,
+                    club_profile_url = excluded.club_profile_url,
+                    image_url = excluded.image_url,
+                    club_player_id = excluded.club_player_id,
+                    afl_url = excluded.afl_url,
+                    champion_data_id = excluded.champion_data_id,
+                    source = excluded.source,
+                    scraped_at = excluded.scraped_at,
+                    resolved_at = excluded.resolved_at,
+                    last_updated = excluded.last_updated
             """, (
                 player.get("afl_id"),
                 player.get("full_name"),
@@ -73,9 +105,12 @@ def import_players():
                 player.get("position"),
                 player.get("club_profile_url"),
                 player.get("image_url"),
-                player.get("club_player_id"),
+                player.get("club_id") or player.get("club_player_id"),
                 player.get("afl_url"),
                 player.get("champion_data_id"),
+                player.get("source"),
+                player.get("scraped_at"),
+                player.get("resolved_at"),
                 datetime.now(timezone.utc).isoformat()
             ))
 
@@ -85,6 +120,79 @@ def import_players():
     conn.commit()
     conn.close()
     log(f"✅ Total players processed: {total_imported}", "SUCCESS")
+
+def save_injuries_to_db(data: dict, conn: sqlite3.Connection):
+    """
+    Saves the scraped injury data to the 'injuries' table in the database.
+    Expects data as { "ADE": { "updated": "Date", "players": [ ... ] }, ... }
+    """
+    cur = conn.cursor()
+
+    # Create the table if it doesn't exist
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS injuries (
+            afl_id INTEGER NOT NULL,
+            club TEXT NOT NULL,
+            player_name TEXT NOT NULL,
+            injury TEXT,
+            return_info TEXT,
+            updated TEXT,
+            first_updated TEXT,
+            source TEXT,
+            scraped_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            current INTEGER DEFAULT 1,
+            UNIQUE(afl_id, updated)
+        )
+    """)
+
+    # Track all currently listed injuries
+    currently_listed_ids = set()
+
+    for team in data["teams"]:
+        club = team["club"]
+        updated = team.get("updated", "")
+        for player in team["players"]:
+            if not player["afl_id"]:
+                raise ValueError(f"Missing AFL ID for player {player['name']} from {club}")
+
+            afl_id = player["afl_id"]
+            currently_listed_ids.add(afl_id)
+
+            cur.execute("""
+                INSERT INTO injuries (
+                    afl_id, club, player_name, injury, return_info, updated, first_updated, source, scraped_at, current
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                ON CONFLICT(afl_id, updated) DO UPDATE SET
+                    club = excluded.club,
+                    player_name = excluded.player_name,
+                    injury = excluded.injury,
+                    return_info = excluded.return_info,
+                    source = excluded.source,
+                    scraped_at = excluded.scraped_at,
+                    current = 1
+            """, (
+                player["afl_id"],
+                club,
+                player["name"],
+                player["injury"],
+                player["return"],
+                updated,
+                updated,  # first_updated = same as updated if new
+                data["source"],
+                data["scraped_at"],
+            ))
+
+    # Mark previous entries as no longer current
+    if currently_listed_ids:
+        placeholders = ",".join("?" for _ in currently_listed_ids)
+        cur.execute(f"""
+            UPDATE injuries
+            SET current = 0
+            WHERE current = 1 AND afl_id NOT IN ({placeholders})
+        """, tuple(currently_listed_ids))
+
+    conn.commit()
+    log(f"💾 Injury data saved for {len(data['teams'])} teams", "INFO")
 
 if __name__ == "__main__":
     import_players()

@@ -1,63 +1,86 @@
 import json
-from pathlib import Path
-from utils.log import log
 import argparse
 import sqlite3
+from pathlib import Path
+from utils.log import log
 from scraper.club_scraper import save_club_players_to_json
 from scraper.scrape_injuries import scrape_injury_list, save_injuries_to_db
 from merge.helpers import resolve_players_for_club
 from utils.club_lookup import load_clubs, get_club
+from db.import_to_db import import_players
 
-def scrape_club(club_name):
-    club = get_club(club_name)
-    if not club:
-        log(f"[!] Unknown club: {club_name}", "ERROR")
-        return
-    save_club_players_to_json(club)
+DB_PATH = Path("data/afl_players.db")
 
-def enrich_club(club_name):
-    resolve_players_for_club(club_name)
-
-def scrape_all(skip_existing=False):
+def scrape_all_clubs(skip_existing=False):
     clubs = load_clubs()
-    for club in clubs:
-        save_club_players_to_json(club, skip_existing=skip_existing)
+    summaries = []
 
-def enrich_all(skip_existing=False):
-    data_dir = Path("data")
-    raw_files = data_dir.glob("players-*-raw.json")
+    for club in clubs:
+        summary = save_club_players_to_json(club, skip_existing=skip_existing)
+        summaries.append(summary)
+
+    print("\n📊 Scrape Summary:")
+    print(f"{'Club':<30} {'Total':>5}  {'Missing Image':>14}  {'Missing CD ID':>15}  {'Missing Club ID':>15}")
+    print("-" * 85)
+    for s in summaries:
+        print(f"{s['club']:<30} {s['total']:>5}  {s['missing_image']:>14}  {s['missing_champion_id']:>15}  {s['missing_club_id']:>15}")
+
+def enrich_all_clubs(skip_existing=False):
+    raw_files = Path("data").glob("players-*-raw.json")
     for path in sorted(raw_files):
         club_name = path.stem.replace("players-", "").replace("-raw", "")
         resolve_players_for_club(club_name)
 
-def main():
-    parser = argparse.ArgumentParser(description="AFL Club Scraper and Enricher")
-    parser.add_argument("--scrape", help="Scrape one club", metavar="club_name")
-    parser.add_argument("--enrich", help="Enrich one club", metavar="club_name")
-    parser.add_argument("--all", help="Run scrape + enrich for all clubs", action="store_true")
-    parser.add_argument("--skip-existing", help="Skip clubs if output file already exists", action="store_true")
-    parser.add_argument("--scrape-injuries", help="Run the injury scraper and store data to DB", action="store_true")
-    parser.add_argument("--print-json", help="Print scraped JSON to stdout", action="store_true")
+def scrape_injuries_to_db(print_json=False):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    data = scrape_injury_list(conn)
+    save_injuries_to_db(data, conn)
+    if print_json:
+        print(json.dumps(data, indent=2))
+    conn.close()
 
-    args = parser.parse_args()
+def handle_args():
+    parser = argparse.ArgumentParser(description="AFL Club Scraper and Enricher")
+    parser.add_argument("--scrape", metavar="club_name", help="Scrape one club")
+    parser.add_argument("--scrape_all", action="store_true", help="Run scrape for all clubs")
+    parser.add_argument("--enrich", metavar="club_name", help="Enrich one club")
+    parser.add_argument("--enrich_all", action="store_true", help="Enrich all clubs")
+    parser.add_argument("--all", action="store_true", help="Scrape + enrich all clubs + import to DB")
+    parser.add_argument("--skip-existing", action="store_true", help="Skip clubs if output file already exists")
+    parser.add_argument("--scrape-injuries", action="store_true", help="Scrape injury list and store to DB")
+    parser.add_argument("--print-json", action="store_true", help="Print scraped JSON to stdout")
+    return parser.parse_args()
+
+def main():
+    args = handle_args()
 
     if args.scrape:
-        scrape_club(args.scrape.lower())
+        club = get_club(args.scrape.lower())
+        if club:
+            save_club_players_to_json(club)
+        else:
+            log(f"[!] Unknown club: {args.scrape}", "ERROR")
+
+    elif args.scrape_all:
+        scrape_all_clubs(skip_existing=args.skip_existing)
+
     elif args.enrich:
-        enrich_club(args.enrich.lower())
-    elif args.all:
-        scrape_all(skip_existing=args.skip_existing)
-        enrich_all(skip_existing=args.skip_existing)
+        resolve_players_for_club(args.enrich.lower())
+
+    elif args.enrich_all:
+        enrich_all_clubs(skip_existing=args.skip_existing)
+
     elif args.scrape_injuries:
-        conn = sqlite3.connect("data/afl_players.db")
-        conn.row_factory = sqlite3.Row
-        data = scrape_injury_list(conn)
-        save_injuries_to_db(data, conn)
-        if args.print_json:
-            print(json.dumps(data, indent=2))
-        conn.close()
+        scrape_injuries_to_db(print_json=args.print_json)
+
+    elif args.all:
+        scrape_all_clubs(skip_existing=args.skip_existing)
+        enrich_all_clubs(skip_existing=args.skip_existing)
+        import_players()
+
     else:
-        parser.print_help()
+        log("❓ No valid argument supplied. Use --help for options.", "WARN")
 
 if __name__ == "__main__":
     main()
