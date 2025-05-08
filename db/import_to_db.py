@@ -194,5 +194,65 @@ def save_injuries_to_db(data: dict, conn: sqlite3.Connection):
     conn.commit()
     log(f"💾 Injury data saved for {len(data['teams'])} teams", "INFO")
 
+def save_lineups_to_db(players: list[dict], conn: sqlite3.Connection, round_number: int):
+    """
+    Saves scraped lineup data to the 'lineups' table in the database.
+    Expects a flat list of player dicts, each with match_id, afl_id, etc.
+    """
+    cur = conn.cursor()
+
+    # Create table if it doesn't exist
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS lineups (
+            round_number INTEGER NOT NULL,
+            match_id TEXT NOT NULL,
+            afl_id INTEGER NOT NULL,
+            first_name TEXT,
+            surname TEXT,
+            team TEXT,
+            position_group TEXT,
+            champion_id TEXT,
+            scraped_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (match_id, afl_id)
+        )
+    """)
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    inserted = 0
+    for player in players:
+        try:
+            cur.execute("""
+                INSERT INTO lineups (
+                    round_number, match_id, afl_id, first_name, surname,
+                    team, position_group, champion_id, scraped_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(match_id, afl_id) DO UPDATE SET
+                    round_number = excluded.round_number,
+                    first_name = excluded.first_name,
+                    surname = excluded.surname,
+                    team = excluded.team,
+                    position_group = excluded.position_group,
+                    champion_id = excluded.champion_id,
+                    scraped_at = excluded.scraped_at
+            """, (
+                round_number,
+                player["match_id"],
+                player["afl_id"],
+                player.get("first_name"),
+                player.get("surname"),
+                player.get("team"),
+                player.get("position_group"),
+                player.get("champion_id"),
+                now
+            ))
+            inserted += 1
+        except Exception as e:
+            log(f"❌ Failed to insert player {player['first_name']} {player['surname']}: {e}", "ERROR")
+
+    conn.commit()
+    log(f"💾 Saved {inserted} player lineups to DB", "SUCCESS")
+
 if __name__ == "__main__":
     import_players()

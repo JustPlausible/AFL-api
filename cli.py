@@ -5,9 +5,10 @@ from pathlib import Path
 from utils.log import log
 from scraper.club_scraper import save_club_players_to_json
 from scraper.scrape_injuries import scrape_injury_list, save_injuries_to_db
+from scraper.scrape_afl_lineups import scrape_team_lineups
 from merge.helpers import resolve_players_for_club
 from utils.club_lookup import load_clubs, get_club
-from db.import_to_db import import_players
+from db.import_to_db import import_players, save_lineups_to_db
 
 DB_PATH = Path("data/afl_players.db")
 
@@ -40,6 +41,21 @@ def scrape_injuries_to_db(print_json=False):
         print(json.dumps(data, indent=2))
     conn.close()
 
+def scrape_lineups_to_db(round_number: int, print_json: bool = False):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+
+    log(f"🧹 Scraping and importing lineups for Round {round_number}", "INFO")
+    players = scrape_team_lineups(round_number=round_number)
+    save_lineups_to_db(players, conn, round_number)
+
+    if print_json:
+        import json
+        print(json.dumps(players, indent=2))
+
+    conn.close()
+
+
 def handle_args():
     parser = argparse.ArgumentParser(description="AFL Club Scraper and Enricher")
     parser.add_argument("--scrape", metavar="club_name", help="Scrape one club")
@@ -50,6 +66,7 @@ def handle_args():
     parser.add_argument("--skip-existing", action="store_true", help="Skip clubs if output file already exists")
     parser.add_argument("--scrape-injuries", action="store_true", help="Scrape injury list and store to DB")
     parser.add_argument("--print-json", action="store_true", help="Print scraped JSON to stdout")
+    parser.add_argument("--scrape-lineups", type=int, metavar="ROUND", help="Scrape team lineups for a given round and import to DB")
     return parser.parse_args()
 
 def main():
@@ -78,6 +95,11 @@ def main():
         scrape_all_clubs(skip_existing=args.skip_existing)
         enrich_all_clubs(skip_existing=args.skip_existing)
         import_players()
+    
+    elif args.scrape_lineups is not None:
+        round_number = args.scrape_lineups
+        log(f"🧹 Starting scrape for Round {round_number}", "INFO")
+        scrape_lineups_to_db(round_number=round_number, print_json=args.print_json)
 
     else:
         log("❓ No valid argument supplied. Use --help for options.", "WARN")

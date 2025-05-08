@@ -1,6 +1,6 @@
 # 🏉 AFL Player Scraper & Enrichment Tool
 
-This project scrapes, enriches, and serves AFL player data across all clubs. It provides a FastAPI-powered JSON API and supports data persistence via SQLite for both player and API key data.
+This project scrapes, enriches, and serves AFL player data across all clubs. It provides a FastAPI-powered JSON API and supports data persistence via SQLite for players, injuries, team line-ups, and API key data.
 
 ---
 
@@ -10,10 +10,11 @@ This project scrapes, enriches, and serves AFL player data across all clubs. It 
 - 🔍 Enrich player data with AFL.com.au IDs, Champion Data IDs, club profile info
 - 🧠 Output enriched JSON files (per club)
 - 🗃 Store and serve all data via SQLite
+- 🧠 Track player injuries, line-ups, and substitutions by round
+- 📅 Line-up scraper by AFL round including IN/OUT/SUB and positions
 - 🔐 API key authentication (stored in SQLite)
 - 🧪 CLI tools for managing data and access
 - ⚙️ FastAPI server with structured routes
-- 📅 Track injury data per player and update status in the database
 - 🧠 Auto-resolve names using nickname mapping, suffix cleaning, fuzzy matching
 - 📝 Save unmatched names for admin review via `nickname_suggestions.txt`
 ---
@@ -56,6 +57,12 @@ python3 cli.py --enrich richmond
 python3 cli.py --scrape-injuries
 ---
 
+### Scrape and import team line-ups for a round:
+
+```bash
+python3 cli.py --scrape-lineups 9
+---
+
 ## 🔐 API Key Authentication
 
 All API routes require an `x-api-key` header.
@@ -83,6 +90,17 @@ curl -H "x-api-key: your_key_here" http://localhost:9900/players
 | GET    | `/players/club/richmond`  | By club slug                     |
 | GET    | `/players/{afl_id}`       | Single player by AFL ID          |
 
+| Method | Endpoint                           | Description             |
+| ------ | ---------------------------------- | ----------------------- |
+| GET    | `/api/injuries/{afl_id}`           | Injuries for a player   |
+| GET    | `/api/injuries/{afl_id}?history=1` | All historical injuries |
+
+| Method | Endpoint                        | Description                            |
+| ------ | ------------------------------- | -------------------------------------- |
+| GET    | `/api/lineups/{round}`          | Line-up data for the full round        |
+| GET    | `/api/lineups/{round}/{afl_id}` | Line-up data for a player in a round   |
+| GET    | `/api/lineups/latest/{afl_id}`  | Most recent line-up entry for a player |
+
 ---
 
 ## 📁 Project Structure
@@ -93,7 +111,7 @@ src/
 ├── data/              # Scraped + enriched player data
 ├── db/                # SQLite init + import logic
 ├── merge/             # Data reconciliation and matching logic
-├── scraper/           # Club scraping logic
+├── scraper/           # Club, player, injuries and team lineup scrapers
 ├── scripts/           # API key + admin CLI tools
 ├── utils/             # Logging, nicknames, config
 ├── cli.py             # Unified CLI (scrape, enrich, import)

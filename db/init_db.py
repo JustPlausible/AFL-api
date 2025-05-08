@@ -54,6 +54,22 @@ def create_api_keys_table(cursor):
         )
     """)
 
+def create_lineups_table(cursor):
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS lineups (
+            round_number INTEGER NOT NULL,
+            match_id TEXT NOT NULL,
+            afl_id INTEGER NOT NULL,
+            first_name TEXT,
+            surname TEXT,
+            team TEXT,
+            position_group TEXT,
+            champion_id TEXT,
+            scraped_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (match_id, afl_id)
+        )
+    """)
+
 def init_db():
     DB_FILE.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_FILE)
@@ -64,6 +80,7 @@ def init_db():
     create_players_table(cursor)
     create_injuries_table(cursor)
     create_api_keys_table(cursor)
+    create_lineups_table(cursor)
     # Add more create_*_table calls here as needed
 
     conn.commit()

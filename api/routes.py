@@ -95,3 +95,72 @@ def get_injuries_by_id(
         raise HTTPException(status_code=404, detail="Player not found")
 
     return JSONResponse(content=[dict(row) for row in rows])
+
+@router.get("/api/lineups/latest/{afl_id}")
+def get_latest_lineup_for_player(
+    afl_id: int,
+    client_label: str = Depends(verify_api_key)
+):
+    log(f"🆕 {client_label} requested latest lineup for AFL ID {afl_id}", "INFO")
+    conn = get_db_connection()
+
+    query = """
+        SELECT * FROM lineups
+        WHERE afl_id = ?
+        ORDER BY round_number DESC
+        LIMIT 1
+    """
+    row = conn.execute(query, (afl_id,)).fetchone()
+    conn.close()
+
+    if not row:
+        log(f"❌ No lineup record found for AFL ID: {afl_id}", "WARN")
+        raise HTTPException(status_code=404, detail="No lineup found for this player")
+
+    return JSONResponse(content=dict(row))
+
+@router.get("/api/lineups/{round_number}")
+def get_lineups_by_round(
+    round_number: int,
+    client_label: str = Depends(verify_api_key)
+):
+    log(f"📋 {client_label} requested lineups for Round {round_number}", "INFO")
+    conn = get_db_connection()
+
+    query = """
+        SELECT * FROM lineups
+        WHERE round_number = ?
+        ORDER BY team, position_group, surname
+    """
+    rows = conn.execute(query, (round_number,)).fetchall()
+    conn.close()
+
+    if not rows:
+        log(f"❌ No lineups found for Round {round_number}", "WARN")
+        raise HTTPException(status_code=404, detail="No lineups found for this round")
+
+    return JSONResponse(content=[dict(row) for row in rows])
+
+@router.get("/api/lineups/{round_number}/{afl_id}")
+def get_lineup_by_player_and_round(
+    round_number: int,
+    afl_id: int,
+    client_label: str = Depends(verify_api_key)
+):
+    log(f"🔎 {client_label} requested lineup for AFL ID {afl_id} in Round {round_number}", "INFO")
+    conn = get_db_connection()
+
+    query = """
+        SELECT * FROM lineups
+        WHERE round_number = ? AND afl_id = ?
+    """
+    row = conn.execute(query, (round_number, afl_id)).fetchone()
+    conn.close()
+
+    if not row:
+        log(f"❌ No lineup found for AFL ID {afl_id} in Round {round_number}", "WARN")
+        raise HTTPException(status_code=404, detail="Lineup not found for player in this round")
+
+    return JSONResponse(content=dict(row))
+
+
