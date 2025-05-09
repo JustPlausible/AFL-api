@@ -58,24 +58,24 @@ python3 cli.py --enrich richmond
 
 ```bash
 python3 cli.py --scrape-injuries
----
+```
 
 ### Scrape and import team line-ups for a round:
 
 ```bash
 python3 cli.py --scrape-lineups 9
----
+```
 
 # Scrape match fixtures for a round
 ```bash
 python3 cli.py --scrape-round 9
----
+```
 
 # Import or export clubs
 ```bash
 python3 cli.py --import-clubs
 python3 cli.py --export-clubs
----
+```
 
 ## 🔐 API Key Authentication
 
