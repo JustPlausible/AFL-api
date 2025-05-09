@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Clubs Diff</title>
+  <style>
+    body { font-family: sans-serif; padding: 20px; background-color: #f9f9f9; }
+    h1 { font-size: 1.8em; margin-bottom: 10px; }
+    .section { margin-top: 20px; }
+    .added { color: green; }
+    .removed { color: red; }
+    .changed { color: orange; }
+    table { border-collapse: collapse; width: 100%; margin-top: 10px; }
+    th, td { border: 1px solid #ccc; padding: 6px 10px; text-align: left; }
+    th { background-color: #eee; }
+    td.diff { font-weight: bold; background-color: #fff8e1; }
+  </style>
+</head>
+<body>
+{% if message %}
+  <div style="background-color: #e0ffe0; border: 1px solid #66cc66; padding: 10px; margin-bottom: 20px;">
+    {{ message }}
+  </div>
+{% endif %}
+  <a href="/">← Back Home</a>
+  <h1>🔍 Clubs Comparison (JSON ↔ DB)</h1>
+
+  <form method="post" action="/clubs-diff/import" style="display:inline;">
+    <button type="submit">📥 Import clubs from JSON</button>
+  </form>
+  <form method="post" action="/clubs-diff/export" style="display:inline; margin-left: 10px;">
+    <button type="submit">📤 Export clubs to backup JSON</button>
+  </form>
+
+  <div class="section added">
+    <h2>🟢 Added Clubs (in JSON only)</h2>
+    {% if added %}
+      <ul>{% for club in added %}
+        <li>{{ club.code }} — {{ club.name }}</li>
+      {% endfor %}</ul>
+    {% else %}
+      <p><em>None</em></p>
+    {% endif %}
+  </div>
+
+  <div class="section removed">
+    <h2>🔴 Removed Clubs (in DB only)</h2>
+    {% if removed %}
+      <ul>{% for club in removed %}
+        <li>{{ club.code }} — {{ club.name }}</li>
+      {% endfor %}</ul>
+    {% else %}
+      <p><em>None</em></p>
+    {% endif %}
+  </div>
+
+  <div class="section changed">
+    <h2>🟡 Changed Clubs</h2>
+    {% if changed %}
+      <table>
+        <tr>
+          <th>Code</th><th>Field</th><th>DB Value</th><th>JSON Value</th>
+        </tr>
+        {% for change in changed %}
+          {% for field, diff in change.diffs.items() %}
+            <tr>
+              <td>{{ change.code }}</td>
+              <td>{{ field }}</td>
+              <td>{{ diff.old }}</td>
+              <td class="diff">{{ diff.new }}</td>
+            </tr>
+          {% endfor %}
+        {% endfor %}
+      </table>
+    {% else %}
+      <p><em>None</em></p>
+    {% endif %}
+  </div>
+
+</body>
+</html>

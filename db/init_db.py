@@ -1,3 +1,4 @@
+#db/init_db.py
 import sqlite3
 from pathlib import Path
 from utils.log import log
@@ -70,6 +71,47 @@ def create_lineups_table(cursor):
         )
     """)
 
+def create_rounds_table(cursor):
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS rounds (
+            round_id INTEGER PRIMARY KEY,
+            round_label TEXT,
+            season_id INTEGER,
+            competition_id INTEGER,
+            scraped_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+def create_matches_table(cursor):
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS matches (
+            match_id INTEGER PRIMARY KEY,
+            match_provider_id TEXT,
+            round_id INTEGER NOT NULL,
+            home_team TEXT,
+            away_team TEXT,
+            venue TEXT,
+            status TEXT,
+            match_date_label TEXT,
+            start_time_text TEXT,
+            score_home INTEGER,
+            score_away INTEGER,
+            scraped_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+def create_clubs_table(cursor):
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS clubs (
+            code TEXT PRIMARY KEY,
+            name TEXT,
+            slug TEXT,
+            website TEXT,
+            squad_url TEXT,
+            aliases TEXT
+        )
+    """)
+
 def init_db():
     DB_FILE.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_FILE)
@@ -81,6 +123,9 @@ def init_db():
     create_injuries_table(cursor)
     create_api_keys_table(cursor)
     create_lineups_table(cursor)
+    create_rounds_table(cursor)
+    create_matches_table(cursor)
+    create_clubs_table(cursor)
     # Add more create_*_table calls here as needed
 
     conn.commit()

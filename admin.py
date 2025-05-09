@@ -1,18 +1,24 @@
+# admin.py
 from fastapi import FastAPI, Request, HTTPException, Query, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from starlette.middleware.sessions import SessionMiddleware
 from html import escape
 import sqlite3
 from pathlib import Path
 from utils.log import log
 import traceback
 import secrets
+import json
+from db.import_to_db import import_clubs_to_db, export_clubs_from_db, diff_clubs
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
+app.add_middleware(SessionMiddleware, secret_key="your-secret-key")  # use .env later
 
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
+    log("📥 index accessed", "INFO")
     return templates.TemplateResponse("index.html", {"request": request})
 
 DB_PATH = Path("data/afl_players.db")
@@ -79,6 +85,17 @@ def view_table(
         "page": page,
         "total_pages": (total_rows + page_size - 1) // page_size,
         "search": search
+    })
+
+@app.get("/clubs-diff", response_class=HTMLResponse)
+def show_clubs_diff(request: Request):
+    added, removed, changed = diff_clubs()
+    return templates.TemplateResponse("clubs_diff.html", {
+        "request": request,
+        "added": added,
+        "removed": removed,
+        "changed": changed,
+        "message": request.session.pop("message", None)
     })
 
 @app.get("/api-keys", response_class=HTMLResponse)
@@ -154,3 +171,15 @@ def delete_api_key(key_id: int):
     conn.commit()
     conn.close()
     return RedirectResponse("/api-keys", status_code=303)
+
+@app.post("/clubs-diff/import")
+def do_import_clubs(request: Request):
+    import_clubs_to_db()
+    request.session["message"] = "✅ Clubs imported from JSON."
+    return RedirectResponse("/clubs-diff", status_code=303)
+
+@app.post("/clubs-diff/export")
+def do_export_clubs(request: Request):
+    export_clubs_from_db()
+    request.session["message"] = "✅ Clubs exported to backup JSON."
+    return RedirectResponse("/clubs-diff", status_code=303)

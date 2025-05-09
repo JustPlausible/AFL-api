@@ -6,17 +6,20 @@ This project scrapes, enriches, and serves AFL player data across all clubs. It 
 
 ## 📦 Features
 
-- 🌐 Scrape player data from official AFL club websites
-- 🔍 Enrich player data with AFL.com.au IDs, Champion Data IDs, club profile info
-- 🧠 Output enriched JSON files (per club)
-- 🗃 Store and serve all data via SQLite
-- 🧠 Track player injuries, line-ups, and substitutions by round
-- 📅 Line-up scraper by AFL round including IN/OUT/SUB and positions
-- 🔐 API key authentication (stored in SQLite)
-- 🧪 CLI tools for managing data and access
-- ⚙️ FastAPI server with structured routes
-- 🧠 Auto-resolve names using nickname mapping, suffix cleaning, fuzzy matching
-- 📝 Save unmatched names for admin review via `nickname_suggestions.txt`
+- 🌐 Scrape player data from official AFL club sites
+- 🧠 Enrich player info with AFL.com.au & Champion Data IDs
+- 📁 Export enriched data per club to JSON
+- 🗃 Persist all data in SQLite (players, matches, injuries, lineups, clubs)
+- 📅 Scrape AFL fixture by round: team names, venue, status, and scores
+- ✅ Match team names to club codes with alias support
+- 🩼 Injury list scraper with timestamped records
+- 👨‍💻 FastAPI admin portal with:
+  - Visual diff of `clubs.json` vs DB
+  - One-click sync (import/export)
+  - Flash messages for admin actions
+- 🔐 API key management (stored in SQLite)
+- 🧪 CLI tools for scraping, importing, and enrichment
+- 🧠 Nickname resolution and suffix cleaning for fuzzy player matching
 ---
 
 ## 🚀 Quick Start
@@ -61,6 +64,17 @@ python3 cli.py --scrape-injuries
 
 ```bash
 python3 cli.py --scrape-lineups 9
+---
+
+# Scrape match fixtures for a round
+```bash
+python3 cli.py --scrape-round 9
+---
+
+# Import or export clubs
+```bash
+python3 cli.py --import-clubs
+python3 cli.py --export-clubs
 ---
 
 ## 🔐 API Key Authentication
