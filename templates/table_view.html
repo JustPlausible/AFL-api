@@ -16,13 +16,28 @@
   <h1>🗂️ Table: {{ table }}</h1>
   {% if rows %}
     <form method="get" style="margin-bottom: 10px;">
-        <input type="text" name="q" placeholder="Search player..." value="{{ search }}">
-        <button type="submit">🔍 Search</button>
-    </form>  
+      <label for="col">Search in:</label>
+      <select name="col" id="col">
+        {% for colname in columns %}
+          <option value="{{ colname }}" {% if colname == selected_column %}selected{% endif %}>
+            {{ colname }}
+          </option>
+        {% endfor %}
+      </select>
+      <input type="text" name="q" placeholder="Enter value..." value="{{ search }}">
+      <button type="submit">🔍 Search</button>
+    </form>
     <table>
       <tr>
         {% for header in headers %}
-          <th>{{ header }}</th>
+          <th>
+            <a href="?q={{ search }}&col={{ selected_column }}&sort={{ header }}&order={% if sort == header and order == 'asc' %}desc{% else %}asc{% endif %}">
+              {{ header }}
+              {% if sort == header %}
+                {% if order == 'asc' %}⬆️{% else %}⬇️{% endif %}
+              {% endif %}
+            </a>
+          </th>
         {% endfor %}
       </tr>
       {% for row in rows %}

@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>🕒 Live Scheduler Jobs</title>
+  <style>
+    body { font-family: sans-serif; padding: 40px; background-color: #f9f9f9; }
+    h1 { font-size: 2em; margin-bottom: 1em; }
+    table { width: 100%; border-collapse: collapse; margin-top: 1em; }
+    th, td { padding: 10px; border: 1px solid #ccc; text-align: left; }
+    th { background-color: #eee; }
+    td small { color: #666; }
+    .center { text-align: center; }
+    a { text-decoration: none; color: #007bff; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <a href="/">← Back Home</a>
+  <h1>🕒 Current Scheduled Jobs</h1>
+  <table>
+    <thead>
+      <tr>
+        <th>Function</th>
+        <th>Trigger Type</th>
+        <th>Next Run</th>
+        <th>Job ID</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for job in jobs %}
+      <tr>
+        <td><strong>{{ job.func.split(':')[-1] }}</strong><br><small>{{ job.func }}</small></td>
+        <td>{{ job.trigger }}</td>
+        <td>{{ job.next_run or '—' }}</td>
+        <td><small>{{ job.id }}</small></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p><a href="/">⬅️ Back to Admin Panel</a></p>
+</body>
+</html>

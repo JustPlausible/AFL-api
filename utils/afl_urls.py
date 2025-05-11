@@ -6,6 +6,9 @@ def get_fixture_url():
 def get_fixture_url_for_round(round_id: int) -> str:
     return f"{config.AFL_BASE_URL}/fixture?Competition={config.AFL_COMPETITION_ID}&Season={config.AFL_SEASON_ID}&Round={round_id}"
 
+def get_matches_url():
+    return f"{config.AFL_BASE_URL}/matches"
+
 def get_injuries_url():
     return f"{config.AFL_BASE_URL}/matches/injury-list"
 

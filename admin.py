@@ -10,7 +10,9 @@ from utils.log import log
 import traceback
 import secrets
 import json
-from db.import_to_db import import_clubs_to_db, export_clubs_from_db, diff_clubs
+from db.import_to_db import export_clubs_from_db, diff_clubs
+from cli import import_clubs_to_db
+import httpx
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
@@ -22,6 +24,38 @@ def home(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 DB_PATH = Path("data/afl_players.db")
+
+import httpx
+from collections import defaultdict
+
+@app.get("/schedule", response_class=HTMLResponse)
+def show_schedule(request: Request):
+    try:
+        response = httpx.get("http://afl-scheduler:8000/scheduler/jobs", timeout=5)
+        response.raise_for_status()
+        raw_jobs = response.json()
+    except Exception as e:
+        log(f"❌ Failed to contact scheduler: {e}", "ERROR")
+        raw_jobs = []
+
+    # Group by round_id if found in args
+    grouped = defaultdict(list)
+
+    for job in raw_jobs:
+        # Assume round_id is first arg for run_scraper or run_match_scraper
+        round_id = "General"
+        if "run_scraper" in job["func"] and "args" in job:
+            round_id = f"Round {job['args'][0]}"
+        elif "run_match_scraper" in job["func"] and "args" in job:
+            round_id = f"Match {job['args'][0]}"
+        elif "injury" in job["func"]:
+            round_id = "Daily Injuries"
+        grouped[round_id].append(job)
+
+    return templates.TemplateResponse("schedule_grouped.html", {
+        "request": request,
+        "grouped_jobs": dict(grouped)
+    })
 
 @app.get("/tables", response_class=HTMLResponse)
 def show_tables(request: Request):
@@ -38,30 +72,53 @@ def view_table(
     request: Request,
     table_name: str,
     page: int = Query(1, ge=1),
-    search: str = Query("", alias="q")
+    search: str = Query("", alias="q"),
+    column: str = Query("", alias="col"),
+    sort: str = Query("", alias="sort"),
+    order: str = Query("asc", alias="order")  # asc or desc
 ):
     safe_table = escape(table_name)
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
 
     try:
-        # Count total rows for pagination
-        if search:
-            cur.execute(f"SELECT COUNT(*) FROM `{safe_table}` WHERE full_name LIKE ?", (f"%{search}%",))
+        # Column info
+        cur.execute(f"PRAGMA table_info(`{safe_table}`)")
+        columns_info = cur.fetchall()
+        all_columns = [col[1] for col in columns_info]
+        col_types = {col[1]: col[2].upper() for col in columns_info}
+
+        # Validate search & sort columns
+        selected_col = column if column in all_columns else all_columns[0] if all_columns else None
+        sort_col = sort if sort in all_columns else None
+        sort_order = "DESC" if order.lower() == "desc" else "ASC"
+
+        # Row count
+        if search and selected_col:
+            if "CHAR" in col_types[selected_col] or "TEXT" in col_types[selected_col]:
+                cur.execute(f"SELECT COUNT(*) FROM `{safe_table}` WHERE `{selected_col}` LIKE ?", (f"%{search}%",))
+            else:
+                cur.execute(f"SELECT COUNT(*) FROM `{safe_table}` WHERE `{selected_col}` = ?", (search,))
         else:
             cur.execute(f"SELECT COUNT(*) FROM `{safe_table}`")
         total_rows = cur.fetchone()[0]
 
-        # Pagination setup
+        # Pagination
         page_size = 50
         offset = (page - 1) * page_size
         query = f"SELECT * FROM `{safe_table}`"
         params = []
 
-        # Optional search
-        if search:
-            query += " WHERE full_name LIKE ?"
-            params.append(f"%{search}%")
+        if search and selected_col:
+            if "CHAR" in col_types[selected_col] or "TEXT" in col_types[selected_col]:
+                query += f" WHERE `{selected_col}` LIKE ?"
+                params.append(f"%{search}%")
+            else:
+                query += f" WHERE `{selected_col}` = ?"
+                params.append(search)
+
+        if sort_col:
+            query += f" ORDER BY `{sort_col}` {sort_order}"
 
         query += " LIMIT ? OFFSET ?"
         params += [page_size, offset]
@@ -69,6 +126,7 @@ def view_table(
         cur.execute(query, params)
         rows = cur.fetchall()
         headers = [desc[0] for desc in cur.description]
+
     except sqlite3.OperationalError as e:
         log(f"⚠️ Error occurred: {e}", "ERROR")
         traceback.print_exc()
@@ -84,7 +142,11 @@ def view_table(
         "rows": rows,
         "page": page,
         "total_pages": (total_rows + page_size - 1) // page_size,
-        "search": search
+        "search": search,
+        "columns": all_columns,
+        "selected_column": selected_col,
+        "sort": sort_col,
+        "order": sort_order.lower()
     })
 
 @app.get("/clubs-diff", response_class=HTMLResponse)

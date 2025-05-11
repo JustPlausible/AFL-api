@@ -3,14 +3,28 @@ import argparse
 import sqlite3
 from pathlib import Path
 from utils.log import log
-from scraper.club_scraper import save_club_players_to_json
-from scraper.scrape_injuries import scrape_injury_list, save_injuries_to_db
+from scraper.scrape_afl_clubs import save_club_players_to_json
+from scraper.scrape_afl_injuries import scrape_injury_list, save_injuries_to_db
 from scraper.scrape_afl_lineups import scrape_team_lineups
 from merge.helpers import resolve_players_for_club
 from utils.club_lookup import load_clubs, get_club
-from db.import_to_db import import_players, save_lineups_to_db, import_clubs_to_db
+from db.import_to_db import import_players, save_lineups_to_db, save_clubs_to_db
+from db.connection import get_db_connection
 
-DB_PATH = Path("data/afl_players.db")
+def import_clubs_to_db():
+    """Load clubs from JSON and import using shared connection."""
+    path = Path("data/clubs.json")
+    if not path.exists():
+        log("❌ data/clubs.json not found.", "ERROR")
+        return
+
+    with path.open("r") as f:
+        clubs = json.load(f)
+
+    conn = get_db_connection()
+    save_clubs_to_db(conn, clubs)
+    conn.commit()
+    conn.close()
 
 def scrape_all_clubs(skip_existing=False):
     clubs = load_clubs()
@@ -33,7 +47,7 @@ def enrich_all_clubs(skip_existing=False):
         resolve_players_for_club(club_name)
 
 def scrape_injuries_to_db(print_json=False):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection()
     conn.row_factory = sqlite3.Row
     data = scrape_injury_list(conn)
     save_injuries_to_db(data, conn)
@@ -42,7 +56,7 @@ def scrape_injuries_to_db(print_json=False):
     conn.close()
 
 def scrape_lineups_to_db(round_number: int, print_json: bool = False):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection()
     conn.row_factory = sqlite3.Row
 
     log(f"🧹 Scraping and importing lineups for Round {round_number}", "INFO")
@@ -54,7 +68,6 @@ def scrape_lineups_to_db(round_number: int, print_json: bool = False):
         print(json.dumps(players, indent=2))
 
     conn.close()
-
 
 def handle_args():
     parser = argparse.ArgumentParser(description="AFL Club Scraper and Enricher")

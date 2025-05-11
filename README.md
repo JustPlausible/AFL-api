@@ -20,6 +20,10 @@ This project scrapes, enriches, and serves AFL player data across all clubs. It 
 - 🔐 API key management (stored in SQLite)
 - 🧪 CLI tools for scraping, importing, and enrichment
 - 🧠 Nickname resolution and suffix cleaning for fuzzy player matching
+- ⏰ Scheduled scraping of injuries, lineups, and live player stats using APScheduler
+- 🧭 Lineup scrapes run at predictable times (T-1 day 5pm, Thursday 5pm, and 1h before each match)
+- 📈 Player stat scrapes run automatically 2 minutes before each match start
+- 🕒 Admin page shows all upcoming scheduled jobs
 ---
 
 ## 🚀 Quick Start
@@ -32,7 +36,7 @@ This project scrapes, enriches, and serves AFL player data across all clubs. It 
 ### 1. Clone and Run
 
 ```bash
-git clone https://github.com/yourname/afl-api.git
+git clone https://github.com/JustPlausible/afl-api.git
 cd afl-api/src
 docker-compose up --build
 ```
@@ -58,24 +62,30 @@ python3 cli.py --enrich richmond
 
 ```bash
 python3 cli.py --scrape-injuries
----
+```
 
 ### Scrape and import team line-ups for a round:
 
 ```bash
 python3 cli.py --scrape-lineups 9
----
+```
 
 # Scrape match fixtures for a round
 ```bash
 python3 cli.py --scrape-round 9
----
+```
 
 # Import or export clubs
 ```bash
 python3 cli.py --import-clubs
 python3 cli.py --export-clubs
----
+```
+
+# Scrape player stats for a match or round
+```bash
+python3 scraper/scrape_afl_player_stats.py --match-id 7043
+python3 scraper/scrape_afl_player_stats.py --round-id 1155 --once
+```
 
 ## 🔐 API Key Authentication
 
@@ -96,7 +106,9 @@ curl -H "x-api-key: your_key_here" http://localhost:9900/players
 ---
 
 ## 📡 API Endpoints
+> 📘 For full interactive API docs, visit [`/docs`](http://localhost:8801/docs) while the app is running.
 
+👤 Player Endpoints
 | Method | Endpoint                   | Description                      |
 |--------|----------------------------|----------------------------------|
 | GET    | `/players`                | All players                      |
@@ -104,16 +116,40 @@ curl -H "x-api-key: your_key_here" http://localhost:9900/players
 | GET    | `/players/club/richmond`  | By club slug                     |
 | GET    | `/players/{afl_id}`       | Single player by AFL ID          |
 
+🩼 Injury Endpoints
 | Method | Endpoint                           | Description             |
 | ------ | ---------------------------------- | ----------------------- |
 | GET    | `/api/injuries/{afl_id}`           | Injuries for a player   |
 | GET    | `/api/injuries/{afl_id}?history=1` | All historical injuries |
 
+🧍‍♂️ Line-up Endpoints
 | Method | Endpoint                        | Description                            |
 | ------ | ------------------------------- | -------------------------------------- |
 | GET    | `/api/lineups/{round}`          | Line-up data for the full round        |
 | GET    | `/api/lineups/{round}/{afl_id}` | Line-up data for a player in a round   |
 | GET    | `/api/lineups/latest/{afl_id}`  | Most recent line-up entry for a player |
+
+🔁 Round Endpoints
+| Method | Endpoint                 | Description                   |
+| ------ | ------------------------ | ----------------------------- |
+| GET    | `/api/rounds`            | All available rounds          |
+| GET    | `/api/rounds/{round_id}` | Metadata for a specific round |
+
+🏟 Match Endpoints
+| Method | Endpoint                     | Description                              |
+| ------ | ---------------------------- | ---------------------------------------- |
+| GET    | `/api/matches`               | All matches (optionally filter by round) |
+| GET    | `/api/matches?round_id=1155` | Matches for a specific round             |
+| GET    | `/api/matches/{match_id}`    | Details of a single match                |
+
+📊 Player Stats Endpoints
+| Method | Endpoint                                     | Description                               |
+| ------ | -------------------------------------------- | ----------------------------------------- |
+| GET    | `/api/player-stats?match_id=7043`            | Player stats for a match                  |
+| GET    | `/api/player-stats?round_id=1155`            | Player stats for a round                  |
+| GET    | `/api/player-stats?afl_id=145`               | All player stats for an individual player |
+| GET    | `/api/player-stats?round_id=1155&afl_id=145` | Player stats for a player across a round  |
+| GET    | `/api/player-stats?match_id=7043&afl_id=145` | Single player’s stats in a specific match |
 
 ---
 
@@ -131,6 +167,20 @@ src/
 ├── cli.py             # Unified CLI (scrape, enrich, import)
 └── main.py            # api entry point
 ```
+
+## 🧠 Job Scheduler Overview
+
+The system uses APScheduler for timing recurring and per-match scraping jobs.
+
+Jobs are registered during startup via `scheduler/start.py`, including:
+- Daily injury scrapes (11:00 AM AWST)
+- Line-up scrapes (T-1 day 5pm, Thursday 5pm, 1h before each match)
+- Player stats scraping (2 minutes before match start)
+
+Admin UI `/schedule` shows all currently registered jobs.
+
+Jobs run in background threads using Python's `threading` and `os.system` to launch specific scraping modules.
+
 
 ---
 

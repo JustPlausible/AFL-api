@@ -5,8 +5,10 @@ from pathlib import Path
 from datetime import datetime, timezone
 from utils.log import log
 from utils.club_lookup import load_clubs
+from db.connection import get_db_connection
+import config
 
-DB_FILE = Path("data/afl_players.db")
+#DB_FILE = Path("data/afl_players.db")
 DATA_DIR = Path("data")
 
 def resolve_club_code_from_name(club_name: str) -> str | None:
@@ -22,13 +24,137 @@ def resolve_club_code_from_name(club_name: str) -> str | None:
     
     return None
 
+def save_clubs_to_db(conn: sqlite3.Connection, clubs: list[dict]):
+    """Insert or update clubs in the database using a shared connection."""
+    cur = conn.cursor()
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS clubs (
+            code TEXT PRIMARY KEY,
+            name TEXT,
+            slug TEXT,
+            website TEXT,
+            squad_url TEXT,
+            aliases TEXT
+        )
+    """)
+
+    for club in clubs:
+        aliases_json = json.dumps(club.get("aliases")) if "aliases" in club else None
+        cur.execute("""
+            INSERT INTO clubs (code, name, slug, website, squad_url, aliases)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(code) DO UPDATE SET
+                name = excluded.name,
+                slug = excluded.slug,
+                website = excluded.website,
+                squad_url = excluded.squad_url,
+                aliases = excluded.aliases
+        """, (
+            club["code"], club["name"], club["slug"],
+            club["website"], club["squad_url"], aliases_json
+        ))
+
+    log(f"✅ Imported {len(clubs)} clubs into DB", "SUCCESS")
+
+def export_clubs_from_db():
+    """
+    Exports the current 'clubs' table to data/clubs-bak.json for safe backup/editing.
+    """
+    import json
+    from pathlib import Path
+
+    DB_PATH = Path(config.DB_PATH)
+    OUTPUT_PATH = Path("data/clubs-bak.json")
+
+    if not DB_PATH.exists():
+        log("❌ Cannot export clubs — DB does not exist.", "ERROR")
+        return
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT code, name, slug, website, squad_url, aliases FROM clubs ORDER BY code")
+    rows = cur.fetchall()
+    conn.close()
+
+    clubs = []
+    for row in rows:
+        club = {
+            "code": row[0],
+            "name": row[1],
+            "slug": row[2],
+            "website": row[3],
+            "squad_url": row[4],
+        }
+        aliases_raw = row[5]
+        if aliases_raw:
+            try:
+                club["aliases"] = json.loads(aliases_raw)
+            except json.JSONDecodeError:
+                log(f"⚠️ Could not parse aliases for club {row[0]}", "WARN")
+                club["aliases"] = []
+
+        clubs.append(club)
+
+    with OUTPUT_PATH.open("w") as f:
+        json.dump(clubs, f, indent=2)
+
+    log(f"✅ Exported {len(clubs)} clubs to {OUTPUT_PATH}", "SUCCESS")
+
+def diff_clubs():
+    source_path = Path("data/clubs.json")
+    backup_path = Path("data/clubs-bak.json")
+
+    if not source_path.exists() or not backup_path.exists():
+        log("❌ Cannot diff clubs — one or both files are missing.", "ERROR")
+        return
+
+    with source_path.open() as f:
+        source = {c["code"]: c for c in json.load(f)}
+
+    with backup_path.open() as f:
+        backup = {c["code"]: c for c in json.load(f)}
+
+    all_codes = sorted(set(source.keys()) | set(backup.keys()))
+    added, removed, changed = [], [], []
+
+    for code in all_codes:
+        if code not in backup:
+            added.append(source[code])
+        elif code not in source:
+            removed.append(backup[code])
+        else:
+            diffs = {}
+            for field in ["name", "slug", "website", "squad_url", "aliases"]:
+                s_val = source[code].get(field)
+                b_val = backup[code].get(field)
+
+                # Normalise aliases for fair comparison
+                if field == "aliases":
+                    s_val = s_val or []
+                    b_val = b_val or []
+                    if sorted(s_val) != sorted(b_val):
+                        diffs[field] = {"old": b_val, "new": s_val}
+                elif s_val != b_val:
+                    diffs[field] = {"old": b_val, "new": s_val}
+
+            if diffs:
+                changed.append({
+                    "code": code,
+                    "diffs": diffs
+                })
+
+    return added, removed, changed
+
 def import_players():
-    if not DB_FILE.exists():
+    if not Path(config.DB_PATH).exists():
         log("❌ Database not found. Run init_db.py first.", "ERROR")
         return
 
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db_connection()
     cursor = conn.cursor()
+
+    now = datetime.now(timezone.utc).isoformat()
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS players (
@@ -112,7 +238,7 @@ def import_players():
                 player.get("source"),
                 player.get("scraped_at"),
                 player.get("resolved_at"),
-                datetime.now(timezone.utc).isoformat()
+                now
             ))
 
         total_imported += len(players)
@@ -202,6 +328,8 @@ def save_lineups_to_db(players: list[dict], conn: sqlite3.Connection, round_numb
     """
     cur = conn.cursor()
 
+    now = datetime.now(timezone.utc).isoformat()
+
     # Create table if it doesn't exist
     cur.execute("""
         CREATE TABLE IF NOT EXISTS lineups (
@@ -217,8 +345,6 @@ def save_lineups_to_db(players: list[dict], conn: sqlite3.Connection, round_numb
             PRIMARY KEY (match_id, afl_id)
         )
     """)
-
-    now = datetime.now(timezone.utc).isoformat()
 
     inserted = 0
     for player in players:
@@ -263,6 +389,8 @@ def save_rounds_to_db(rounds: list[dict], metadata: dict, conn: sqlite3.Connecti
     """
     cur = conn.cursor()
 
+    now = datetime.now(timezone.utc).isoformat()
+
     cur.execute("""
         CREATE TABLE IF NOT EXISTS rounds (
             round_id INTEGER PRIMARY KEY,
@@ -273,7 +401,6 @@ def save_rounds_to_db(rounds: list[dict], metadata: dict, conn: sqlite3.Connecti
         )
     """)
 
-    now = datetime.now(timezone.utc).isoformat()
     inserted = 0
 
     for round_info in rounds:
@@ -307,6 +434,8 @@ def save_matches_to_db(matches: list[dict], conn: sqlite3.Connection):
     """
     cur = conn.cursor()
 
+    now = datetime.now(timezone.utc).isoformat()
+
     cur.execute("""
         CREATE TABLE IF NOT EXISTS matches (
             match_id INTEGER PRIMARY KEY,
@@ -316,23 +445,21 @@ def save_matches_to_db(matches: list[dict], conn: sqlite3.Connection):
             away_team TEXT,
             venue TEXT,
             status TEXT,
-            match_date_label TEXT,
-            start_time_text TEXT,
+            start_time_utc TEXT,
             score_home INTEGER,
             score_away INTEGER,
             scraped_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
     """)
 
-    now = datetime.now(timezone.utc).isoformat()
     inserted = 0
 
     for match in matches:
         cur.execute("""
             INSERT INTO matches (
                 match_id, match_provider_id, round_id, home_team, away_team, venue, status,
-                match_date_label, start_time_text, score_home, score_away, scraped_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                start_time_utc, score_home, score_away, scraped_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(match_id) DO UPDATE SET
                 match_provider_id = excluded.match_provider_id,
                 round_id = excluded.round_id,
@@ -340,8 +467,7 @@ def save_matches_to_db(matches: list[dict], conn: sqlite3.Connection):
                 away_team = excluded.away_team,
                 venue = excluded.venue,
                 status = excluded.status,
-                match_date_label = excluded.match_date_label,
-                start_time_text = excluded.start_time_text,
+                start_time_utc = excluded.start_time_utc,
                 score_home = excluded.score_home,
                 score_away = excluded.score_away,
                 scraped_at = excluded.scraped_at
@@ -353,8 +479,7 @@ def save_matches_to_db(matches: list[dict], conn: sqlite3.Connection):
             match["away_team"],
             match["venue"],
             match["status"],
-            match.get("match_date_label"),
-            match.get("start_time_text"),
+            match.get("start_time_utc"),
             match.get("score_home"),
             match.get("score_away"),
             now
@@ -364,141 +489,165 @@ def save_matches_to_db(matches: list[dict], conn: sqlite3.Connection):
     conn.commit()
     log(f"💾 Saved {inserted} matches to DB", "SUCCESS")
 
-def import_clubs_to_db():
-    import json
-    from pathlib import Path
 
-    path = Path("data/clubs.json")
-    if not path.exists():
-        log("❌ data/clubs.json not found.", "ERROR")
-        return
-
-    with path.open("r") as f:
-        clubs = json.load(f)
-
-    conn = sqlite3.connect("data/afl_players.db")
+def save_player_stats_to_db(stats: list[dict], conn: sqlite3.Connection):
+    """Insert or update player stats records in the database."""
     cur = conn.cursor()
 
+    now = datetime.now(timezone.utc).isoformat()
+
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS clubs (
-            code TEXT PRIMARY KEY,
-            name TEXT,
-            slug TEXT,
-            website TEXT,
-            squad_url TEXT,
-            aliases TEXT
+        CREATE TABLE IF NOT EXISTS player_stats (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            match_id INTEGER NOT NULL,
+            round_id INTEGER,
+            afl_id INTEGER,
+            champion_id TEXT,
+            player_name TEXT NOT NULL,
+            team_code TEXT NOT NULL,
+            af_score INTEGER,
+            goals INTEGER,
+            behinds INTEGER,
+            disposals INTEGER,
+            kicks INTEGER,
+            handballs INTEGER,
+            marks INTEGER,
+            tackles INTEGER,
+            hitouts INTEGER,
+            clearances INTEGER,
+            metres_gained INTEGER,
+            goal_assists INTEGER,
+            time_on_ground_pct REAL,
+            status TEXT CHECK(status IN ('LIVE', 'COMPLETED')) NOT NULL,
+            scraped_at TEXT NOT NULL,
+            UNIQUE(match_id, afl_id)
         )
     """)
 
-    for club in clubs:
-        aliases_json = json.dumps(club.get("aliases")) if "aliases" in club else None
+    for stat in stats:
         cur.execute("""
-            INSERT INTO clubs (code, name, slug, website, squad_url, aliases)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(code) DO UPDATE SET
-                name = excluded.name,
-                slug = excluded.slug,
-                website = excluded.website,
-                squad_url = excluded.squad_url,
-                aliases = excluded.aliases
+            INSERT INTO player_stats (
+                match_id, round_id, afl_id, champion_id, player_name, team_code,
+                af_score, goals, behinds, disposals, kicks, handballs, marks, tackles,
+                hitouts, clearances, metres_gained, goal_assists, time_on_ground_pct,
+                status, scraped_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(match_id, afl_id) DO UPDATE SET
+                champion_id = excluded.champion_id,
+                player_name = excluded.player_name,
+                team_code = excluded.team_code,
+                af_score = excluded.af_score,
+                goals = excluded.goals,
+                behinds = excluded.behinds,
+                disposals = excluded.disposals,
+                kicks = excluded.kicks,
+                handballs = excluded.handballs,
+                marks = excluded.marks,
+                tackles = excluded.tackles,
+                hitouts = excluded.hitouts,
+                clearances = excluded.clearances,
+                metres_gained = excluded.metres_gained,
+                goal_assists = excluded.goal_assists,
+                time_on_ground_pct = excluded.time_on_ground_pct,
+                status = excluded.status,
+                scraped_at = excluded.scraped_at
         """, (
-            club["code"], club["name"], club["slug"],
-            club["website"], club["squad_url"], aliases_json
+            stat["match_id"],
+            stat.get("round_id"),
+            stat.get("afl_id"),
+            stat.get("champion_id"),
+            stat["player_name"],
+            stat["team_code"],
+            stat.get("af_score"),
+            stat.get("goals"),
+            stat.get("behinds"),
+            stat.get("disposals"),
+            stat.get("kicks"),
+            stat.get("handballs"),
+            stat.get("marks"),
+            stat.get("tackles"),
+            stat.get("hitouts"),
+            stat.get("clearances"),
+            stat.get("metres_gained"),
+            stat.get("goal_assists"),
+            stat.get("time_on_ground_pct"),
+            stat["status"],
+            now
         ))
 
     conn.commit()
-    conn.close()
-    log(f"✅ Imported {len(clubs)} clubs into DB", "SUCCESS")
+    log(f"💾 Upserted {len(stats)} player stat rows to DB", "SUCCESS")
 
-def export_clubs_from_db():
-    """
-    Exports the current 'clubs' table to data/clubs-bak.json for safe backup/editing.
-    """
-    import json
-    from pathlib import Path
+def log_scrape_event(conn, match_id: int, round_id: int | None, status: str):
 
-    DB_PATH = Path("data/afl_players.db")
-    OUTPUT_PATH = Path("data/clubs-bak.json")
-
-    if not DB_PATH.exists():
-        log("❌ Cannot export clubs — DB does not exist.", "ERROR")
-        return
-
-    conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
-    cur.execute("SELECT code, name, slug, website, squad_url, aliases FROM clubs ORDER BY code")
-    rows = cur.fetchall()
-    conn.close()
 
-    clubs = []
-    for row in rows:
-        club = {
-            "code": row[0],
-            "name": row[1],
-            "slug": row[2],
-            "website": row[3],
-            "squad_url": row[4],
-        }
-        aliases_raw = row[5]
-        if aliases_raw:
-            try:
-                club["aliases"] = json.loads(aliases_raw)
-            except json.JSONDecodeError:
-                log(f"⚠️ Could not parse aliases for club {row[0]}", "WARN")
-                club["aliases"] = []
+    now = datetime.now(timezone.utc).isoformat()
 
-        clubs.append(club)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS scrape_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            match_id INTEGER NOT NULL,
+            round_id INTEGER,
+            status TEXT,
+            scraped_at TEXT NOT NULL,
+            UNIQUE(match_id, scraped_at)
+        )
+    """)
 
-    with OUTPUT_PATH.open("w") as f:
-        json.dump(clubs, f, indent=2)
+    cur.execute("""
+        INSERT INTO scrape_log (match_id, round_id, status, scraped_at)
+        VALUES (?, ?, ?, ?)
+    """, (match_id, round_id, status, now))
+    conn.commit()
+    log(f"✅ Scraped information stored into DB", "SUCCESS")
 
-    log(f"✅ Exported {len(clubs)} clubs to {OUTPUT_PATH}", "SUCCESS")
+def update_scrape_summary(conn: sqlite3.Connection, match_id: int):
+    """
+    Aggregates scrape_log data and stores summary for the match.
+    """
+    cur = conn.cursor()
 
-def diff_clubs():
-    source_path = Path("data/clubs.json")
-    backup_path = Path("data/clubs-bak.json")
-
-    if not source_path.exists() or not backup_path.exists():
-        log("❌ Cannot diff clubs — one or both files are missing.", "ERROR")
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS scrape_summary (
+            match_id INTEGER PRIMARY KEY,
+            round_id INTEGER,
+            total_scrapes INTEGER,
+            first_scraped TEXT,
+            last_scraped TEXT,
+            completed_scrape BOOLEAN DEFAULT 0,
+            notes TEXT
+        )
+    """)
+    
+    cur.execute("""
+        SELECT round_id, COUNT(*), MIN(scraped_at), MAX(scraped_at),
+               MAX(CASE WHEN status = 'COMPLETED' THEN 1 ELSE 0 END)
+        FROM scrape_log
+        WHERE match_id = ?
+    """, (match_id,))
+    
+    row = cur.fetchone()
+    if not row or row[1] == 0:
+        log(f"⚠️ No scrape logs found for match {match_id}", "WARN")
         return
 
-    with source_path.open() as f:
-        source = {c["code"]: c for c in json.load(f)}
+    round_id, count, first, last, completed = row
 
-    with backup_path.open() as f:
-        backup = {c["code"]: c for c in json.load(f)}
-
-    all_codes = sorted(set(source.keys()) | set(backup.keys()))
-    added, removed, changed = [], [], []
-
-    for code in all_codes:
-        if code not in backup:
-            added.append(source[code])
-        elif code not in source:
-            removed.append(backup[code])
-        else:
-            diffs = {}
-            for field in ["name", "slug", "website", "squad_url", "aliases"]:
-                s_val = source[code].get(field)
-                b_val = backup[code].get(field)
-
-                # Normalise aliases for fair comparison
-                if field == "aliases":
-                    s_val = s_val or []
-                    b_val = b_val or []
-                    if sorted(s_val) != sorted(b_val):
-                        diffs[field] = {"old": b_val, "new": s_val}
-                elif s_val != b_val:
-                    diffs[field] = {"old": b_val, "new": s_val}
-
-            if diffs:
-                changed.append({
-                    "code": code,
-                    "diffs": diffs
-                })
-
-    return added, removed, changed
-
+    cur.execute("""
+        INSERT INTO scrape_summary (
+            match_id, round_id, total_scrapes, first_scraped, last_scraped, completed_scrape
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(match_id) DO UPDATE SET
+            round_id = excluded.round_id,
+            total_scrapes = excluded.total_scrapes,
+            first_scraped = excluded.first_scraped,
+            last_scraped = excluded.last_scraped,
+            completed_scrape = excluded.completed_scrape
+    """, (match_id, round_id, count, first, last, completed))
+    
+    conn.commit()
+    log(f"✅ Summary updated for match {match_id} ({count} scrapes)", "SUCCESS")
 
 if __name__ == "__main__":
     import_players()

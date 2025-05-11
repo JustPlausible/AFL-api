@@ -2,18 +2,14 @@ from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
 import re
 from utils.log import log
-
-BASE_URL = "https://www.afl.com.au/matches/team-lineups?GameWeeks={round_number}"
-HEADERS = {
-    "User-Agent": "Mozilla/5.0",  # Prevent simple bot block
-}
+from utils.afl_urls import get_lineups_url
 
 def extract_afl_id(href: str) -> int | None:
     match = re.search(r"/players/(\d+)/", href)
     return int(match.group(1)) if match else None
 
 def scrape_team_lineups(round_number: int = 0):
-    url = BASE_URL.format(round_number=round_number)
+    url = f"{get_lineups_url()}?GameWeeks={round_number}"
     log(f"🎭 Launching Playwright browser to scrape AFL Team Line-ups for Round {round_number}...")
 
     all_players = []
@@ -91,36 +87,73 @@ def scrape_team_lineups(round_number: int = 0):
                     all_players.append(player)
                     log(f"  ⚫ {player['first_name']} {player['surname']} ({status_label})")
 
+        # Store previously named players by match and surname
+        named_players_by_match = {}
+
         # Go through structured positional rows
         for row in match.select("div.team-lineups__positions-row"):
             containers = row.select("div.team-lineups__positions-players-container")
-            
+
             for container in containers:
-                # Determine if home or away
                 is_home = "team-lineups__positions-players-container--home" in container.get("class", [])
                 team_name = home_team if is_home else away_team
 
-                # Get position group label from span inside this container
                 pos_label = container.select_one("span.team-lineups__position-meta-label")
                 position_group = pos_label.get_text(strip=True) if pos_label else "UNKNOWN"
 
-                # Player list inside nested div
                 player_tags = container.select("div.team-lineups__positions-players a.team-lineups__link")
-
                 log(f"🎯 {team_name} - {position_group}: {len(player_tags)} players")
 
                 for tag in player_tags:
+                    surname = tag.get("data-surname")
+                    first_name = tag.get("data-first-name")
                     player = {
                         "match_id": match_id,
                         "afl_id": extract_afl_id(tag['href']),
                         "champion_id": tag.get('data-player-id'),
-                        "first_name": tag.get('data-first-name'),
-                        "surname": tag.get('data-surname'),
+                        "first_name": first_name,
+                        "surname": surname,
                         "team": team_name,
                         "position_group": position_group
                     }
                     all_players.append(player)
                     log(f"  ✅ {player['first_name']} {player['surname']} ({player['position_group']}, AFL ID: {player['afl_id']})")
+
+                    # Add to lookup by match and surname
+                    if match_id not in named_players_by_match:
+                        named_players_by_match[match_id] = {}
+                    named_players_by_match[match_id][surname.upper()] = player  # uppercase for matching
+
+                # Check for LATE OUTS in team-lineups__meta--late-changes
+                late_change_sections = content_section.select("div.team-lineups__meta--late-changes")
+                for late_block in late_change_sections:
+                    player_spans = late_block.select("div.team-lineups__players span.team-lineups__player")
+                    for player_span in player_spans:
+                        text = player_span.get_text(strip=True)
+                        if "OUTS:" in text:
+                            outs_match = re.search(r"OUTS:\s*(.+)", text)
+                            if outs_match:
+                                outs_list = outs_match.group(1)
+                                names = re.split(r",\s*|\s+and\s+", outs_list)
+
+                                for shortname in names:
+                                    shortname = re.sub(r"\(.*?\)", "", shortname).strip()  # Remove (Injured), etc.
+                                    if not shortname:
+                                        continue
+                                    parts = shortname.split(".")
+                                    if len(parts) != 2:
+                                        continue  # Unexpected format
+
+                                    initial = parts[0].strip().upper()
+                                    surname = parts[1].strip().upper()
+
+                                    if surname in named_players_by_match.get(match_id, {}):
+                                        player = named_players_by_match[match_id][surname]
+                                        player["position_group"] = "OUT (Late)"
+                                        log(f"🟠 Late OUT flagged: {player['first_name']} {player['surname']} ({match_id})")
+                                    else:
+                                        log(f"⚠️ Late OUT '{shortname}' not matched to known line-up in match {match_id}", "WARN")
+
 
     log(f"🏁 Finished scrape. Total players extracted: {len(all_players)}")
     return all_players

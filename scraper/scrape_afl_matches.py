@@ -2,16 +2,41 @@
 import sqlite3
 import sys
 from bs4 import BeautifulSoup
+import re
 from utils.http_utils import load_page_with_playwright
 from utils.log import log
 from utils.afl_urls import get_fixture_url_for_round
 from utils.club_lookup import load_clubs, resolve_club_code
 from db.import_to_db import save_matches_to_db
+from utils.match_time import parse_match_time
 import config
 
 club_lookup = {c["name"].lower(): c["code"] for c in load_clubs()}
 
-def extract_match_data(div, current_date):
+def extract_season_year(html: str) -> int | None:
+    from bs4 import BeautifulSoup
+    import re
+
+    log("🔍 Parsing fixture page for season year...", "DEBUG")
+    soup = BeautifulSoup(html, "html.parser")
+
+    label = soup.select_one("div.competition-nav__season-select .select__current-text")
+    if not label:
+        log("❌ Could not find season label in fixture page", "ERROR")
+        return None
+
+    log(f"🧾 Found label text: '{label.text.strip()}'", "DEBUG")
+
+    match = re.search(r"(20\d{2})", label.text)
+    if match:
+        year = int(match.group(1))
+        log(f"📅 Detected season year: {year}", "INFO")
+        return year
+
+    log("⚠️ Could not extract year using regex from label", "WARN")
+    return None
+
+def extract_match_data(div, season_year):
     home_name = div.select_one(".fixtures__match-team--home span").text.strip()
     away_name = div.select_one(".fixtures__match-team--away span").text.strip()
 
@@ -23,16 +48,31 @@ def extract_match_data(div, current_date):
         "match_provider_id": div.get("data-match-provider-id"),
         "round_id": int(div.get("data-round-id")),
         "status": div.get("data-match-status"),
-        "match_date_label": current_date,
         "home_team": home_code,
         "away_team": away_code,
         "venue": div.select_one(".fixtures__match-venue").text.strip(),
-        "start_time_text": "",  # optional fallback for upcoming
+        "start_time_utc": None,
         "score_home": None,
         "score_away": None
     }
 
-    # Optional: try to extract score if match is completed
+    # Try to extract scheduled match time from aria-label
+    details_link = div.select_one("a.fixtures__absolute-link")
+    if details_link and details_link.has_attr("aria-label"):
+        label = details_link["aria-label"]
+        match_time_match = re.search(
+            r"\b(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),\s+"
+            r"([A-Za-z]+\s+\d{1,2}(?:st|nd|rd|th)?\s+\d{4}),\s+"
+            r"(\d{1,2}:\d{2}\s*[ap]m\s*[A-Z]+)", label
+        )
+        if match_time_match:
+            date_part = match_time_match.group(1)
+            # Remove ordinal suffixes
+            date_part = re.sub(r"(st|nd|rd|th)", "", date_part)
+            time_part = match_time_match.group(2).upper().replace(" ", "")
+            match["start_time_utc"] = parse_match_time(date_part, time_part)
+
+    # Extract score if match is completed
     score_divs = div.select(".fixtures__match-score-total")
     if len(score_divs) == 2:
         try:
@@ -41,14 +81,7 @@ def extract_match_data(div, current_date):
         except ValueError:
             pass
 
-    # Optional: extract scheduled start time for UPCOMING
-    if match["status"] == "UPCOMING":
-        time_div = div.select_one(".fixtures__status-label > div")
-        if time_div:
-            match["start_time_text"] = time_div.get_text(strip=True)
-
     return match
-
 
 def scrape_round(round_id: int, conn: sqlite3.Connection):
     url = get_fixture_url_for_round(round_id)
@@ -64,12 +97,13 @@ def scrape_round(round_id: int, conn: sqlite3.Connection):
 
     current_date = None
     matches = []
+    season_year = extract_season_year(html)
 
     for element in content:
         if element.name == "h2" and "fixtures__date-header" in element.get("class", []):
             current_date = element.get_text(strip=True)
         elif element.name == "div" and "fixtures__item" in element.get("class", []):
-            match = extract_match_data(element, current_date)
+            match = extract_match_data(element, season_year)
             matches.append(match)
 
     if matches:
