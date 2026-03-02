@@ -40,7 +40,7 @@ def save_clubs_to_db(conn: sqlite3.Connection, clubs: list[dict]):
     """)
 
     for club in clubs:
-        aliases_json = json.dumps(club.get("aliases")) if "aliases" in club else None
+        aliases_json = json.dumps(club.get("aliases", []))
         cur.execute("""
             INSERT INTO clubs (code, name, slug, website, squad_url, aliases)
             VALUES (?, ?, ?, ?, ?, ?)
@@ -448,6 +448,7 @@ def save_matches_to_db(matches: list[dict], conn: sqlite3.Connection):
             start_time_utc TEXT,
             score_home INTEGER,
             score_away INTEGER,
+            match_time_label TEXT,
             scraped_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -458,8 +459,8 @@ def save_matches_to_db(matches: list[dict], conn: sqlite3.Connection):
         cur.execute("""
             INSERT INTO matches (
                 match_id, match_provider_id, round_id, home_team, away_team, venue, status,
-                start_time_utc, score_home, score_away, scraped_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                start_time_utc, score_home, score_away, match_time_label, scraped_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(match_id) DO UPDATE SET
                 match_provider_id = excluded.match_provider_id,
                 round_id = excluded.round_id,
@@ -470,6 +471,7 @@ def save_matches_to_db(matches: list[dict], conn: sqlite3.Connection):
                 start_time_utc = excluded.start_time_utc,
                 score_home = excluded.score_home,
                 score_away = excluded.score_away,
+                match_time_label = excluded.match_time_label,
                 scraped_at = excluded.scraped_at
         """, (
             match["match_id"],
@@ -482,6 +484,7 @@ def save_matches_to_db(matches: list[dict], conn: sqlite3.Connection):
             match.get("start_time_utc"),
             match.get("score_home"),
             match.get("score_away"),
+            match.get("match_time_label"),
             now
         ))
         inserted += 1
@@ -504,6 +507,7 @@ def save_player_stats_to_db(stats: list[dict], conn: sqlite3.Connection):
             afl_id INTEGER,
             champion_id TEXT,
             player_name TEXT NOT NULL,
+            jumper_number INTEGER,
             team_code TEXT NOT NULL,
             af_score INTEGER,
             goals INTEGER,
@@ -527,14 +531,15 @@ def save_player_stats_to_db(stats: list[dict], conn: sqlite3.Connection):
     for stat in stats:
         cur.execute("""
             INSERT INTO player_stats (
-                match_id, round_id, afl_id, champion_id, player_name, team_code,
+                match_id, round_id, afl_id, champion_id, player_name, jumper_number, team_code,
                 af_score, goals, behinds, disposals, kicks, handballs, marks, tackles,
                 hitouts, clearances, metres_gained, goal_assists, time_on_ground_pct,
                 status, scraped_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(match_id, afl_id) DO UPDATE SET
                 champion_id = excluded.champion_id,
                 player_name = excluded.player_name,
+                jumper_number = excluded.jumper_number,
                 team_code = excluded.team_code,
                 af_score = excluded.af_score,
                 goals = excluded.goals,
@@ -557,6 +562,7 @@ def save_player_stats_to_db(stats: list[dict], conn: sqlite3.Connection):
             stat.get("afl_id"),
             stat.get("champion_id"),
             stat["player_name"],
+            stat.get("jumper_number"),
             stat["team_code"],
             stat.get("af_score"),
             stat.get("goals"),

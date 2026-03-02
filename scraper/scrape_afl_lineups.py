@@ -1,167 +1,156 @@
+# scraper/scrape_afl_lineups.py
+
 from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
 import re
-from utils.log import log
-from utils.afl_urls import get_lineups_url
+import os
+from datetime import datetime
+import sqlite3
+from utils.log import setup_logger
+from datetime import datetime, timezone
+
+log = setup_logger("lineup_scraper", "scrape_afl_lineups.log")
 
 def extract_afl_id(href: str) -> int | None:
-    match = re.search(r"/players/(\d+)/", href)
-    return int(match.group(1)) if match else None
+    m = re.search(r"/players/(\d+)", href)
+    return int(m.group(1)) if m else None
+
+def parse_lineups_html(html, round_number):
+    soup = BeautifulSoup(html, "html.parser")
+    all_players = []
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    for match in soup.select('div.team-lineups__item'):
+        # Extract match_id directly from match page link
+        header_link = match.select_one('a.team-lineups-header')
+        match_id = None
+        if header_link:
+            href = header_link.get('href')
+            if href:
+                m = re.search(r'/matches/(\d+)', href)
+                if m:
+                    match_id = int(m.group(1))
+        if not match_id:
+            log.warning("⚠️ No match link or match_id found for this match block.")
+            continue
+
+        # --- Team/venue extraction ---
+        header = match.select_one('.team-lineups-header__name')
+        if not header:
+            log.warning("⚠️ Could not find match header; skipping match.")
+            continue
+        header_text = header.get_text(" ", strip=True)
+        if " v " not in header_text:
+            log.warning(f"⚠️ Could not split team names: {header_text}")
+            continue
+        home_team, away_team = [x.strip() for x in header_text.split(" v ")]
+
+        # IN/OUT/SUB grids (home & away)
+        for status in ['in', 'out', 'sub']:
+            grid_home = match.select(f'.team-lineups-ins-and-outs__grid--home .team-lineups-ins-and-outs__grid-item')
+            grid_away = match.select(f'.team-lineups-ins-and-outs__grid--away .team-lineups-ins-and-outs__grid-item')
+            for tag in grid_home:
+                player_name = tag.select_one('.team-lineups-ins-and-outs__player-name')
+                if not player_name:
+                    continue
+                href = tag.get('href')
+                all_players.append({
+                    "round_number": round_number,
+                    "match_id": match_id,
+                    "afl_id": extract_afl_id(href),
+                    "first_name": player_name.get_text(strip=True).split()[0],
+                    "surname": player_name.get_text(strip=True).split()[-1],
+                    "team": home_team,
+                    "position_group": status.upper(),
+                    "champion_id": None,
+                    "scraped_at": now_iso
+                })
+            for tag in grid_away:
+                player_name = tag.select_one('.team-lineups-ins-and-outs__player-name')
+                if not player_name:
+                    continue
+                href = tag.get('href')
+                all_players.append({
+                    "round_number": round_number,
+                    "match_id": match_id,
+                    "afl_id": extract_afl_id(href),
+                    "first_name": player_name.get_text(strip=True).split()[0],
+                    "surname": player_name.get_text(strip=True).split()[-1],
+                    "team": away_team,
+                    "position_group": status.upper(),
+                    "champion_id": None,
+                    "scraped_at": now_iso
+                })
+
+        # On-field/interchange/substitute players
+        for entry in match.select('a.team-lineups__player-entry'):
+            href = entry.get('href')
+            name_first = entry.select_one('.team-lineups__player-entry--name-first')
+            name_last = entry.select_one('.team-lineups__player-entry--name-last')
+            team = home_team if 'team-lineups__player-entry--home-team' in entry.get('class', []) else away_team
+
+            all_players.append({
+                "round_number": round_number,
+                "match_id": match_id,
+                "afl_id": extract_afl_id(href),
+                "first_name": name_first.get_text(strip=True) if name_first else None,
+                "surname": name_last.get_text(strip=True) if name_last else None,
+                "team": team,
+                "position_group": "ONFIELD",  # or you could parse more detail from aria-label
+                "champion_id": None,
+                "scraped_at": now_iso
+            })
+
+    log.info(f"🏁 Finished scrape. Total players extracted: {len(all_players)}")
+    return all_players
 
 def scrape_team_lineups(round_number: int = 0):
-    url = f"{get_lineups_url()}?GameWeeks={round_number}"
-    log(f"🎭 Launching Playwright browser to scrape AFL Team Line-ups for Round {round_number}...")
-
-    all_players = []
+    """
+    Drop-in replacement for previous scraper.
+    - Loads AFL lineups page (optionally navigates to specific round)
+    - Expands all lineups
+    - Scrapes player data and matches to your 'matches' table in SQLite
+    - Returns: list of dicts [{match_id, afl_id, first_name, surname, team, position_group, champion_id, scraped_at}, ...]
+    """
+    url = "https://www.afl.com.au/matches/team-lineups"
+    log.info(f"🎭 Launching Playwright browser to scrape AFL Team Line-ups for Round {round_number}...")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
         page.goto(url, timeout=60000)
+        page.wait_for_selector('.competition-nav__round-list')
 
-        page.wait_for_selector("div.match-list-alt__item", timeout=15000)
+        if round_number:
+            # Try to click the button for the desired round by round_id (will need to map round_number → round_id if available)
+            btn = page.query_selector(f'li[data-round-id="{round_number}"] button')
+            if btn:
+                btn.click()
+        # Expand all lineups
+        try:
+            page.wait_for_selector('label[for="expand-lineups-toggle"]', state='visible', timeout=10000)
+            label = page.query_selector('label[for="expand-lineups-toggle"]')
+            if label:
+                label.click()
+                log.info("Clicked expand-all label to expand all lineups.")
+            else:
+                log.warning("Expand all label not found or not visible.")
+        except Exception as e:
+            log.warning(f"⚠️ Could not click expand all label: {e}")
+
+        # Wait for all matches to be expanded and visible
+        page.wait_for_selector('.team-lineups__item', timeout=15000)
         html = page.content()
         browser.close()
 
-    soup = BeautifulSoup(html, "html.parser")
-    match_blocks = soup.select("div.match-list-alt__item")
-    log(f"🔍 Found {len(match_blocks)} match blocks")
-
-    for match in match_blocks:
-        match_id = match.get("data-match-provider-id")
-        match_slug = match.get("id")
-        if not match_id or not match_slug:
-            log("⚠️ Skipping match with missing match_id or slug")
-            continue
-
-        # Extract full team names from span elements
-        team_names = match.select("span.team-lineups__team-name")
-        if len(team_names) < 2:
-            log("⚠️ Skipping match with missing team name labels")
-            continue
-
-        home_team = team_names[0].get_text(strip=True)
-        away_team = team_names[1].get_text(strip=True)
-        log(f"📊 Match {match_id}: {home_team} vs {away_team}")
-
-        # 🔁 Scrape pre-lineup IN/OUT/SUB players from the summary block
-        content_section = match.select_one("div.match-list-alt__content")
-        if content_section:
-            for row in content_section.select("div.team-lineups__row"):
-                label_span = row.select_one("div.team-lineups__meta span.team-lineups__meta-label")
-                if not label_span:
-                    continue
-
-                status_label = label_span.get_text(strip=True).upper()
-                if status_label not in ["IN", "OUT", "SUB"]:
-                    continue  # skip other rows (MILESTONE, etc.)
-
-                players_home = row.select("div.team-lineups__players--home a.team-lineups__link")
-                players_away = row.select("div.team-lineups__players:not(.team-lineups__players--home) a.team-lineups__link")
-
-                log(f"📌 {status_label} – {len(players_home)} home, {len(players_away)} away")
-
-                for tag in players_home:
-                    player = {
-                        "match_id": match_id,
-                        "afl_id": extract_afl_id(tag['href']),
-                        "champion_id": tag.get('data-player-id'),
-                        "first_name": tag.get('data-first-name'),
-                        "surname": tag.get('data-surname'),
-                        "team": home_team,
-                        "position_group": status_label
-                    }
-                    all_players.append(player)
-                    log(f"  🔵 {player['first_name']} {player['surname']} ({status_label})")
-
-                for tag in players_away:
-                    player = {
-                        "match_id": match_id,
-                        "afl_id": extract_afl_id(tag['href']),
-                        "champion_id": tag.get('data-player-id'),
-                        "first_name": tag.get('data-first-name'),
-                        "surname": tag.get('data-surname'),
-                        "team": away_team,
-                        "position_group": status_label
-                    }
-                    all_players.append(player)
-                    log(f"  ⚫ {player['first_name']} {player['surname']} ({status_label})")
-
-        # Store previously named players by match and surname
-        named_players_by_match = {}
-
-        # Go through structured positional rows
-        for row in match.select("div.team-lineups__positions-row"):
-            containers = row.select("div.team-lineups__positions-players-container")
-
-            for container in containers:
-                is_home = "team-lineups__positions-players-container--home" in container.get("class", [])
-                team_name = home_team if is_home else away_team
-
-                pos_label = container.select_one("span.team-lineups__position-meta-label")
-                position_group = pos_label.get_text(strip=True) if pos_label else "UNKNOWN"
-
-                player_tags = container.select("div.team-lineups__positions-players a.team-lineups__link")
-                log(f"🎯 {team_name} - {position_group}: {len(player_tags)} players")
-
-                for tag in player_tags:
-                    surname = tag.get("data-surname")
-                    first_name = tag.get("data-first-name")
-                    player = {
-                        "match_id": match_id,
-                        "afl_id": extract_afl_id(tag['href']),
-                        "champion_id": tag.get('data-player-id'),
-                        "first_name": first_name,
-                        "surname": surname,
-                        "team": team_name,
-                        "position_group": position_group
-                    }
-                    all_players.append(player)
-                    log(f"  ✅ {player['first_name']} {player['surname']} ({player['position_group']}, AFL ID: {player['afl_id']})")
-
-                    # Add to lookup by match and surname
-                    if match_id not in named_players_by_match:
-                        named_players_by_match[match_id] = {}
-                    named_players_by_match[match_id][surname.upper()] = player  # uppercase for matching
-
-                # Check for LATE OUTS in team-lineups__meta--late-changes
-                late_change_sections = content_section.select("div.team-lineups__meta--late-changes")
-                for late_block in late_change_sections:
-                    player_spans = late_block.select("div.team-lineups__players span.team-lineups__player")
-                    for player_span in player_spans:
-                        text = player_span.get_text(strip=True)
-                        if "OUTS:" in text:
-                            outs_match = re.search(r"OUTS:\s*(.+)", text)
-                            if outs_match:
-                                outs_list = outs_match.group(1)
-                                names = re.split(r",\s*|\s+and\s+", outs_list)
-
-                                for shortname in names:
-                                    shortname = re.sub(r"\(.*?\)", "", shortname).strip()  # Remove (Injured), etc.
-                                    if not shortname:
-                                        continue
-                                    parts = shortname.split(".")
-                                    if len(parts) != 2:
-                                        continue  # Unexpected format
-
-                                    initial = parts[0].strip().upper()
-                                    surname = parts[1].strip().upper()
-
-                                    if surname in named_players_by_match.get(match_id, {}):
-                                        player = named_players_by_match[match_id][surname]
-                                        player["position_group"] = "OUT (Late)"
-                                        log(f"🟠 Late OUT flagged: {player['first_name']} {player['surname']} ({match_id})")
-                                    else:
-                                        log(f"⚠️ Late OUT '{shortname}' not matched to known line-up in match {match_id}", "WARN")
-
-
-    log(f"🏁 Finished scrape. Total players extracted: {len(all_players)}")
-    return all_players
+    players = parse_lineups_html(html, round_number)
+    if players:
+        log.info(f"🧾 Sample player: {players[0]}")
+    else:
+        log.warning("⚠️ No players found.")
+    return players
 
 if __name__ == "__main__":
     import sys
-
     round_number = int(sys.argv[1]) if len(sys.argv) > 1 else 0
     players = scrape_team_lineups(round_number=round_number)
-
-    log(f"🧾 Sample player: {players[0] if players else 'No players found.'}")

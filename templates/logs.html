@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block title %}Log Viewer - {{ selected_log }}{% endblock %}
+
+{% block content %}
+<h2 class="mb-3">📝 Log Viewer — {{ selected_log }}</h2>
+
+<form class="row g-2 align-items-end mb-4" method="get">
+    <div class="col-md-3">
+        <label class="form-label">Log File</label>
+        <select class="form-select" name="log">
+            {% for option in log_options %}
+                <option value="{{ option }}" {% if option == selected_log %}selected{% endif %}>{{ option }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-md-4">
+        <label class="form-label">Filter</label>
+        <input class="form-control" type="text" name="q" value="{{ q }}">
+    </div>
+    <div class="col-md-2">
+        <label class="form-label">Lines</label>
+        <input class="form-control" type="number" name="lines" value="{{ lines }}" min="10" max="1000">
+    </div>
+    <div class="col-md-2">
+        <button class="btn btn-primary w-100" type="submit">Refresh</button>
+    </div>
+</form>
+
+<pre class="bg-dark text-light p-3 rounded overflow-auto" style="max-height: 80vh; white-space: pre-wrap;">
+{{ logs | join('\n') }}
+</pre>
+{% endblock %}

@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+
+{% block title %}System Message{% endblock %}
+
+{% block content %}
+<div class="alert alert-info" role="alert">
+    {{ message }}
+</div>
+<a class="btn btn-outline-primary" href="/schedule">← Back to Schedule</a>
+{% endblock %}

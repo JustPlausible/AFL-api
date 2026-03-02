@@ -1,47 +1,83 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <title>🔑 API Keys</title>
-    <style>
-    body { font-family: sans-serif; padding: 20px; }
-    table { width: 100%; border-collapse: collapse; margin-top: 15px; }
-    th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
-    th { background: #f0f0f0; }
-    a.button { padding: 4px 8px; background: #007bff; color: #fff; text-decoration: none; border-radius: 4px; }
-    a.button:hover { background: #0056b3; }
-    </style>
-</head>
-<body>
-    <a href="/">← Back Home</a>
-    <h1>🔑 API Key Manager</h1>
-    <table>
+{% extends "base.html" %}
+
+{% block title %}API Keys{% endblock %}
+
+{% block content %}
+<h2>🔑 API Key Management</h2>
+
+<form action="/api-keys/new" method="post" class="row g-2 align-items-center mb-3">
+    <div class="col-md-4">
+        <input name="label" class="form-control" placeholder="New key label..." required>
+    </div>
+    <div class="col-md-3">
+        <button class="btn btn-primary btn-sm">➕ Create Key</button>
+    </div>
+</form>
+
+<table class="table table-bordered table-sm">
+    <thead class="table-light">
         <tr>
-        <th>Label</th>
-        <th>API Key</th>
-        <th>Active?</th>
-        <th>Created</th>
-        <th>Action</th>
+            <th>ID</th>
+            <th>Label</th>
+            <th>Key</th>
+            <th>Status</th>
+            <th>Created</th>
+            <th>Actions</th>
         </tr>
-        {% for key in api_keys %}
+    </thead>
+    <tbody>
+    {% for key in api_keys %}
         <tr>
-            <td>{{ key['label'] }}</td>
-            <td>{{ key['api_key'][:4] }}...{{ key['api_key'][-4:] }}</td>
-            <td>{{ "✅" if key['is_active'] else "❌" }}</td>
-            <td>{{ key['created_at'] }}</td>
-            <td><a class="button" href="/api-keys/{{ key['id'] }}">Manage</a>
-                <form method="post" action="/api-keys/delete/{{ key.id }}" style="display:inline;" onsubmit="return confirm('Are you sure you want to delete this key?');">
-                    <button type="submit" style="background-color: #f44336; color: white;">Delete</button>
+            <td>{{ key.id }}</td>
+            <td>{{ key.label }}</td>
+            <td><code>{{ key.api_key }}</code></td>
+            <td>
+            <span class="badge {% if key.is_active %}bg-success{% else %}bg-secondary{% endif %}"
+                    id="status-{{ key.id }}">
+                {% if key.is_active %}Active{% else %}Inactive{% endif %}
+            </span>
+            </td>
+            <td>{{ key.created_at }}</td>
+            <td>
+                <form method="post" action="/setup/api-keys/{{ key.id }}/renew" class="d-inline">
+                    <button class="btn btn-outline-warning btn-sm">🔁 Renew</button>
+                </form>
+                <button class="btn btn-outline-info btn-sm toggle-btn"
+                        data-key-id="{{ key.id }}">
+                    Toggle
+                </button>
+                <form method="post" action="/setup/api-keys/delete/{{ key.id }}" class="d-inline" onsubmit="return confirm('Are you sure?');">
+                    <button class="btn btn-outline-danger btn-sm">🗑 Delete</button>
                 </form>
             </td>
         </tr>
-        {% endfor %}
-    </table>
-    <h2 style="margin-top: 30px;">➕ Add New API Key</h2>
-    <form method="post" action="/api-keys/new">
-    <label for="label">Label:</label>
-    <input type="text" name="label" required>
-    <button type="submit">Create Key</button>
-    </form>
+    {% endfor %}
+    </tbody>
+</table>
 
-</body>
-</html>
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const buttons = document.querySelectorAll(".toggle-btn");
+
+  buttons.forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const keyId = btn.dataset.keyId;
+      const res = await fetch(`/setup/api-keys/${keyId}/toggle-ajax`, {
+        method: "POST"
+      });
+      const data = await res.json();
+      if (data.success) {
+        const badge = document.getElementById(`status-${keyId}`);
+        if (data.new_status === 1) {
+          badge.className = "badge bg-success";
+          badge.textContent = "Active";
+        } else {
+          badge.className = "badge bg-secondary";
+          badge.textContent = "Inactive";
+        }
+      }
+    });
+  });
+});
+</script>
+{% endblock %}

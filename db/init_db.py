@@ -120,6 +120,7 @@ def create_player_stats_table(cursor):
             afl_id INTEGER,
             champion_id TEXT,
             player_name TEXT NOT NULL,
+            jumper_number INTEGER,
             team_code TEXT NOT NULL,
             af_score INTEGER,
             goals INTEGER,

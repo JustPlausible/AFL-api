@@ -4,7 +4,9 @@ import requests
 import time
 import random
 import config
-from playwright.sync_api import sync_playwright
+import os
+import errno
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 from utils.log import log
 
 def is_blocked(response: requests.Response) -> bool:
@@ -58,18 +60,70 @@ def scrape_with_backoff(
     print(f"❗ Failed to retrieve {url} after {max_retries} attempts.")
     return None
 
-def load_page_with_playwright(url: str, wait_time: float = 3.0) -> str | None:
-    log(f"🌐 Launching browser for {url}", "INFO")
+def load_page_with_playwright(url: str, wait_time: float = 3.0, screenshot_on_error: bool = True) -> str | None:
+    log(f"🌐 Launching Playwright browser for: {url}", "INFO")
+
+    screenshot_path = os.path.join("logs", "playwright_error.png")
+    os.makedirs("logs", exist_ok=True)
+
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            page.goto(url, timeout=10000)
-            page.wait_for_timeout(wait_time * 1000)  # Wait for JavaScript to populate
+            context = browser.new_context(
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36"
+                ),
+                viewport={"width": 1280, "height": 800}
+            )
+            page = context.new_page()
+
+            response = page.goto(url, timeout=10000)
+            if not response:
+                log(f"❌ No response returned from {url}", "ERROR")
+                if screenshot_on_error:
+                    page.screenshot(path=screenshot_path)
+                    log(f"📸 Screenshot saved to {screenshot_path}", "WARN")
+                return None
+
+            if response.status != 200:
+                log(f"❌ Received HTTP {response.status} from {url}", "ERROR")
+                if screenshot_on_error:
+                    page.screenshot(path=screenshot_path)
+                    log(f"📸 Screenshot saved to {screenshot_path}", "WARN")
+                return None
+
+            page.wait_for_timeout(wait_time * 1000)  # Let JS populate
             content = page.content()
+            log("✅ Page loaded successfully via Playwright", "SUCCESS")
+
             browser.close()
-            log("✅ Page loaded with Playwright", "SUCCESS")
             return content
+
+    except PlaywrightTimeoutError:
+        log(f"⏰ Timeout while trying to load: {url}", "ERROR")
+        if screenshot_on_error:
+            try:
+                page.screenshot(path=screenshot_path)
+                log(f"📸 Screenshot saved to {screenshot_path}", "WARN")
+            except Exception:
+                pass
+
     except Exception as e:
-        log(f"❌ Playwright failed: {e}", "ERROR")
-        return None
+        log(f"❌ Exception occurred during page load: {e}", "ERROR")
+        if screenshot_on_error:
+            try:
+                page.screenshot(path=screenshot_path)
+                log(f"📸 Screenshot saved to {screenshot_path}", "WARN")
+            except Exception:
+                pass
+
+    except OSError as e:
+        if e.errno == errno.EAGAIN:
+            log("⚠️ Resource temporarily unavailable — retrying after short wait", "WARN")
+            time.sleep(5)
+            return load_page_with_playwright(url, wait_time, screenshot_on_error)
+        else:
+            log(f"❌ OSError during page load: {e}", "ERROR")
+
+    return None

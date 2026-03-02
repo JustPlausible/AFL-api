@@ -4,6 +4,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 from html import escape
+from datetime import datetime, timedelta, timezone
 import sqlite3
 from pathlib import Path
 from utils.log import log
@@ -13,6 +14,7 @@ import json
 from db.import_to_db import export_clubs_from_db, diff_clubs
 from cli import import_clubs_to_db
 import httpx
+from collections import defaultdict
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
@@ -24,9 +26,6 @@ def home(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 DB_PATH = Path("data/afl_players.db")
-
-import httpx
-from collections import defaultdict
 
 @app.get("/schedule", response_class=HTMLResponse)
 def show_schedule(request: Request):
@@ -56,6 +55,23 @@ def show_schedule(request: Request):
         "request": request,
         "grouped_jobs": dict(grouped)
     })
+
+@app.get("/scheduler/refresh", response_class=HTMLResponse)
+def refresh_all_jobs_get(request: Request):
+    import httpx
+    try:
+        response = httpx.post("http://afl-scheduler:8000/scheduler/refresh", timeout=10)
+        response.raise_for_status()
+        return templates.TemplateResponse("message.html", {
+            "request": request,
+            "message": "✅ Schedule refresh successful!"
+        })
+    except Exception as e:
+        log(f"❌ Failed to refresh scheduler: {e}", "ERROR")
+        return templates.TemplateResponse("message.html", {
+            "request": request,
+            "message": f"❌ Failed to refresh scheduler: {e}"
+        })
 
 @app.get("/tables", response_class=HTMLResponse)
 def show_tables(request: Request):
@@ -135,13 +151,17 @@ def view_table(
 
     conn.close()
 
+    total_pages = (total_rows + page_size - 1) // page_size
+    pagination_window = get_pagination_window(page, total_pages)
+
     return templates.TemplateResponse("table_view.html", {
         "request": request,
         "table": safe_table,
         "headers": headers,
         "rows": rows,
+        "pagination_window": pagination_window,
+        "total_pages": total_pages,
         "page": page,
-        "total_pages": (total_rows + page_size - 1) // page_size,
         "search": search,
         "columns": all_columns,
         "selected_column": selected_col,
@@ -149,7 +169,16 @@ def view_table(
         "order": sort_order.lower()
     })
 
-@app.get("/clubs-diff", response_class=HTMLResponse)
+def get_pagination_window(current, total, window=5):
+    left = max(current - window, 1)
+    right = min(current + window, total)
+    return list(range(left, right + 1))
+
+@app.get("/setup", response_class=HTMLResponse)
+def show_setup(request: Request):
+    return templates.TemplateResponse("setup.html", {"request": request})
+
+@app.get("/setup/clubs-diff", response_class=HTMLResponse)
 def show_clubs_diff(request: Request):
     added, removed, changed = diff_clubs()
     return templates.TemplateResponse("clubs_diff.html", {
@@ -160,7 +189,7 @@ def show_clubs_diff(request: Request):
         "message": request.session.pop("message", None)
     })
 
-@app.get("/api-keys", response_class=HTMLResponse)
+@app.get("/setup/api-keys", response_class=HTMLResponse)
 def view_api_keys(request: Request):
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -175,7 +204,7 @@ def view_api_keys(request: Request):
         "api_keys": rows
     })
 
-@app.get("/api-keys/{key_id}", response_class=HTMLResponse)
+@app.get("/setup/api-keys/{key_id}", response_class=HTMLResponse)
 def manage_key(request: Request, key_id: int):
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -192,7 +221,7 @@ def manage_key(request: Request, key_id: int):
         "key": key
     })
 
-@app.post("/api-keys/{key_id}/renew")
+@app.post("/setup/api-keys/{key_id}/renew")
 def renew_key(key_id: int):
     new_key = secrets.token_urlsafe(32)
     conn = sqlite3.connect(DB_PATH)
@@ -200,9 +229,9 @@ def renew_key(key_id: int):
     cur.execute("UPDATE api_keys SET api_key = ? WHERE id = ?", (new_key, key_id))
     conn.commit()
     conn.close()
-    return RedirectResponse(f"/api-keys/{key_id}", status_code=303)
+    return RedirectResponse(f"/setup/api-keys/{key_id}", status_code=303)
 
-@app.post("/api-keys/{key_id}/toggle")
+@app.post("/setup/api-keys/{key_id}/toggle")
 def toggle_key(key_id: int):
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
@@ -213,9 +242,24 @@ def toggle_key(key_id: int):
         cur.execute("UPDATE api_keys SET is_active = ? WHERE id = ?", (new_value, key_id))
         conn.commit()
     conn.close()
-    return RedirectResponse(f"/api-keys/{key_id}", status_code=303)
+    return RedirectResponse(f"/setup/api-keys/{key_id}", status_code=303)
 
-@app.post("/api-keys/new")
+@app.post("/setup/api-keys/{key_id}/toggle-ajax")
+def toggle_key_ajax(key_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT is_active FROM api_keys WHERE id = ?", (key_id,))
+    current = cur.fetchone()
+    if current is not None:
+        new_value = 0 if current[0] else 1
+        cur.execute("UPDATE api_keys SET is_active = ? WHERE id = ?", (new_value, key_id))
+        conn.commit()
+        conn.close()
+        return {"success": True, "new_status": new_value}
+    conn.close()
+    return {"success": False}
+
+@app.post("/setup/api-keys/new")
 def create_api_key(label: str = Form(...)):
     new_key = secrets.token_urlsafe(32)
     conn = sqlite3.connect(DB_PATH)
@@ -223,16 +267,72 @@ def create_api_key(label: str = Form(...)):
     cur.execute("INSERT INTO api_keys (label, api_key) VALUES (?, ?)", (label, new_key))
     conn.commit()
     conn.close()
-    return RedirectResponse("/api-keys", status_code=303)
+    return RedirectResponse("/setup/api-keys", status_code=303)
 
-@app.post("/api-keys/delete/{key_id}")
+@app.post("/setup/api-keys/delete/{key_id}")
 def delete_api_key(key_id: int):
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     cur.execute("DELETE FROM api_keys WHERE id = ?", (key_id,))
     conn.commit()
     conn.close()
-    return RedirectResponse("/api-keys", status_code=303)
+    return RedirectResponse("/setup/api-keys", status_code=303)
+
+LOG_FILES = {
+    "Player Stats": "scrape_afl_player_stats.log",
+    "Injuries": "scrape_afl_injuries.log",
+    "Lineups": "scrape_afl_lineups.log",
+    "Matches": "scrape_afl_matches.log",
+    "Scheduler Jobs": "scheduler_jobs.log",
+}
+
+@app.get("/logs", response_class=HTMLResponse)
+def view_logs_raw(
+    request: Request,
+    log: str = Query("Player Stats"),
+    q: str = Query("", alias="q"),
+    lines: int = Query(200, ge=10, le=1000),
+):
+    try:
+        file_name = LOG_FILES.get(log, None)
+        if not file_name:
+            return HTMLResponse(f"<h2>⚠️ Unknown log file: {log}</h2>", status_code=400)
+
+        log_path = Path("logs") / file_name
+        LOCAL_TZ = timezone(timedelta(hours=8))  # AWST
+
+        if not log_path.exists():
+            return HTMLResponse(f"<h2>⚠️ Log file not found: {file_name}</h2>", status_code=404)
+
+        with open(log_path, "r", encoding="utf-8") as f:
+            raw_lines = f.readlines()
+
+        filtered = [line for line in raw_lines if q.lower() in line.lower()]
+        display_lines = filtered[-lines:]
+
+        def convert_utc_line(line: str) -> str:
+            try:
+                ts_match = line.split("]")[0].strip("[").replace(" UTC", "")
+                dt = datetime.strptime(ts_match, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                local_dt = dt.astimezone(LOCAL_TZ)
+                converted = local_dt.strftime("%Y-%m-%d %H:%M:%S AWST")
+                return line.replace(ts_match + " UTC", converted)
+            except Exception:
+                return line  # Fallback to original if parsing fails
+
+        formatted_lines = [escape(convert_utc_line(l)) for l in display_lines]
+
+        return templates.TemplateResponse("logs.html", {
+            "request": request,
+            "logs": formatted_lines,
+            "selected_log": log,
+            "log_options": LOG_FILES.keys(),
+            "q": q,
+            "lines": lines,
+        })
+
+    except Exception as e:
+        return HTMLResponse(f"<h2>❌ Failed to load logs: {e}</h2>", status_code=500)
 
 @app.post("/clubs-diff/import")
 def do_import_clubs(request: Request):

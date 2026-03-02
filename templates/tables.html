@@ -1,22 +1,15 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <title>Available Tables</title>
-  <style>
-    body { font-family: sans-serif; padding: 20px; }
-    h1 { margin-bottom: 10px; }
-    ul { list-style-type: none; padding: 0; }
-    li { margin-bottom: 8px; }
-    a { text-decoration: none; color: #007acc; }
-  </style>
-</head>
-<body>
-  <a href="/">← Back Home</a>
-  <h1>📊 Tables in afl_players.db</h1>
-  <ul>
-    {% for table in tables %}
-      <li><a href="/table/{{ table }}">{{ table }}</a></li>
-    {% endfor %}
-  </ul>
-</body>
-</html>
+{% extends "base.html" %}
+
+{% block title %}Database Tables{% endblock %}
+
+{% block content %}
+<h2>📚 Available Tables</h2>
+<ul class="list-group">
+  {% for table in tables %}
+    <li class="list-group-item d-flex justify-content-between align-items-center">
+      {{ table }}
+      <a href="/table/{{ table }}" class="btn btn-sm btn-outline-primary">View</a>
+    </li>
+  {% endfor %}
+</ul>
+{% endblock %}

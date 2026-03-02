@@ -1,3 +1,4 @@
+# utils/match_time.py
 from datetime import datetime
 import re
 import pytz
@@ -29,6 +30,9 @@ def parse_match_time(date_str: str, time_str: str) -> str | None:
     time_clean = re.sub(r"(AWST|AEST|AEDT|ACST|ACDT|UTC)", "", time_str.upper()).strip()
 
     try:
+        # ✅ Clean ordinal suffixes in day part: "1st" → "1"
+        date_str = re.sub(r"(\d{1,2})(st|nd|rd|th)", r"\1", date_str)
+
         naive_dt = datetime.strptime(f"{date_str} {time_clean}", "%B %d %Y %I:%M%p")
         local_dt = tz.localize(naive_dt)
         iso_utc = local_dt.astimezone(pytz.utc).isoformat()

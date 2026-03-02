@@ -6,6 +6,8 @@ __pycache__/
 # Playwright downloads
 playwright/.cache/
 .playwright/
+*.har
+*.zip
 
 # Environment + config
 .env
@@ -27,6 +29,8 @@ Thumbs.db
 .venv/
 env/
 venv/
+.env
+.env.*
 
 # Test results
 htmlcov/
@@ -34,12 +38,25 @@ htmlcov/
 .pytest_cache/
 
 # Scraped or output data
-data/*.json
-data/*.db
+*.db
+data/
+*.sqlite
+*.sqlite3
 
 # Optional: compiled docs or builds
 dist/
 build/
 
+# Exports
+*.csv
+
+# Core dumps
+core
+core.*
+
 # Temp or old files
 _old/
+
+# OS junk
+.DS_Store
+Thumbs.db

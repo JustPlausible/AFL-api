@@ -4,6 +4,7 @@ from pathlib import Path
 import json
 from utils.log import log
 import config
+import re
 
 CLUBS_JSON = Path("data/clubs.json")
 DB_PATH = Path(config.DB_PATH)
@@ -67,10 +68,11 @@ def resolve_club_code(name: str) -> str:
     Attempts to resolve a team name (e.g. 'Fremantle') to a standard club code (e.g. 'FRE').
     Falls back to original name if no match is found, and logs a warning.
     """
-    name = name.strip().lower()
+    name = re.sub(r"[^a-z]", "", name.strip().lower())
     clubs = load_clubs()
 
     for club in clubs:
+        # Match on official name
         if club["name"].lower().startswith(name) or name in club["name"].lower():
             return club["code"]
 
@@ -81,8 +83,19 @@ def resolve_club_code(name: str) -> str:
             except json.JSONDecodeError:
                 aliases = []
 
-        if any(name == alias.strip().lower() for alias in aliases):
-            return club["code"]
+        # Exact alias match
+        for alias in aliases:
+            alias_clean = re.sub(r"[^a-z]", "", alias.lower())
+            if name == alias_clean:
+                return club["code"]
+
+        # New: partial/startswith fallback for tricky cases
+        for alias in aliases:
+            alias_clean = re.sub(r"[^a-z]", "", alias.lower())
+            if name.startswith(alias_clean):
+                log(f"🧩 Partial alias match: '{name}' starts with '{alias_clean}' → {club['code']}", "DEBUG")
+                return club["code"]
 
     log(f"⚠️ Unmatched team name: '{name}'", "WARN")
     return name
+

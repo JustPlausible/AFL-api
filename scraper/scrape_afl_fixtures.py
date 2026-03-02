@@ -54,7 +54,7 @@ def parse_round_list(html: str) -> list[dict]:
     return rounds
 
 
-def run():
+def update_fixture_cache():
     log("Starting AFL fixture scrape...", "INFO")
     url = get_fixture_url()
 
@@ -75,4 +75,4 @@ def run():
 
 
 if __name__ == "__main__":
-    run()
+    update_fixture_cache()

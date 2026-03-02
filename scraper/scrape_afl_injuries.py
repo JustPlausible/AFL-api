@@ -8,40 +8,70 @@ from db.import_to_db import save_injuries_to_db
 from bs4 import BeautifulSoup, Comment
 from playwright.sync_api import sync_playwright
 
-from utils.log import log
+from utils.log import setup_logger
 from merge.helpers import match_injury_player_to_db
-from utils.club_lookup import get_club_by_slug, load_clubs
+from utils.club_lookup import get_club_by_slug, load_clubs, resolve_club_code
 from utils.dictionary import CLUB_SLUG_ALIASES
 
-def extract_and_match_club(img_src: str) -> dict | None:
-    """Extract slug from image URL and match it to a known club."""
-    log(f"🖼 Image src: {img_src}", "DEBUG")
-    filename = img_src.split("/")[-1].split("?")[0]
-    slug_raw = filename.replace(".jpg", "")
+log = setup_logger("injury_scraper", "scrape_afl_injuries.log")
 
-    slug_cleaned = re.sub(r"(-strap.*|-afl-banner.*|-new-logo.*|-logo.*)", "", slug_raw)
-    slug_cleaned = re.sub(r"[^a-z]", "", slug_cleaned.lower())
-
+def extract_and_match_club(img_src: str, alt_text: str = "") -> dict | None:
+    """Extract a club match using alt text, then fallback to slug matching."""
     clubs = load_clubs()
 
-    for club in clubs:
-        club_key = re.sub(r"[^a-z]", "", club["slug"].lower())
-        if slug_cleaned == club_key:
-            return club
-
-    if slug_cleaned in CLUB_SLUG_ALIASES:
-        fallback_slug = CLUB_SLUG_ALIASES[slug_cleaned]
-        club = get_club_by_slug(fallback_slug)
+    # First try: resolve from alt text (e.g. 'Kuwarna', 'Narrm')
+    if alt_text:
+        log.debug(f"🎯 Attempting match from alt text: '{alt_text}'")
+        club_code = resolve_club_code(alt_text)
+        club = next((c for c in clubs if c["code"] == club_code), None)
         if club:
-            log(f"🔁 Matched using alias: {slug_cleaned} → {fallback_slug}", "DEBUG")
+            log.debug(f"✅ Matched via alt text '{alt_text}' → {club_code}")
+            return club
+        else:
+            log.warning(f"⚠️ Alt text '{alt_text}' did not match any known club")
+
+    # Fallback: extract and normalise from img src
+    log.debug(f"🖼 Image src: {img_src}")
+    filename = img_src.split("/")[-1].split("?")[0]  # e.g. 'kuwarna-strap-2024-logo.jpg'
+    slug_raw = filename.replace(".jpg", "")
+    
+    # Strip only recognised trailing suffixes
+    slug_cleaned = re.sub(r"(-(?:sdnr-)?(?:strap|logo|banner)(?:-[\d]{4})?)$", "", slug_raw, flags=re.IGNORECASE)
+    slug_cleaned = re.sub(r"[^a-z]", "", slug_cleaned.lower())
+
+    if slug_raw != slug_cleaned:
+        log.debug(f"🧽 Cleaned slug: '{slug_raw}' → '{slug_cleaned}'")
+
+    if slug_cleaned in [club["code"].lower() for club in clubs]:
+        club = next(c for c in clubs if c["code"].lower() == slug_cleaned)
+        log.debug(f"🆔 Matched using club code fallback: {slug_cleaned} → {club['code']}")
+        return club
+
+    # Try match against slug or aliases
+    for club in clubs:
+        slug_key = re.sub(r"[^a-z]", "", club["slug"].lower())
+        if slug_cleaned == slug_key:
             return club
 
-    log(f"[!] ❓ Could not match normalised slug: {slug_cleaned}", "WARN")
+        aliases = club.get("aliases") or []
+        if isinstance(aliases, str):
+            try:
+                aliases = json.loads(aliases)
+            except json.JSONDecodeError:
+                aliases = []
+
+        for alias in aliases:
+            alias_clean = re.sub(r"[^a-z]", "", alias.lower())
+            if slug_cleaned == alias_clean:
+                log.debug(f"🔁 Matched using alias: {slug_cleaned} → {club['code']}")
+                return club
+
+    log.warning(f"[!] ❓ Could not match normalised slug: {slug_cleaned}")
     return None
 
 def scrape_injury_list(db_conn) -> dict:
     url = "https://www.afl.com.au/matches/injury-list"
-    log(f"🌐 Fetching injury list from: {url}", "INFO")
+    log.info(f"🌐 Fetching injury list from: {url}")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -52,8 +82,8 @@ def scrape_injury_list(db_conn) -> dict:
         soup = BeautifulSoup(html, "html.parser")
         team_blocks = soup.select("div.articleWidget.full-width")
 
-        log("✅ Page rendered", "DEBUG")
-        log(f"🔍 Found {len(team_blocks)} team blocks", "DEBUG")
+        log.debug("✅ Page rendered")
+        log.debug(f"🔍 Found {len(team_blocks)} team blocks")
 
         results = []
         for i, block in enumerate(team_blocks):
@@ -64,25 +94,26 @@ def scrape_injury_list(db_conn) -> dict:
                 image_soup = BeautifulSoup(comment, "html.parser")
                 img = image_soup.find("img", class_="promo-image__image")
                 if img and img.get("src"):
-                    club = extract_and_match_club(img["src"])
+                    alt_text = img.get("alt", "").strip()
+                    club = extract_and_match_club(img["src"], alt_text)
 
             club_slug = club["slug"] if club else None
             club_code = club["code"] if club else "???"
 
-            log(f"🧩 [{i}] Club: {club_code} ({club_slug})", "DEBUG")
+            log.debug(f"🧩 [{i}] Club: {club_code} ({club_slug})")
             if not club_slug:
-                log(f"[!] No club slug for block {i}", "WARN")
+                log.warning(f"[!] No club slug for block {i}")
                 continue
 
             # Table sits in next sibling div
             table_wrapper = block.find_next_sibling("div", class_="table")
             if not table_wrapper:
-                log(f"[!] No table wrapper for {club_code}", "WARN")
+                log.warning(f"[!] No table wrapper for {club_code}")
                 continue
 
             table = table_wrapper.find("table")
             if not table:
-                log(f"[!] No table found for {club_code}", "WARN")
+                log.warning(f"[!] No table found for {club_code}")
                 continue
 
             rows = table.find_all("tr")[1:]  # Skip header
@@ -93,9 +124,9 @@ def scrape_injury_list(db_conn) -> dict:
                     name = cols[0].text.strip()
                     afl_id = match_injury_player_to_db(name, club_code, conn=db_conn)
                     if afl_id:
-                        log(f"✅ Matched player '{name}' to AFL ID {afl_id}", "DEBUG")
+                        log.debug(f"✅ Matched player '{name}' to AFL ID {afl_id}")
                     else:
-                        log(f"❌ No match for player '{name}' ({club_code})", "WARN")
+                        log.warning(f"❌ No match for player '{name}' ({club_code})")
                     players.append({
                         "name": name,
                         "injury": cols[1].text.strip(),
@@ -108,9 +139,9 @@ def scrape_injury_list(db_conn) -> dict:
                     match = re.search(r"updated:\s*(.+)", cols[0].text.strip(), re.IGNORECASE)
                     if match:
                         updated_text = match.group(1).strip()
-                        log(f"🗓️  Injury list updated: {updated_text} ({club_code})", "DEBUG")
+                        log.debug(f"🗓️  Injury list updated: {updated_text} ({club_code})")
 
-            log(f"📦 {club_code}: {len(players)} players", "INFO")
+            log.info(f"📦 {club_code}: {len(players)} players")
 
             results.append({
                 "club": club_code,

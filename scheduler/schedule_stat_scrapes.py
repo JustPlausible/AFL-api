@@ -1,39 +1,111 @@
+# scheduler/schedule_stat_scrapes.py
+
 from apscheduler.triggers.date import DateTrigger
-from datetime import datetime, timedelta
-from utils.log import log
+from datetime import datetime, timedelta, timezone
+from utils.log import setup_logger
 import pytz
 import sqlite3
-import os
+import random
+import subprocess
 from db.connection import get_db_connection
+
+# Dedicated logger for scheduler processes (not scraper internals)
+scheduler_log = setup_logger("scheduler_jobs", "scheduler_jobs.log")
 
 AWST = pytz.timezone("Australia/Perth")
 
 def run_stats_scraper(match_id: int):
-    log(f"📈 Running stat scraper for match {match_id}", "INFO")
-    os.system(f"python3 -m scraper.scrape_afl_player_stats --match {match_id}")
+    """Subprocess wrapper to run scraper via match_id."""
+    scheduler_log.info(f"📈 Running stat scraper for match {match_id}")
+    cmd = f"python3 -m scraper.scrape_afl_player_stats --match-id {match_id}"
+    scheduler_log.info(f"📦 Executing command: {cmd}")
+
+    try:
+        result = subprocess.run(
+            cmd.split(), capture_output=True, text=True, check=True
+        )
+        scheduler_log.info(f"✅ Command succeeded for match {match_id}")
+
+    except subprocess.CalledProcessError as e:
+        scheduler_log.error(f"❌ Command failed for match {match_id} with exit code {e.returncode}")
+        scheduler_log.error(f"❌ STDERR:\n{e.stderr.strip()}")
+
+def was_scraped_recently(match_id: int, conn, window_minutes: int = 5) -> bool:
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT scraped_at FROM scrape_log
+        WHERE match_id = ?
+        ORDER BY scraped_at DESC
+        LIMIT 1
+    """, (match_id,))
+    row = cursor.fetchone()
+    if not row:
+        return False
+
+    scraped_at = datetime.fromisoformat(row[0])
+    now = datetime.now(timezone.utc)
+    return (now - scraped_at) < timedelta(minutes=window_minutes)
 
 def register_stat_scrape_jobs(scheduler):
-    log("📋 Registering stat scraping jobs...", "INFO")
+    scheduler_log.info("📋 Registering stat scraping jobs...")
     conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute("""
         SELECT match_id, start_time_utc
         FROM matches
-        WHERE status = 'UPCOMING' AND start_time_utc IS NOT NULL
+        WHERE status IN ('UPCOMING', 'LIVE') AND start_time_utc IS NOT NULL
     """)
 
     for match_id, start_time_utc in cursor.fetchall():
-        match_start = datetime.fromisoformat(start_time_utc).astimezone(AWST)
-        scrape_time = match_start - timedelta(minutes=2)
+        try:
+            # Ensure UTC → AWST with proper timezone awareness
+            start_dt = datetime.fromisoformat(start_time_utc).replace(tzinfo=timezone.utc)
+            match_start = start_dt.astimezone(AWST)
+            scrape_time = match_start + timedelta(seconds=random.randint(3, 15))
 
-        scheduler.add_job(
-            run_stats_scraper,
-            trigger=DateTrigger(run_date=scrape_time),
-            args=[match_id],
-            id=f"stat_scraper_{match_id}"
-        )
-        log(f"📅 Scheduled: stats for match {match_id} at {scrape_time}", "DEBUG")
+            scheduler.add_job(
+                run_stats_scraper,
+                trigger=DateTrigger(run_date=scrape_time),
+                args=[match_id],
+                id=f"stat_scraper_{match_id}",
+                name=f"Run stat scraper for match {match_id}",
+                replace_existing=True
+            )
+
+            scheduler_log.info(f"📝 Scheduled job 'stat_scraper_{match_id}' for {scrape_time.isoformat()} AWST")
+
+        except Exception as e:
+            scheduler_log.error(f"❌ Failed to schedule job for match {match_id}: {e}")
 
     conn.close()
-    log("✅ Stat scraping jobs registered", "INFO")
+    scheduler_log.info("✅ Stat scraping jobs registered")
+
+def register_live_stat_scrapers(scheduler):
+    scheduler_log.info("📡 Checking for active LIVE matches to resume scraping...")
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT match_id, start_time_utc
+        FROM matches
+        WHERE status = 'LIVE' AND start_time_utc IS NOT NULL
+    """)
+
+    for match_id, start_time_utc in cursor.fetchall():
+        if was_scraped_recently(match_id, conn, window_minutes=5):
+            scheduler_log.info(f"⏭ Match {match_id} was scraped recently — skipping re-trigger.")
+            continue
+
+        scheduler_log.info(f"🚨 Starting immediate scraper for LIVE match {match_id}")
+        scheduler.add_job(
+            run_stats_scraper,
+            trigger=DateTrigger(run_date=datetime.now()),
+            args=[match_id],
+            id=f"stat_scraper_recovery_{match_id}",
+            name=f"Recovery stat scraper for LIVE match {match_id}",
+            replace_existing=True
+        )
+
+    conn.close()

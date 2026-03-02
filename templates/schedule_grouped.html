@@ -1,46 +1,58 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>🕒 Grouped Scheduled Jobs</title>
-  <style>
-    body { font-family: sans-serif; padding: 40px; background-color: #f9f9f9; }
-    h1 { font-size: 2em; margin-bottom: 1em; }
-    h2 { margin-top: 2em; }
-    table { width: 100%; border-collapse: collapse; margin-top: 0.5em; }
-    th, td { padding: 10px; border: 1px solid #ccc; text-align: left; }
-    th { background-color: #eee; }
-    td small { color: #666; }
-  </style>
-</head>
-<body>
-    <a href="/">← Back Home</a>
-    <h1>🕒 Scheduled Jobs by Round</h1>
+{% extends "base.html" %}
+{% block title %}Scheduled Jobs{% endblock %}
 
-  {% for group, jobs in grouped_jobs.items() %}
-    <h2>{{ group }}</h2>
-    <table>
-      <thead>
-        <tr>
-          <th>Function</th>
-          <th>Trigger</th>
-          <th>Next Run</th>
-          <th>Job ID</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for job in jobs %}
-        <tr>
-          <td><strong>{{ job.func.split(':')[-1] }}</strong><br><small>{{ job.func }}</small></td>
-          <td>{{ job.trigger }}</td>
-          <td>{{ job.next_run or '—' }}</td>
-          <td><small>{{ job.id }}</small></td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  {% endfor %}
+{% block content %}
+<h2>📅 Scheduled Jobs</h2>
+<p class="text-muted">
+  <strong>Local time:</strong> <span id="local-clock">--:--:--</span>
+</p>
+<form action="/scheduler/refresh" method="get" class="mb-3">
+    <button class="btn btn-primary btn-sm">🔄 Refresh Scheduled Jobs</button>
+</form>
 
-  <p><a href="/">⬅️ Back to Admin Panel</a></p>
-</body>
-</html>
+{% for group, jobs in grouped_jobs.items() %}
+<div class="card mb-3">
+    <div class="card-header fw-bold">{{ group }}</div>
+    <div class="card-body p-2">
+        <table class="table table-sm table-bordered mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>ID</th>
+                    <th>Function</th>
+                    <th>Next Run</th>
+                    <th>Trigger</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for job in jobs %}
+                <tr>
+                    <td>{{ job.id }}</td>
+                    <td>{{ job.func }}</td>
+                    <td>{{ job.next_run_time or "—" }}</td>
+                    <td>{{ job.trigger }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endfor %}
+
+<script>
+function updateClock() {
+  const now = new Date();
+  document.getElementById("local-clock").textContent = now.toLocaleString(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    weekday: 'short',
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric'
+  });
+}
+setInterval(updateClock, 1000);
+updateClock();
+</script>
+
+{% endblock %}

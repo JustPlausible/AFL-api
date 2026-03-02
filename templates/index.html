@@ -1,26 +1,50 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>🏉 AFL Stats Admin</title>
-  <style>
-    body { font-family: sans-serif; padding: 40px; background-color: #f9f9f9; }
-    h1 { font-size: 2em; margin-bottom: 0.5em; }
-    p { margin-bottom: 1.5em; }
-    ul { list-style: none; padding: 0; }
-    li { margin-bottom: 0.5em; }
-    a { text-decoration: none; color: #007bff; }
-    a:hover { text-decoration: underline; }
-  </style>
-</head>
-<body>
-  <h1>🏉 AFL Stats Admin</h1>
-  <p>Welcome to the AFL Stats Admin Panel. Use the links below to manage your data:</p>
-  <ul>
-    <li><a href="/tables">📊 View Database Tables</a></li>
-    <li><a href="/clubs-diff">🔍 Compare Clubs JSON ↔ DB</a></li>
-    <li><a href="/api-keys">🔑 Manage API Keys</a></li>
-    <li><a href="/schedule">🕒 View Scheduled Jobs</a></li>
-  </ul>
-</body>
-</html>
+{% extends "base.html" %}
+
+{% block title %}AFL API Admin Home{% endblock %}
+
+{% block content %}
+<h2>🏉 AFL API Admin Dashboard</h2>
+<p class="lead">Welcome to the AFL scraping api admin tools.</p>
+
+<div class="row gy-3">
+    <div class="col-md-6">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <h5 class="card-title">🗓 Scheduler</h5>
+                <p class="card-text">View and refresh stat scraping jobs for current or future matches.</p>
+                <a href="/schedule" class="btn btn-primary btn-sm">View Schedule</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-6">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <h5 class="card-title">📊 Tables</h5>
+                <p class="card-text">Explore AFL database tables and view or query raw data.</p>
+                <a href="/tables" class="btn btn-primary btn-sm">View Tables</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-6">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <h5 class="card-title">📄 Logs</h5>
+                <p class="card-text">Inspect player stat logs with live filtering and time conversion.</p>
+                <a href="/logs" class="btn btn-primary btn-sm">View Logs</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-6">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h5 class="card-title">⚙️ Setup</h5>
+          <p class="card-text">Manage clubs and API keys used by the system.</p>
+          <a href="/setup" class="btn btn-secondary btn-sm">Go to Setup</a>
+        </div>
+      </div>
+    </div>
+</div>
+{% endblock %}

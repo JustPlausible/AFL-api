@@ -6,6 +6,7 @@ from utils.log import log
 from scraper.scrape_afl_clubs import save_club_players_to_json
 from scraper.scrape_afl_injuries import scrape_injury_list, save_injuries_to_db
 from scraper.scrape_afl_lineups import scrape_team_lineups
+from scraper import scrape_afl_matches, scrape_afl_player_stats
 from merge.helpers import resolve_players_for_club
 from utils.club_lookup import load_clubs, get_club
 from db.import_to_db import import_players, save_lineups_to_db, save_clubs_to_db
@@ -70,51 +71,65 @@ def scrape_lineups_to_db(round_number: int, print_json: bool = False):
     conn.close()
 
 def handle_args():
-    parser = argparse.ArgumentParser(description="AFL Club Scraper and Enricher")
-    parser.add_argument("--import-clubs", action="store_true", help="Import clubs from data/clubs.json into DB")
-    parser.add_argument("--export-clubs", action="store_true", help="Export clubs from DB to data/clubs-bak.json")
-    parser.add_argument("--scrape", metavar="club_name", help="Scrape one club")
-    parser.add_argument("--scrape_all", action="store_true", help="Run scrape for all clubs")
-    parser.add_argument("--enrich", metavar="club_name", help="Enrich one club")
-    parser.add_argument("--enrich_all", action="store_true", help="Enrich all clubs")
-    parser.add_argument("--all", action="store_true", help="Scrape + enrich all clubs + import to DB")
-    parser.add_argument("--skip-existing", action="store_true", help="Skip clubs if output file already exists")
-    parser.add_argument("--scrape-injuries", action="store_true", help="Scrape injury list and store to DB")
-    parser.add_argument("--print-json", action="store_true", help="Print scraped JSON to stdout")
-    parser.add_argument("--scrape-lineups", type=int, metavar="ROUND", help="Scrape team lineups for a given round and import to DB")
+    parser = argparse.ArgumentParser(
+        description="AFL CLI Tools: Scraping, Enrichment, and Data Management"
+    )
+
+    # 🔹 Club-related arguments
+    club_group = parser.add_argument_group("Club Tools")
+    club_group.add_argument("--scrape-club", metavar="CLUB_NAME", help="Scrape a single club's player list")
+    club_group.add_argument("--scrape-clubs", action="store_true", help="Scrape all clubs")
+    club_group.add_argument("--enrich-club", metavar="CLUB_NAME", help="Enrich a single club with aliases/codes")
+    club_group.add_argument("--enrich-clubs", action="store_true", help="Enrich all clubs")
+    club_group.add_argument("--scrape-enrich-all", action="store_true", help="Scrape + enrich all clubs and import to DB")
+    club_group.add_argument("--skip-existing", action="store_true", help="(Club-only) Skip if output file already exists")
+
+    # 🔹 Match + fixture scraping
+    match_group = parser.add_argument_group("Match + Player Stat Tools")
+    match_group.add_argument("--scrape-injuries", action="store_true", help="Scrape AFL injury list")
+    match_group.add_argument("--print-json", action="store_true", help="Print scraped JSON to stdout")
+    match_group.add_argument("--scrape-lineups", type=int, metavar="ROUND", help="Scrape team lineups for a round")
+    match_group.add_argument("--scrape-round", type=int, metavar="ROUND_ID", help="Scrape AFL matches for a specific round_id (e.g. 1156)")
+    match_group.add_argument("--scrape-all-rounds", action="store_true", help="Scrape AFL matches for all rounds in DB")
+    match_group.add_argument("--scrape-match", type=int, metavar="MATCH_ID", help="Scrape player stats for a specific match_id")
+
+    # 🔹 Backup and restore
+    db_group = parser.add_argument_group("Data Backup / Restore")
+    db_group.add_argument("--import-clubs", action="store_true", help="Import clubs from JSON file into DB")
+    db_group.add_argument("--export-clubs", action="store_true", help="Export clubs from DB to backup JSON")
+
     return parser.parse_args()
 
 def main():
     args = handle_args()
 
-    if args.scrape:
-        club = get_club(args.scrape.lower())
+    if args.scrape_club:
+        club = get_club(args.scrape_club.lower())
         if club:
             save_club_players_to_json(club)
         else:
-            log(f"[!] Unknown club: {args.scrape}", "ERROR")
+            log(f"❌ Unknown club: {args.scrape_club}", "ERROR")
 
-    elif args.scrape_all:
+    elif args.scrape_clubs:
         scrape_all_clubs(skip_existing=args.skip_existing)
 
-    elif args.enrich:
-        resolve_players_for_club(args.enrich.lower())
+    elif args.enrich_club:
+        resolve_players_for_club(args.enrich_club.lower())
 
-    elif args.enrich_all:
+    elif args.enrich_clubs:
         enrich_all_clubs(skip_existing=args.skip_existing)
+
+    elif args.scrape_enrich_all:
+        scrape_all_clubs(skip_existing=args.skip_existing)
+        enrich_all_clubs(skip_existing=args.skip_existing)
+        import_players()
 
     elif args.scrape_injuries:
         scrape_injuries_to_db(print_json=args.print_json)
 
-    elif args.all:
-        scrape_all_clubs(skip_existing=args.skip_existing)
-        enrich_all_clubs(skip_existing=args.skip_existing)
-        import_players()
-    
     elif args.scrape_lineups is not None:
-        round_number = args.scrape_lineups
-        log(f"🧹 Starting scrape for Round {round_number}", "INFO")
-        scrape_lineups_to_db(round_number=round_number, print_json=args.print_json)
+        log(f"🧹 Scraping team lineups for Round {args.scrape_lineups}", "INFO")
+        scrape_lineups_to_db(round_number=args.scrape_lineups, print_json=args.print_json)
 
     elif args.import_clubs:
         log("📥 Importing clubs from JSON to DB...", "INFO")
@@ -124,6 +139,18 @@ def main():
         log("📤 Exporting clubs from DB to backup JSON...", "INFO")
         from db.import_to_db import export_clubs_from_db
         export_clubs_from_db()
+
+    elif args.scrape_round is not None:
+        log(f"📥 Scraping match data for round_id {args.scrape_round}", "INFO")
+        scrape_afl_matches.run(round_id=args.scrape_round)
+
+    elif args.scrape_all_rounds:
+        log("📥 Scraping all match data from DB rounds...", "INFO")
+        scrape_afl_matches.run(round_id=None)
+
+    elif args.scrape_match:
+        log(f"📊 Scraping player stats for match_id {args.scrape_match}", "INFO")
+        scrape_afl_player_stats.run_scraper(match_id=args.scrape_match, once=True)
 
     else:
         log("❓ No valid argument supplied. Use --help for options.", "WARN")

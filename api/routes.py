@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, FastAPI, Request
 from fastapi.responses import JSONResponse
 from pathlib import Path
 import json
@@ -14,6 +14,11 @@ router = APIRouter()
 @router.get("/")
 def read_root():
     return {"message": "AFL Supplemental API up and running!"}
+
+@router.get("/api/echo-headers")
+async def echo_headers(request: Request):
+    headers = dict(request.headers)
+    return {"headers": headers}
 
 @router.get("/api/players")
 def get_all_players(client_label: str = Depends(verify_api_key)):
@@ -207,7 +212,7 @@ def get_all_matches(
 
     if round_id:
         log(f"📦 {client_label} requested matches for Round {round_id}", "INFO")
-        query = "SELECT * FROM matches WHERE round_id = ? ORDER BY start_time_text"
+        query = "SELECT * FROM matches WHERE round_id = ? ORDER BY start_time_utc"
         matches = conn.execute(query, (round_id,)).fetchall()
     else:
         log(f"📄 {client_label} requested all matches", "INFO")

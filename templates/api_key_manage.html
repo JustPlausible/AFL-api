@@ -1,28 +1,18 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <title>Manage API Key</title>
-  <style>
-    body { font-family: sans-serif; padding: 20px; }
-    form { margin-top: 10px; }
-    .key { font-family: monospace; background: #eee; padding: 6px 10px; display: inline-block; }
-    .actions button { margin-right: 10px; }
-  </style>
-</head>
-<body>
-  <a href="/api-keys">← Back to list</a>
-  <h1>🔧 Manage API Key: {{ key['label'] }}</h1>
-  <p><strong>API Key:</strong> <span class="key">{{ key['api_key'] }}</span></p>
-  <p><strong>Active?</strong> {{ "✅ Yes" if key['is_active'] else "❌ No" }}</p>
-  <p><strong>Created:</strong> {{ key['created_at'] }}</p>
+{% extends "base.html" %}
 
-  <div class="actions">
-    <form method="post" action="/api-keys/{{ key['id'] }}/renew" style="display:inline;">
-      <button type="submit">♻️ Renew Key</button>
-    </form>
-    <form method="post" action="/api-keys/{{ key['id'] }}/toggle" style="display:inline;">
-      <button type="submit">{{ "🚫 Deactivate" if key['is_active'] else "✅ Activate" }}</button>
-    </form>
-  </div>
-</body>
-</html>
+{% block title %}API Key Details{% endblock %}
+
+{% block content %}
+<h2>🔐 API Key #{{ key.id }}</h2>
+<p><strong>Label:</strong> {{ key.label }}</p>
+<p><strong>Key:</strong> <code>{{ key.api_key }}</code></p>
+<p><strong>Status:</strong>
+  {% if key.is_active %}
+    <span class="badge bg-success">Active</span>
+  {% else %}
+    <span class="badge bg-secondary">Inactive</span>
+  {% endif %}
+</p>
+
+<a href="/setup/api-keys" class="btn btn-outline-secondary btn-sm">← Back to All Keys</a>
+{% endblock %}
