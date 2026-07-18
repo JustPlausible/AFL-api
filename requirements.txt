@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+playwright
+python-dotenv
+beautifulsoup4
+lxml
+jinja2
+python-multipart
+requests
+itsdangerous
+pytz
+APScheduler
+httpx
