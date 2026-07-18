@@ -1,10 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, FastAPI, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
-from pathlib import Path
-import json
-from datetime import datetime
 from auth import verify_api_key
-import sqlite3
 from utils.log import log
 from db.connection import get_db_connection
 from db.helpers import get_round_start_times
@@ -15,9 +11,23 @@ router = APIRouter()
 def read_root():
     return {"message": "AFL Supplemental API up and running!"}
 
+SENSITIVE_HEADER_NAMES = {"authorization", "cookie", "x-api-key", "x-admin-key"}
+
+
+def _redact_headers(headers: dict[str, str]) -> dict[str, str]:
+    return {
+        name: ("<redacted>" if name.lower() in SENSITIVE_HEADER_NAMES else value)
+        for name, value in headers.items()
+    }
+
+
 @router.get("/api/echo-headers")
-async def echo_headers(request: Request):
-    headers = dict(request.headers)
+async def echo_headers(
+    request: Request,
+    client_label: str = Depends(verify_api_key),
+):
+    log(f"🪞 {client_label} requested diagnostic header echo", "INFO")
+    headers = _redact_headers(dict(request.headers))
     return {"headers": headers}
 
 @router.get("/api/players")
