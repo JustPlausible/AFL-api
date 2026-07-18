@@ -105,6 +105,21 @@ curl -H "x-api-key: your_key_here" http://localhost:9900/players
 
 ---
 
+
+## 🔒 Admin Security
+
+The admin application is protected with HTTP Basic authentication. Configure credentials with:
+
+```bash
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=change-me
+SESSION_SECRET=replace-with-a-long-random-secret
+```
+
+`ADMIN_PASSWORD` and `SESSION_SECRET` must be set explicitly when `ENVIRONMENT=production`. The public API continues to use the `x-api-key` header, and disabled API keys are rejected.
+
+Diagnostic header echoing at `/api/echo-headers` requires a valid API key and redacts sensitive headers such as `x-api-key`, `authorization`, `cookie`, and `x-admin-key`.
+
 ## 📡 API Endpoints
 > 📘 For full interactive API docs, visit [`/docs`](http://localhost:8801/docs) while the app is running.
 

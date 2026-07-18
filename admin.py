@@ -1,5 +1,8 @@
 # admin.py
-from fastapi import FastAPI, Request, HTTPException, Query, Form
+import os
+import secrets
+from fastapi import Depends, FastAPI, Request, HTTPException, Query, Form, status
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
@@ -9,16 +12,45 @@ import sqlite3
 from pathlib import Path
 from utils.log import log
 import traceback
-import secrets
 import json
 from db.import_to_db import export_clubs_from_db, diff_clubs
-from cli import import_clubs_to_db
 import httpx
 from collections import defaultdict
 
-app = FastAPI()
+security = HTTPBasic()
+
+
+def verify_admin(credentials: HTTPBasicCredentials = Depends(security)) -> str:
+    expected_username = os.getenv("ADMIN_USERNAME", "admin")
+    expected_password = os.getenv("ADMIN_PASSWORD")
+
+    if not expected_password:
+        if os.getenv("ENVIRONMENT", "development").lower() == "production":
+            log("❌ ADMIN_PASSWORD must be set in production", "ERROR")
+            raise HTTPException(status_code=503, detail="Admin authentication is not configured")
+        expected_password = "admin"
+
+    username_ok = secrets.compare_digest(credentials.username, expected_username)
+    password_ok = secrets.compare_digest(credentials.password, expected_password)
+    if not (username_ok and password_ok):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid admin credentials",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    return credentials.username
+
+
+app = FastAPI(dependencies=[Depends(verify_admin)])
 templates = Jinja2Templates(directory="templates")
-app.add_middleware(SessionMiddleware, secret_key="your-secret-key")  # use .env later
+
+session_secret = os.getenv("SESSION_SECRET")
+if not session_secret:
+    if os.getenv("ENVIRONMENT", "development").lower() == "production":
+        raise RuntimeError("SESSION_SECRET must be set in production")
+    session_secret = secrets.token_urlsafe(32)
+
+app.add_middleware(SessionMiddleware, secret_key=session_secret)
 
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
@@ -336,6 +368,8 @@ def view_logs_raw(
 
 @app.post("/clubs-diff/import")
 def do_import_clubs(request: Request):
+    from cli import import_clubs_to_db
+
     import_clubs_to_db()
     request.session["message"] = "✅ Clubs imported from JSON."
     return RedirectResponse("/clubs-diff", status_code=303)
