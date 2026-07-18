@@ -55,7 +55,7 @@ app.add_middleware(SessionMiddleware, secret_key=session_secret)
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
     log("📥 index accessed", "INFO")
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="index.html", context={})
 
 DB_PATH = Path("data/afl_players.db")
 
@@ -83,10 +83,11 @@ def show_schedule(request: Request):
             round_id = "Daily Injuries"
         grouped[round_id].append(job)
 
-    return templates.TemplateResponse("schedule_grouped.html", {
-        "request": request,
-        "grouped_jobs": dict(grouped)
-    })
+    return templates.TemplateResponse(
+        request=request,
+        name="schedule_grouped.html",
+        context={"grouped_jobs": dict(grouped)},
+    )
 
 @app.get("/scheduler/refresh", response_class=HTMLResponse)
 def refresh_all_jobs_get(request: Request):
@@ -94,16 +95,18 @@ def refresh_all_jobs_get(request: Request):
     try:
         response = httpx.post("http://afl-scheduler:8000/scheduler/refresh", timeout=10)
         response.raise_for_status()
-        return templates.TemplateResponse("message.html", {
-            "request": request,
-            "message": "✅ Schedule refresh successful!"
-        })
+        return templates.TemplateResponse(
+            request=request,
+            name="message.html",
+            context={"message": "✅ Schedule refresh successful!"},
+        )
     except Exception as e:
         log(f"❌ Failed to refresh scheduler: {e}", "ERROR")
-        return templates.TemplateResponse("message.html", {
-            "request": request,
-            "message": f"❌ Failed to refresh scheduler: {e}"
-        })
+        return templates.TemplateResponse(
+            request=request,
+            name="message.html",
+            context={"message": f"❌ Failed to refresh scheduler: {e}"},
+        )
 
 @app.get("/tables", response_class=HTMLResponse)
 def show_tables(request: Request):
@@ -112,7 +115,7 @@ def show_tables(request: Request):
     cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
     tables = [row[0] for row in cur.fetchall()]
     conn.close()
-    return templates.TemplateResponse("tables.html", {"request": request, "tables": tables})
+    return templates.TemplateResponse(request=request, name="tables.html", context={"tables": tables})
 
 # Show table of player data
 @app.get("/table/{table_name}", response_class=HTMLResponse)
@@ -186,20 +189,23 @@ def view_table(
     total_pages = (total_rows + page_size - 1) // page_size
     pagination_window = get_pagination_window(page, total_pages)
 
-    return templates.TemplateResponse("table_view.html", {
-        "request": request,
-        "table": safe_table,
-        "headers": headers,
-        "rows": rows,
-        "pagination_window": pagination_window,
-        "total_pages": total_pages,
-        "page": page,
-        "search": search,
-        "columns": all_columns,
-        "selected_column": selected_col,
-        "sort": sort_col,
-        "order": sort_order.lower()
-    })
+    return templates.TemplateResponse(
+        request=request,
+        name="table_view.html",
+        context={
+            "table": safe_table,
+            "headers": headers,
+            "rows": rows,
+            "pagination_window": pagination_window,
+            "total_pages": total_pages,
+            "page": page,
+            "search": search,
+            "columns": all_columns,
+            "selected_column": selected_col,
+            "sort": sort_col,
+            "order": sort_order.lower(),
+        },
+    )
 
 def get_pagination_window(current, total, window=5):
     left = max(current - window, 1)
@@ -208,18 +214,21 @@ def get_pagination_window(current, total, window=5):
 
 @app.get("/setup", response_class=HTMLResponse)
 def show_setup(request: Request):
-    return templates.TemplateResponse("setup.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="setup.html", context={})
 
 @app.get("/setup/clubs-diff", response_class=HTMLResponse)
 def show_clubs_diff(request: Request):
     added, removed, changed = diff_clubs()
-    return templates.TemplateResponse("clubs_diff.html", {
-        "request": request,
-        "added": added,
-        "removed": removed,
-        "changed": changed,
-        "message": request.session.pop("message", None)
-    })
+    return templates.TemplateResponse(
+        request=request,
+        name="clubs_diff.html",
+        context={
+            "added": added,
+            "removed": removed,
+            "changed": changed,
+            "message": request.session.pop("message", None),
+        },
+    )
 
 @app.get("/setup/api-keys", response_class=HTMLResponse)
 def view_api_keys(request: Request):
@@ -231,10 +240,11 @@ def view_api_keys(request: Request):
     rows = cur.fetchall()
     conn.close()
 
-    return templates.TemplateResponse("api_keys.html", {
-        "request": request,
-        "api_keys": rows
-    })
+    return templates.TemplateResponse(
+        request=request,
+        name="api_keys.html",
+        context={"api_keys": rows},
+    )
 
 @app.get("/setup/api-keys/{key_id}", response_class=HTMLResponse)
 def manage_key(request: Request, key_id: int):
@@ -248,10 +258,11 @@ def manage_key(request: Request, key_id: int):
     if not key:
         raise HTTPException(status_code=404, detail="Key not found")
 
-    return templates.TemplateResponse("api_key_manage.html", {
-        "request": request,
-        "key": key
-    })
+    return templates.TemplateResponse(
+        request=request,
+        name="api_key_manage.html",
+        context={"key": key},
+    )
 
 @app.post("/setup/api-keys/{key_id}/renew")
 def renew_key(key_id: int):
@@ -354,14 +365,17 @@ def view_logs_raw(
 
         formatted_lines = [escape(convert_utc_line(l)) for l in display_lines]
 
-        return templates.TemplateResponse("logs.html", {
-            "request": request,
-            "logs": formatted_lines,
-            "selected_log": log,
-            "log_options": LOG_FILES.keys(),
-            "q": q,
-            "lines": lines,
-        })
+        return templates.TemplateResponse(
+            request=request,
+            name="logs.html",
+            context={
+                "logs": formatted_lines,
+                "selected_log": log,
+                "log_options": LOG_FILES.keys(),
+                "q": q,
+                "lines": lines,
+            },
+        )
 
     except Exception as e:
         return HTMLResponse(f"<h2>❌ Failed to load logs: {e}</h2>", status_code=500)
