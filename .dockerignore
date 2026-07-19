@@ -1,0 +1,48 @@
+# Git metadata and local VCS files
+.git
+.gitignore
+
+# Python bytecode and cache directories
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Test, type-checking, and coverage artifacts
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Local environment and secret files
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+
+# Logs and runtime data
+logs/
+*.log
+data/
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Local editor, OS, and Docker Compose override files
+.DS_Store
+.vscode/
+.idea/
+docker-compose.override.yml
+compose.override.yaml
