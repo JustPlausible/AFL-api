@@ -79,8 +79,8 @@ def test_invalid_api_key_log_redacts_full_secret(api_client, monkeypatch):
     assert response.status_code == 401
     assert messages
     assert "very-secret-invalid-key" not in messages[0]
-    assert "very-s" in messages[0]
-    assert "-key" in messages[0]
+    assert "very-sec…" in messages[0]
+    assert "-key" not in messages[0]
 
 
 def test_admin_app_requires_basic_auth(monkeypatch):

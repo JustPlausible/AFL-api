@@ -5,7 +5,10 @@
 {% block content %}
 <h2>🔐 API Key #{{ key.id }}</h2>
 <p><strong>Label:</strong> {{ key.label }}</p>
-<p><strong>Key:</strong> <code>{{ key.api_key }}</code></p>
+{% if one_time_api_key %}
+<div class="alert alert-warning">Copy this renewed API key now. It will not be shown again: <code>{{ one_time_api_key }}</code></div>
+{% endif %}
+<p><strong>Key prefix:</strong> <code>{{ key.key_prefix or "unavailable" }}</code></p>
 <p><strong>Status:</strong>
   {% if key.is_active %}
     <span class="badge bg-success">Active</span>

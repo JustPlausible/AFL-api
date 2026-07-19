@@ -4,8 +4,11 @@
 
 {% block content %}
 <h2>🔑 API Key Management</h2>
+{% if one_time_api_key %}
+<div class="alert alert-warning">Copy this API key now. It will not be shown again: <code>{{ one_time_api_key }}</code></div>
+{% endif %}
 
-<form action="/api-keys/new" method="post" class="row g-2 align-items-center mb-3">
+<form action="/setup/api-keys/new" method="post" class="row g-2 align-items-center mb-3">
     <div class="col-md-4">
         <input name="label" class="form-control" placeholder="New key label..." required>
     </div>
@@ -19,7 +22,7 @@
         <tr>
             <th>ID</th>
             <th>Label</th>
-            <th>Key</th>
+            <th>Key prefix</th>
             <th>Status</th>
             <th>Created</th>
             <th>Actions</th>
@@ -30,7 +33,7 @@
         <tr>
             <td>{{ key.id }}</td>
             <td>{{ key.label }}</td>
-            <td><code>{{ key.api_key }}</code></td>
+            <td><code>{{ key.key_prefix or "unavailable" }}</code></td>
             <td>
             <span class="badge {% if key.is_active %}bg-success{% else %}bg-secondary{% endif %}"
                     id="status-{{ key.id }}">

@@ -3,6 +3,8 @@ from fastapi import Header, HTTPException
 from utils.log import log
 from pathlib import Path
 import config
+from api_key_security import api_key_prefix, verify_api_key_hash
+from db.init_db import create_api_keys_table
 
 DB_PATH = Path(config.DB_PATH)
 
@@ -16,18 +18,21 @@ def get_db_connection():
 def _fingerprint_api_key(api_key: str) -> str:
     if not api_key:
         return "<empty>"
-    if len(api_key) <= 10:
-        return "<redacted>"
-    return f"{api_key[:6]}…{api_key[-4:]}"
+    return f"{api_key_prefix(api_key)}…"
 
 
 def verify_api_key(x_api_key: str = Header(...)) -> str:
     conn = get_db_connection()
+    create_api_keys_table(conn.cursor())
+    conn.commit()
     cursor = conn.execute(
-        "SELECT label FROM api_keys WHERE api_key = ? AND is_active = 1",
-        (x_api_key,),
+        "SELECT label, key_hash FROM api_keys WHERE is_active = 1 AND key_hash IS NOT NULL",
     )
-    result = cursor.fetchone()
+    result = None
+    for row in cursor.fetchall():
+        if verify_api_key_hash(x_api_key, row["key_hash"]):
+            result = row
+            break
     conn.close()
 
     if not result:
