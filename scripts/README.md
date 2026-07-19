@@ -32,6 +32,6 @@ init_db.py – Initializes the SQLite database and tables.
 import_to_db.py – Loads enriched JSON player files into the DB.
 
 💡 Notes
-All scripts assume data/afl_players.db as the active SQLite DB.
+API-key scripts use the configured `DB_PATH` value from `config.py`, matching the running application database.
 
 Scripts are meant to be run inside your container using PYTHONPATH=/app.

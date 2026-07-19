@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import auth
+import config
 from api.routes import router
 
 
@@ -24,6 +25,8 @@ def _make_api_key_db(path):
     )
     conn.execute("INSERT INTO api_keys (label, api_key, is_active) VALUES (?, ?, ?)", ("active", "active-key", 1))
     conn.execute("INSERT INTO api_keys (label, api_key, is_active) VALUES (?, ?, ?)", ("inactive", "inactive-key", 0))
+    from db.init_db import create_api_keys_table
+    create_api_keys_table(conn.cursor())
     conn.commit()
     conn.close()
 
@@ -32,7 +35,7 @@ def _make_api_key_db(path):
 def api_client(tmp_path, monkeypatch):
     db_path = tmp_path / "afl_players.db"
     _make_api_key_db(db_path)
-    monkeypatch.setattr(auth, "DB_PATH", db_path)
+    monkeypatch.setattr(config, "DB_PATH", str(db_path))
 
     app = FastAPI()
     app.include_router(router)

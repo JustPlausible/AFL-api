@@ -1,14 +1,11 @@
 import sqlite3
-from pathlib import Path
-
 from api_key_security import api_key_prefix, generate_api_key, hash_api_key
 from db.init_db import create_api_keys_table
+from db.connection import get_db_path, validate_db_parent
 
-# Define the path to the SQLite database
-db_path = Path("data/afl_players.db")
-db_path.parent.mkdir(parents=True, exist_ok=True)
-
-# Connect to the SQLite database (will create if it doesn't exist)
+# Connect to the configured SQLite database (will create if it does not exist)
+db_path = validate_db_parent(get_db_path())
+print(f"Using SQLite database: {db_path}")
 conn = sqlite3.connect(db_path)
 cursor = conn.cursor()
 create_api_keys_table(cursor)

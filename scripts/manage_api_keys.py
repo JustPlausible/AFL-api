@@ -1,15 +1,12 @@
 import argparse
 import sqlite3
-from pathlib import Path
-
 from api_key_security import api_key_prefix, generate_api_key, hash_api_key, verify_api_key_hash
 from db.init_db import create_api_keys_table
-
-DB_PATH = Path("data/afl_players.db")
+from db.connection import get_db_path
 
 
 def get_connection():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(get_db_path())
     create_api_keys_table(conn.cursor())
     conn.commit()
     return conn

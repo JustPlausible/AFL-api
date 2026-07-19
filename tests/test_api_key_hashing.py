@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import auth
+import config
 from api.routes import router
 from api_key_security import hash_api_key, api_key_prefix
 from db.init_db import create_api_keys_table
@@ -32,7 +33,7 @@ def _make_db(path):
 
 
 def _api_client(db_path, monkeypatch):
-    monkeypatch.setattr(auth, "DB_PATH", db_path)
+    monkeypatch.setattr(config, "DB_PATH", str(db_path))
     app = FastAPI()
     app.include_router(router)
     return TestClient(app)
@@ -101,7 +102,7 @@ def test_admin_created_key_is_shown_once_and_not_stored_in_sqlite(tmp_path, monk
     monkeypatch.setenv("SESSION_SECRET", "test-session-secret")
     import admin
     admin = importlib.reload(admin)
-    monkeypatch.setattr(admin, "DB_PATH", db_path)
+    monkeypatch.setattr(config, "DB_PATH", str(db_path))
 
     client = TestClient(admin.app)
     response = client.post("/setup/api-keys/new", data={"label": "created"}, headers=_auth_header(), follow_redirects=True)
@@ -125,7 +126,7 @@ def test_renewed_key_replaces_old_key(tmp_path, monkeypatch):
     monkeypatch.setenv("SESSION_SECRET", "test-session-secret")
     import admin
     admin = importlib.reload(admin)
-    monkeypatch.setattr(admin, "DB_PATH", db_path)
+    monkeypatch.setattr(config, "DB_PATH", str(db_path))
 
     response = TestClient(admin.app).post("/setup/api-keys/1/renew", headers=_auth_header(), follow_redirects=True)
 

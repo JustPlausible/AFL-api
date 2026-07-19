@@ -1,16 +1,12 @@
 import sqlite3
 from fastapi import Header, HTTPException
 from utils.log import log
-from pathlib import Path
-import config
 from api_key_security import api_key_prefix, verify_api_key_hash
-from db.init_db import create_api_keys_table
-
-DB_PATH = Path(config.DB_PATH)
+from db.connection import get_db_path
 
 
 def get_db_connection():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(get_db_path())
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -23,8 +19,6 @@ def _fingerprint_api_key(api_key: str) -> str:
 
 def verify_api_key(x_api_key: str = Header(...)) -> str:
     conn = get_db_connection()
-    create_api_keys_table(conn.cursor())
-    conn.commit()
     cursor = conn.execute(
         "SELECT label, key_hash FROM api_keys WHERE is_active = 1 AND key_hash IS NOT NULL",
     )

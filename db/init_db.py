@@ -1,10 +1,8 @@
 #db/init_db.py
 import sqlite3
-from pathlib import Path
 from utils.log import log
 from api_key_security import api_key_prefix, hash_api_key, is_hashed_api_key
-
-DB_FILE = Path("data/afl_players.db")
+from db.connection import get_db_path, validate_db_parent
 
 def create_api_keys_table(cursor):
     cursor.execute("""
@@ -213,8 +211,9 @@ def create_scrape_summary_table(cursor):
     """)
 
 def init_db():
-    DB_FILE.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_FILE)
+    db_path = validate_db_parent(get_db_path())
+    log(f"🧱 Creating tables in SQLite DB: {db_path}", "INFO")
+    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
     log("🧱 Creating tables in SQLite DB...", "INFO")
