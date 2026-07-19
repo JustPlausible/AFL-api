@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import auth
+import config
 from api.routes import router
 
 
@@ -24,6 +25,8 @@ def _make_api_key_db(path):
     )
     conn.execute("INSERT INTO api_keys (label, api_key, is_active) VALUES (?, ?, ?)", ("active", "active-key", 1))
     conn.execute("INSERT INTO api_keys (label, api_key, is_active) VALUES (?, ?, ?)", ("inactive", "inactive-key", 0))
+    from db.init_db import create_api_keys_table
+    create_api_keys_table(conn.cursor())
     conn.commit()
     conn.close()
 
@@ -32,7 +35,7 @@ def _make_api_key_db(path):
 def api_client(tmp_path, monkeypatch):
     db_path = tmp_path / "afl_players.db"
     _make_api_key_db(db_path)
-    monkeypatch.setattr(auth, "DB_PATH", db_path)
+    monkeypatch.setattr(config, "DB_PATH", str(db_path))
 
     app = FastAPI()
     app.include_router(router)
@@ -79,8 +82,8 @@ def test_invalid_api_key_log_redacts_full_secret(api_client, monkeypatch):
     assert response.status_code == 401
     assert messages
     assert "very-secret-invalid-key" not in messages[0]
-    assert "very-s" in messages[0]
-    assert "-key" in messages[0]
+    assert "very-sec…" in messages[0]
+    assert "-key" not in messages[0]
 
 
 def test_admin_app_requires_basic_auth(monkeypatch):

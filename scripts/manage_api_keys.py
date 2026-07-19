@@ -1,71 +1,81 @@
 import argparse
 import sqlite3
-from pathlib import Path
+from api_key_security import api_key_prefix, generate_api_key, hash_api_key, verify_api_key_hash
+from db.init_db import create_api_keys_table
+from db.connection import get_db_path
 
-DB_PATH = Path("data/afl_players.db")
 
 def get_connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS api_keys (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            label TEXT NOT NULL,
-            api_key TEXT NOT NULL UNIQUE
-        )
-    """)
+    conn = sqlite3.connect(get_db_path())
+    create_api_keys_table(conn.cursor())
+    conn.commit()
     return conn
 
-def add_api_key(label: str, key: str):
+
+def add_api_key(label: str):
+    full_key = generate_api_key()
     conn = get_connection()
     try:
-        conn.execute("INSERT INTO api_keys (label, api_key) VALUES (?, ?)", (label, key))
+        conn.execute(
+            "INSERT INTO api_keys (label, api_key, key_hash, key_prefix) VALUES (?, NULL, ?, ?)",
+            (label, hash_api_key(full_key), api_key_prefix(full_key)),
+        )
         conn.commit()
         print(f"✅ Added API key for '{label}'")
+        print("Copy this API key now. It will not be shown again:")
+        print(full_key)
     except sqlite3.IntegrityError:
-        print(f"⚠️ API key already exists for label '{label}' or key is not unique")
+        print(f"⚠️ API key already exists for label '{label}' or generated key is not unique")
     finally:
         conn.close()
 
-def list_api_keys(show_full=False):
+
+def list_api_keys():
     conn = get_connection()
-    cursor = conn.execute("SELECT id, label, api_key FROM api_keys ORDER BY id")
+    cursor = conn.execute("SELECT id, label, key_prefix, is_active FROM api_keys ORDER BY id")
     rows = cursor.fetchall()
     if not rows:
         print("ℹ️ No API keys found.")
     else:
         print("🔑 Registered API Keys:")
         for row in rows:
-            visible_key = row[2] if show_full else row[2][:4] + "..." + row[2][-2:]
-            print(f"  [{row[0]}] {row[1]} → {visible_key}")
+            status = "active" if row[3] else "inactive"
+            print(f"  [{row[0]}] {row[1]} → prefix:{row[2] or 'unavailable'} ({status})")
     conn.close()
+
 
 def remove_api_key(key: str):
     conn = get_connection()
-    cursor = conn.execute("DELETE FROM api_keys WHERE api_key = ?", (key,))
+    rows = conn.execute("SELECT id, key_hash FROM api_keys").fetchall()
+    matching_id = next((row[0] for row in rows if verify_api_key_hash(key, row[1])), None)
+    if matching_id is not None:
+        cursor = conn.execute("DELETE FROM api_keys WHERE id = ?", (matching_id,))
+    else:
+        cursor = conn.execute("DELETE FROM api_keys WHERE label = ?", (key,))
     conn.commit()
     if cursor.rowcount:
-        print(f"🗑️ Removed API key: {key}")
+        print("🗑️ Removed API key")
     else:
-        print(f"⚠️ API key not found: {key}")
+        print("⚠️ API key not found")
     conn.close()
+
 
 def main():
     parser = argparse.ArgumentParser(description="Manage AFL API keys")
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--add", nargs=2, metavar=("LABEL", "KEY"), help="Add new API key")
-    group.add_argument("--remove", metavar="KEY", help="Remove API key")
-    group.add_argument("--list", action="store_true", help="List all API keys")
-    parser.add_argument("--show", action="store_true", help="Show full keys (only applies with --list)")
+    group.add_argument("--add", metavar="LABEL", help="Add new API key and show it once")
+    group.add_argument("--remove", metavar="KEY_OR_LABEL", help="Remove API key by presented key or label")
+    group.add_argument("--list", action="store_true", help="List all API key prefixes")
 
     args = parser.parse_args()
 
     if args.add:
-        label, key = args.add
-        add_api_key(label, key)
+        add_api_key(args.add)
     elif args.remove:
         remove_api_key(args.remove)
     elif args.list:
-        list_api_keys(show_full=args.show)
+        list_api_keys()
+
 
 if __name__ == "__main__":
     main()

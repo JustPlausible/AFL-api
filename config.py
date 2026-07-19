@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 
 # Project paths
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent
 
 # Load .env from project root (does not override real environment variables)
 load_dotenv(dotenv_path=PROJECT_ROOT / ".env", override=False)

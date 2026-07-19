@@ -17,7 +17,7 @@ This project scrapes, enriches, and serves AFL player data across all clubs. It 
   - Visual diff of `clubs.json` vs DB
   - One-click sync (import/export)
   - Flash messages for admin actions
-- 🔐 API key management (stored in SQLite)
+- 🔐 API key management (hashed in SQLite with one-time key display)
 - 🧪 CLI tools for scraping, importing, and enrichment
 - 🧠 Nickname resolution and suffix cleaning for fuzzy player matching
 - ⏰ Scheduled scraping of injuries, lineups, and live player stats using APScheduler
@@ -127,12 +127,12 @@ python3 scraper/scrape_afl_player_stats.py --round-id 1155 --once
 
 ## 🔐 API Key Authentication
 
-All API routes require an `x-api-key` header.
+All API routes require an `x-api-key` header. Full API keys are shown only when created or renewed; SQLite stores only a non-reversible hash plus a short administrative prefix. Existing plaintext keys are migrated in place during database initialisation as described in `docs_api_key_migration.md`.
 
 Manage your keys via:
 
 ```bash
-PYTHONPATH=/app python3 scripts/manage_api_keys.py --add
+PYTHONPATH=/app python3 scripts/manage_api_keys.py --add "my-label"
 ```
 
 Example request:

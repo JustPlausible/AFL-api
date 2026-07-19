@@ -16,6 +16,9 @@ import json
 from db.import_to_db import export_clubs_from_db, diff_clubs
 import httpx
 from collections import defaultdict
+from api_key_security import api_key_prefix, generate_api_key, hash_api_key
+from db.init_db import create_api_keys_table
+from db.connection import get_db_path
 
 security = HTTPBasic()
 
@@ -57,7 +60,6 @@ def home(request: Request):
     log("📥 index accessed", "INFO")
     return templates.TemplateResponse(request=request, name="index.html", context={})
 
-DB_PATH = Path("data/afl_players.db")
 
 @app.get("/schedule", response_class=HTMLResponse)
 def show_schedule(request: Request):
@@ -110,7 +112,7 @@ def refresh_all_jobs_get(request: Request):
 
 @app.get("/tables", response_class=HTMLResponse)
 def show_tables(request: Request):
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(get_db_path())
     cur = conn.cursor()
     cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
     tables = [row[0] for row in cur.fetchall()]
@@ -129,7 +131,7 @@ def view_table(
     order: str = Query("asc", alias="order")  # asc or desc
 ):
     safe_table = escape(table_name)
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(get_db_path())
     cur = conn.cursor()
 
     try:
@@ -232,26 +234,31 @@ def show_clubs_diff(request: Request):
 
 @app.get("/setup/api-keys", response_class=HTMLResponse)
 def view_api_keys(request: Request):
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(get_db_path())
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
-    cur.execute("SELECT * FROM api_keys ORDER BY created_at DESC")
+    create_api_keys_table(cur)
+    conn.commit()
+    cur.execute("SELECT id, label, key_prefix, created_at, is_active FROM api_keys ORDER BY created_at DESC")
     rows = cur.fetchall()
+    one_time_key = request.session.pop("one_time_api_key", None)
     conn.close()
 
     return templates.TemplateResponse(
         request=request,
         name="api_keys.html",
-        context={"api_keys": rows},
+        context={"api_keys": rows, "one_time_api_key": one_time_key},
     )
 
 @app.get("/setup/api-keys/{key_id}", response_class=HTMLResponse)
 def manage_key(request: Request, key_id: int):
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(get_db_path())
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
-    cur.execute("SELECT * FROM api_keys WHERE id = ?", (key_id,))
+    create_api_keys_table(cur)
+    conn.commit()
+    cur.execute("SELECT id, label, key_prefix, created_at, is_active FROM api_keys WHERE id = ?", (key_id,))
     key = cur.fetchone()
     conn.close()
 
@@ -261,22 +268,27 @@ def manage_key(request: Request, key_id: int):
     return templates.TemplateResponse(
         request=request,
         name="api_key_manage.html",
-        context={"key": key},
+        context={"key": key, "one_time_api_key": request.session.pop("one_time_api_key", None)},
     )
 
 @app.post("/setup/api-keys/{key_id}/renew")
-def renew_key(key_id: int):
-    new_key = secrets.token_urlsafe(32)
-    conn = sqlite3.connect(DB_PATH)
+def renew_key(request: Request, key_id: int):
+    new_key = generate_api_key()
+    conn = sqlite3.connect(get_db_path())
     cur = conn.cursor()
-    cur.execute("UPDATE api_keys SET api_key = ? WHERE id = ?", (new_key, key_id))
+    create_api_keys_table(cur)
+    cur.execute(
+        "UPDATE api_keys SET api_key = NULL, key_hash = ?, key_prefix = ? WHERE id = ?",
+        (hash_api_key(new_key), api_key_prefix(new_key), key_id),
+    )
     conn.commit()
     conn.close()
+    request.session["one_time_api_key"] = new_key
     return RedirectResponse(f"/setup/api-keys/{key_id}", status_code=303)
 
 @app.post("/setup/api-keys/{key_id}/toggle")
 def toggle_key(key_id: int):
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(get_db_path())
     cur = conn.cursor()
     cur.execute("SELECT is_active FROM api_keys WHERE id = ?", (key_id,))
     current = cur.fetchone()
@@ -289,7 +301,7 @@ def toggle_key(key_id: int):
 
 @app.post("/setup/api-keys/{key_id}/toggle-ajax")
 def toggle_key_ajax(key_id: int):
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(get_db_path())
     cur = conn.cursor()
     cur.execute("SELECT is_active FROM api_keys WHERE id = ?", (key_id,))
     current = cur.fetchone()
@@ -303,18 +315,23 @@ def toggle_key_ajax(key_id: int):
     return {"success": False}
 
 @app.post("/setup/api-keys/new")
-def create_api_key(label: str = Form(...)):
-    new_key = secrets.token_urlsafe(32)
-    conn = sqlite3.connect(DB_PATH)
+def create_api_key(request: Request, label: str = Form(...)):
+    new_key = generate_api_key()
+    conn = sqlite3.connect(get_db_path())
     cur = conn.cursor()
-    cur.execute("INSERT INTO api_keys (label, api_key) VALUES (?, ?)", (label, new_key))
+    create_api_keys_table(cur)
+    cur.execute(
+        "INSERT INTO api_keys (label, api_key, key_hash, key_prefix) VALUES (?, NULL, ?, ?)",
+        (label, hash_api_key(new_key), api_key_prefix(new_key)),
+    )
     conn.commit()
     conn.close()
+    request.session["one_time_api_key"] = new_key
     return RedirectResponse("/setup/api-keys", status_code=303)
 
 @app.post("/setup/api-keys/delete/{key_id}")
 def delete_api_key(key_id: int):
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(get_db_path())
     cur = conn.cursor()
     cur.execute("DELETE FROM api_keys WHERE id = ?", (key_id,))
     conn.commit()

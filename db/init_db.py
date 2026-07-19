@@ -1,20 +1,65 @@
 #db/init_db.py
 import sqlite3
-from pathlib import Path
 from utils.log import log
-
-DB_FILE = Path("data/afl_players.db")
+from api_key_security import api_key_prefix, hash_api_key, is_hashed_api_key
+from db.connection import get_db_path, validate_db_parent
 
 def create_api_keys_table(cursor):
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS api_keys (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             label TEXT NOT NULL,
-            api_key TEXT NOT NULL UNIQUE,
+            api_key TEXT UNIQUE,
+            key_hash TEXT UNIQUE,
+            key_prefix TEXT,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             is_active INTEGER DEFAULT 1
         )
     """)
+
+    table_info = cursor.execute("PRAGMA table_info(api_keys)").fetchall()
+    columns = {row[1] for row in table_info}
+    api_key_column = next((row for row in table_info if row[1] == "api_key"), None)
+    if api_key_column and api_key_column[3]:
+        cursor.execute("ALTER TABLE api_keys RENAME TO api_keys_legacy_plaintext")
+        cursor.execute("""
+            CREATE TABLE api_keys (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                label TEXT NOT NULL,
+                api_key TEXT UNIQUE,
+                key_hash TEXT UNIQUE,
+                key_prefix TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                is_active INTEGER DEFAULT 1
+            )
+        """)
+        legacy_columns = {row[1] for row in cursor.execute("PRAGMA table_info(api_keys_legacy_plaintext)").fetchall()}
+        created_expr = "created_at" if "created_at" in legacy_columns else "CURRENT_TIMESTAMP"
+        active_expr = "is_active" if "is_active" in legacy_columns else "1"
+        cursor.execute(
+            f"INSERT INTO api_keys (id, label, api_key, created_at, is_active) "
+            f"SELECT id, label, api_key, {created_expr}, {active_expr} FROM api_keys_legacy_plaintext"
+        )
+        cursor.execute("DROP TABLE api_keys_legacy_plaintext")
+        table_info = cursor.execute("PRAGMA table_info(api_keys)").fetchall()
+        columns = {row[1] for row in table_info}
+    if "key_hash" not in columns:
+        cursor.execute("ALTER TABLE api_keys ADD COLUMN key_hash TEXT")
+    if "key_prefix" not in columns:
+        cursor.execute("ALTER TABLE api_keys ADD COLUMN key_prefix TEXT")
+    if "is_active" not in columns:
+        cursor.execute("ALTER TABLE api_keys ADD COLUMN is_active INTEGER DEFAULT 1")
+    if "created_at" not in columns:
+        cursor.execute("ALTER TABLE api_keys ADD COLUMN created_at TEXT")
+
+    rows = cursor.execute("SELECT id, api_key, key_hash FROM api_keys").fetchall()
+    for row in rows:
+        key_id, plaintext_key, stored_hash = row
+        if plaintext_key and not is_hashed_api_key(stored_hash):
+            cursor.execute(
+                "UPDATE api_keys SET key_hash = ?, key_prefix = ?, api_key = NULL WHERE id = ?",
+                (hash_api_key(plaintext_key), api_key_prefix(plaintext_key), key_id),
+            )
 
 def create_clubs_table(cursor):
     cursor.execute("""
@@ -166,8 +211,9 @@ def create_scrape_summary_table(cursor):
     """)
 
 def init_db():
-    DB_FILE.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_FILE)
+    db_path = validate_db_parent(get_db_path())
+    log(f"🧱 Creating tables in SQLite DB: {db_path}", "INFO")
+    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
     log("🧱 Creating tables in SQLite DB...", "INFO")
