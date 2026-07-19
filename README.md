@@ -96,6 +96,12 @@ python3 cli.py --scrape richmond
 python3 cli.py --enrich richmond
 ```
 
+### Scrape the fixtures index and store round metadata:
+
+```bash
+python3 cli.py --scrape-fixtures-index
+```
+
 ### Scrape and import injury list:
 
 ```bash

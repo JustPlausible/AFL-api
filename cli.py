@@ -6,7 +6,6 @@ from utils.log import log
 from scraper.scrape_afl_clubs import save_club_players_to_json
 from scraper.scrape_afl_injuries import scrape_injury_list, save_injuries_to_db
 from scraper.scrape_afl_lineups import scrape_team_lineups
-from scraper import scrape_afl_matches, scrape_afl_player_stats
 from merge.helpers import resolve_players_for_club
 from utils.club_lookup import load_clubs, get_club
 from db.import_to_db import import_players, save_lineups_to_db, save_clubs_to_db
@@ -89,6 +88,7 @@ def handle_args():
     match_group.add_argument("--scrape-injuries", action="store_true", help="Scrape AFL injury list")
     match_group.add_argument("--print-json", action="store_true", help="Print scraped JSON to stdout")
     match_group.add_argument("--scrape-lineups", type=int, metavar="ROUND", help="Scrape team lineups for a round")
+    match_group.add_argument("--scrape-fixtures-index", action="store_true", help="Scrape the AFL fixtures index and store season/round metadata")
     match_group.add_argument("--scrape-round", type=int, metavar="ROUND_ID", help="Scrape AFL matches for a specific round_id (e.g. 1156)")
     match_group.add_argument("--scrape-all-rounds", action="store_true", help="Scrape AFL matches for all rounds in DB")
     match_group.add_argument("--scrape-match", type=int, metavar="MATCH_ID", help="Scrape player stats for a specific match_id")
@@ -140,16 +140,24 @@ def main():
         from db.import_to_db import export_clubs_from_db
         export_clubs_from_db()
 
+    elif args.scrape_fixtures_index:
+        log("📥 Scraping AFL fixtures index...", "INFO")
+        from scraper import scrape_afl_fixtures
+        scrape_afl_fixtures.update_fixture_cache()
+
     elif args.scrape_round is not None:
         log(f"📥 Scraping match data for round_id {args.scrape_round}", "INFO")
+        from scraper import scrape_afl_matches
         scrape_afl_matches.run(round_id=args.scrape_round)
 
     elif args.scrape_all_rounds:
         log("📥 Scraping all match data from DB rounds...", "INFO")
+        from scraper import scrape_afl_matches
         scrape_afl_matches.run(round_id=None)
 
     elif args.scrape_match:
         log(f"📊 Scraping player stats for match_id {args.scrape_match}", "INFO")
+        from scraper import scrape_afl_player_stats
         scrape_afl_player_stats.run_scraper(match_id=args.scrape_match, once=True)
 
     else:
