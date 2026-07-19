@@ -14,6 +14,7 @@ from scheduler.schedule_lineup_scrapes import register_lineup_jobs
 from scheduler.schedule_stat_scrapes import register_stat_scrape_jobs, register_live_stat_scrapers
 from scheduler.schedule_match_scrapes import register_match_scrape_jobs, register_live_match_day_scraper
 from scheduler.api import app as scheduler_api
+from health import router as health_router
 from utils.log import setup_logger
 
 log = setup_logger("scheduler_start", "scheduler_start.log")
@@ -52,6 +53,7 @@ scheduler.add_listener(
 
 # 🌐 FastAPI app for live job inspection
 app = FastAPI()
+app.include_router(health_router)
 app.mount("/", scheduler_api)
 
 # 🟢 Bootstrap the job system
