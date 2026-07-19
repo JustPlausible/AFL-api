@@ -31,17 +31,55 @@ This project scrapes, enriches, and serves AFL player data across all clubs. It 
 ### Prerequisites
 
 - Docker & Docker Compose installed
-- Port `9900` available on your host
+- Ports `8000` and `8001` available on your host, or override `AFL_API_PORT` and `AFL_ADMIN_PORT` in `.env`
 
 ### 1. Clone and Run
 
 ```bash
 git clone https://github.com/JustPlausible/afl-api.git
-cd afl-api/src
-docker-compose up --build
+cd afl-api
+cp .env.example .env
+docker compose -f compose.example.yaml up --build
 ```
 
+The repository root is the Docker build context. The Python source layout remains flat at the repository root; do not `cd` into a nested `src` directory.
+
 ---
+
+## 🐳 Docker and Deployment Layout
+
+This repository is now intended to be the canonical application project. The root-level `Dockerfile` builds the app image from the repository root and installs runtime dependencies from `requirements.txt`. The image default command starts the public API without `--reload`; the example Compose file uses `--reload` only for local development convenience.
+
+Dependency manifests are split by purpose:
+
+- `requirements.txt` contains runtime dependencies required by the API, admin UI, scheduler, and scrapers.
+- `requirements-dev.txt` extends runtime dependencies and adds test/development-only dependencies.
+
+`compose.example.yaml` is a portable example/development configuration. It intentionally avoids real production paths, ports, and secrets. It uses named volumes for local `data` and `logs` state and bind-mounts `.:/app` only for development reload workflows.
+
+For production, keep the real Compose file, `.env`, paths, ports, and secrets outside this repository. A recommended server layout is:
+
+```text
+/opt/projects/afl-api              # Git checkout and Docker build context
+/opt/docker/compose/afl-api        # Production Compose and .env files
+/opt/docker/appdata/afl-api/data   # Persistent runtime database/data
+/opt/docker/appdata/afl-api/logs   # Persistent runtime logs
+```
+
+Production should build from `/opt/projects/afl-api` and should not mount source over `/app`. Mount only persistent runtime state, for example:
+
+```yaml
+services:
+  afl-api:
+    build: /opt/projects/afl-api
+    env_file:
+      - /opt/docker/compose/afl-api/.env
+    volumes:
+      - /opt/docker/appdata/afl-api/data:/app/data
+      - /opt/docker/appdata/afl-api/logs:/app/logs
+```
+
+This keeps `/opt/docker/appdata/afl-api` as persistent runtime state only while the application source and Docker build context live under `/opt/projects/afl-api`.
 
 ## 🧩 Commands
 
@@ -104,6 +142,21 @@ curl -H "x-api-key: your_key_here" http://localhost:9900/players
 ```
 
 ---
+
+
+## 🔒 Admin Security
+
+The admin application is protected with HTTP Basic authentication. Configure credentials with:
+
+```bash
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=change-me
+SESSION_SECRET=replace-with-a-long-random-secret
+```
+
+`ADMIN_PASSWORD` and `SESSION_SECRET` must be set explicitly when `ENVIRONMENT=production`. The public API continues to use the `x-api-key` header, and disabled API keys are rejected.
+
+Diagnostic header echoing at `/api/echo-headers` requires a valid API key and redacts sensitive headers such as `x-api-key`, `authorization`, `cookie`, and `x-admin-key`.
 
 ## 📡 API Endpoints
 > 📘 For full interactive API docs, visit [`/docs`](http://localhost:8801/docs) while the app is running.
