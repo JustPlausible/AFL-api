@@ -58,4 +58,5 @@ def log(message: str, level: str = "INFO", show_time: bool = True):
         raise ValueError(f"Invalid log level: {level}")
 
     msg = message if show_time else f"{EMOJI.get(level, '')} {message}"
-    getattr(_default_logger, level.lower(), _default_logger.info)(msg)
+    logger_method = "warning" if level == "WARN" else level.lower()
+    getattr(_default_logger, logger_method, _default_logger.info)(msg)

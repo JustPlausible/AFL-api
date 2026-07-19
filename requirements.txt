@@ -11,3 +11,4 @@ itsdangerous
 pytz
 APScheduler
 httpx
+httpx2
