@@ -19,6 +19,7 @@ from collections import defaultdict
 from api_key_security import api_key_prefix, generate_api_key, hash_api_key
 from db.init_db import create_api_keys_table
 from db.connection import get_db_path
+from admin_csrf import csrf_input, require_csrf
 
 security = HTTPBasic()
 
@@ -53,6 +54,8 @@ if not session_secret:
         raise RuntimeError("SESSION_SECRET must be set in production")
     session_secret = secrets.token_urlsafe(32)
 
+app.state.csrf_secret = session_secret
+templates.env.globals["csrf_input"] = csrf_input
 app.add_middleware(SessionMiddleware, secret_key=session_secret)
 
 @app.get("/", response_class=HTMLResponse)
@@ -91,8 +94,8 @@ def show_schedule(request: Request):
         context={"grouped_jobs": dict(grouped)},
     )
 
-@app.get("/scheduler/refresh", response_class=HTMLResponse)
-def refresh_all_jobs_get(request: Request):
+@app.post("/scheduler/refresh", response_class=HTMLResponse)
+def refresh_all_jobs(request: Request, _: None = Depends(require_csrf)):
     import httpx
     try:
         response = httpx.post("http://afl-scheduler:8000/scheduler/refresh", timeout=10)
@@ -220,7 +223,7 @@ def show_setup(request: Request):
 
 @app.get("/setup/clubs-diff", response_class=HTMLResponse)
 def show_clubs_diff(request: Request):
-    added, removed, changed = diff_clubs()
+    added, removed, changed = diff_clubs() or ([], [], [])
     return templates.TemplateResponse(
         request=request,
         name="clubs_diff.html",
@@ -272,7 +275,7 @@ def manage_key(request: Request, key_id: int):
     )
 
 @app.post("/setup/api-keys/{key_id}/renew")
-def renew_key(request: Request, key_id: int):
+def renew_key(request: Request, key_id: int, _: None = Depends(require_csrf)):
     new_key = generate_api_key()
     conn = sqlite3.connect(get_db_path())
     cur = conn.cursor()
@@ -287,7 +290,7 @@ def renew_key(request: Request, key_id: int):
     return RedirectResponse(f"/setup/api-keys/{key_id}", status_code=303)
 
 @app.post("/setup/api-keys/{key_id}/toggle")
-def toggle_key(key_id: int):
+def toggle_key(request: Request, key_id: int, _: None = Depends(require_csrf)):
     conn = sqlite3.connect(get_db_path())
     cur = conn.cursor()
     cur.execute("SELECT is_active FROM api_keys WHERE id = ?", (key_id,))
@@ -300,7 +303,7 @@ def toggle_key(key_id: int):
     return RedirectResponse(f"/setup/api-keys/{key_id}", status_code=303)
 
 @app.post("/setup/api-keys/{key_id}/toggle-ajax")
-def toggle_key_ajax(key_id: int):
+def toggle_key_ajax(request: Request, key_id: int, _: None = Depends(require_csrf)):
     conn = sqlite3.connect(get_db_path())
     cur = conn.cursor()
     cur.execute("SELECT is_active FROM api_keys WHERE id = ?", (key_id,))
@@ -315,7 +318,7 @@ def toggle_key_ajax(key_id: int):
     return {"success": False}
 
 @app.post("/setup/api-keys/new")
-def create_api_key(request: Request, label: str = Form(...)):
+def create_api_key(request: Request, label: str = Form(...), _: None = Depends(require_csrf)):
     new_key = generate_api_key()
     conn = sqlite3.connect(get_db_path())
     cur = conn.cursor()
@@ -330,7 +333,7 @@ def create_api_key(request: Request, label: str = Form(...)):
     return RedirectResponse("/setup/api-keys", status_code=303)
 
 @app.post("/setup/api-keys/delete/{key_id}")
-def delete_api_key(key_id: int):
+def delete_api_key(request: Request, key_id: int, _: None = Depends(require_csrf)):
     conn = sqlite3.connect(get_db_path())
     cur = conn.cursor()
     cur.execute("DELETE FROM api_keys WHERE id = ?", (key_id,))
@@ -398,15 +401,15 @@ def view_logs_raw(
         return HTMLResponse(f"<h2>❌ Failed to load logs: {e}</h2>", status_code=500)
 
 @app.post("/clubs-diff/import")
-def do_import_clubs(request: Request):
+def do_import_clubs(request: Request, _: None = Depends(require_csrf)):
     from cli import import_clubs_to_db
 
     import_clubs_to_db()
     request.session["message"] = "✅ Clubs imported from JSON."
-    return RedirectResponse("/clubs-diff", status_code=303)
+    return RedirectResponse("/setup/clubs-diff", status_code=303)
 
 @app.post("/clubs-diff/export")
-def do_export_clubs(request: Request):
+def do_export_clubs(request: Request, _: None = Depends(require_csrf)):
     export_clubs_from_db()
     request.session["message"] = "✅ Clubs exported to backup JSON."
-    return RedirectResponse("/clubs-diff", status_code=303)
+    return RedirectResponse("/setup/clubs-diff", status_code=303)
