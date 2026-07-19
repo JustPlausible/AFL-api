@@ -17,6 +17,11 @@ def _auth_header():
     return {"Authorization": f"Basic {token}"}
 
 
+def _csrf_token(client):
+    response = client.get("/setup/api-keys", headers=_auth_header())
+    return response.text.split('name="csrf_token" value="', 1)[1].split('"', 1)[0]
+
+
 def _make_db(path):
     conn = sqlite3.connect(path)
     create_api_keys_table(conn.cursor())
@@ -105,7 +110,7 @@ def test_admin_created_key_is_shown_once_and_not_stored_in_sqlite(tmp_path, monk
     monkeypatch.setattr(config, "DB_PATH", str(db_path))
 
     client = TestClient(admin.app)
-    response = client.post("/setup/api-keys/new", data={"label": "created"}, headers=_auth_header(), follow_redirects=True)
+    response = client.post("/setup/api-keys/new", data={"label": "created", "csrf_token": _csrf_token(client)}, headers=_auth_header(), follow_redirects=True)
 
     assert response.status_code == 200
     marker = "Copy this API key now. It will not be shown again:"
@@ -128,7 +133,8 @@ def test_renewed_key_replaces_old_key(tmp_path, monkeypatch):
     admin = importlib.reload(admin)
     monkeypatch.setattr(config, "DB_PATH", str(db_path))
 
-    response = TestClient(admin.app).post("/setup/api-keys/1/renew", headers=_auth_header(), follow_redirects=True)
+    client = TestClient(admin.app)
+    response = client.post("/setup/api-keys/1/renew", data={"csrf_token": _csrf_token(client)}, headers=_auth_header(), follow_redirects=True)
 
     assert response.status_code == 200
     renewed_key = response.text.split("<code>", 1)[1].split("</code>", 1)[0]

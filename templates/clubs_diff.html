@@ -25,9 +25,11 @@
   <h1>🔍 Clubs Comparison (JSON ↔ DB)</h1>
 
   <form method="post" action="/clubs-diff/import" style="display:inline;">
+    {{ csrf_input(request) | safe }}
     <button type="submit">📥 Import clubs from JSON</button>
   </form>
   <form method="post" action="/clubs-diff/export" style="display:inline; margin-left: 10px;">
+    {{ csrf_input(request) | safe }}
     <button type="submit">📤 Export clubs to backup JSON</button>
   </form>
 

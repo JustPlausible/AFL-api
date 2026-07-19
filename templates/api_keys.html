@@ -9,6 +9,7 @@
 {% endif %}
 
 <form action="/setup/api-keys/new" method="post" class="row g-2 align-items-center mb-3">
+    {{ csrf_input(request) | safe }}
     <div class="col-md-4">
         <input name="label" class="form-control" placeholder="New key label..." required>
     </div>
@@ -43,6 +44,7 @@
             <td>{{ key.created_at }}</td>
             <td>
                 <form method="post" action="/setup/api-keys/{{ key.id }}/renew" class="d-inline">
+                    {{ csrf_input(request) | safe }}
                     <button class="btn btn-outline-warning btn-sm">🔁 Renew</button>
                 </form>
                 <button class="btn btn-outline-info btn-sm toggle-btn"
@@ -50,6 +52,7 @@
                     Toggle
                 </button>
                 <form method="post" action="/setup/api-keys/delete/{{ key.id }}" class="d-inline" onsubmit="return confirm('Are you sure?');">
+                    {{ csrf_input(request) | safe }}
                     <button class="btn btn-outline-danger btn-sm">🗑 Delete</button>
                 </form>
             </td>
@@ -65,8 +68,12 @@ document.addEventListener("DOMContentLoaded", () => {
   buttons.forEach(btn => {
     btn.addEventListener("click", async () => {
       const keyId = btn.dataset.keyId;
+      const token = document.querySelector('input[name="csrf_token"]').value;
+      const body = new URLSearchParams({ csrf_token: token });
       const res = await fetch(`/setup/api-keys/${keyId}/toggle-ajax`, {
-        method: "POST"
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body
       });
       const data = await res.json();
       if (data.success) {
