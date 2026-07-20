@@ -154,7 +154,12 @@ def scrape_team_lineups(round_number: int = 0):
 
 def get_round_for_match(match_id: int) -> int | None:
     """Return the round containing a match when fixture data is available."""
-    conn = get_db_connection()
+    try:
+        conn = get_db_connection()
+    except (FileNotFoundError, OSError) as exc:
+        log.warning(f"⚠️ Could not open fixture database to resolve match {match_id}: {exc}")
+        return None
+
     try:
         cursor = conn.cursor()
         cursor.execute("SELECT round_id FROM matches WHERE match_id = ?", (match_id,))
