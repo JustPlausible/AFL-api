@@ -2,6 +2,7 @@
 
 import argparse
 import re
+import sqlite3
 from datetime import datetime, timezone
 
 from playwright.sync_api import sync_playwright
@@ -11,6 +12,11 @@ from db.connection import get_db_connection
 from utils.log import setup_logger
 
 log = setup_logger("lineup_scraper", "scrape_afl_lineups.log")
+
+
+class MatchRoundResolutionError(RuntimeError):
+    """Raised when explicit --match mode cannot resolve a match to a round."""
+
 
 def extract_afl_id(href: str) -> int | None:
     m = re.search(r"/players/(\d+)", href)
@@ -152,35 +158,36 @@ def scrape_team_lineups(round_number: int = 0):
     return players
 
 
-def get_round_for_match(match_id: int) -> int | None:
-    """Return the round containing a match when fixture data is available."""
+def get_round_for_match(match_id: int) -> int:
+    """Return the round containing a match, or raise for explicit --match failures."""
     try:
         conn = get_db_connection()
     except (FileNotFoundError, OSError) as exc:
-        log.warning(f"⚠️ Could not open fixture database to resolve match {match_id}: {exc}")
-        return None
+        raise MatchRoundResolutionError(
+            f"could not open fixture database to resolve match {match_id}: {exc}"
+        ) from exc
 
     try:
         cursor = conn.cursor()
         cursor.execute("SELECT round_id FROM matches WHERE match_id = ?", (match_id,))
         row = cursor.fetchone()
+    except sqlite3.DatabaseError as exc:
+        raise MatchRoundResolutionError(
+            f"could not read fixture data to resolve match {match_id}: {exc}"
+        ) from exc
     finally:
         conn.close()
 
-    return int(row[0]) if row else None
+    if row is None:
+        raise MatchRoundResolutionError(f"could not resolve match {match_id} to a round")
+    return int(row[0])
 
 
 def scrape_match_lineup(match_id: int):
     """Scrape lineup data for a single match only."""
     round_number = get_round_for_match(match_id)
-    if round_number is None:
-        log.warning(
-            f"⚠️ No round found for match {match_id}; scraping current lineups page and filtering to that match."
-        )
-        players = scrape_team_lineups()
-    else:
-        log.info(f"🎯 Scraping line-up for match {match_id} via Round {round_number}")
-        players = scrape_team_lineups(round_number=round_number)
+    log.info(f"🎯 Scraping line-up for match {match_id} via Round {round_number}")
+    players = scrape_team_lineups(round_number=round_number)
 
     match_players = [player for player in players if int(player.get("match_id")) == match_id]
     if not match_players:
@@ -240,7 +247,11 @@ def run_from_args(args):
 
 def main(argv=None) -> int:
     args = parse_args(argv)
-    run_from_args(args)
+    try:
+        run_from_args(args)
+    except MatchRoundResolutionError as exc:
+        log.error(f"❌ Explicit match scrape failed: {exc}")
+        return 1
     return 0
 
 

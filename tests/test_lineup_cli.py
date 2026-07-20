@@ -1,3 +1,4 @@
+import sqlite3
 import subprocess
 
 import pytest
@@ -55,6 +56,55 @@ def test_default_manual_cli_invocation_is_supported(monkeypatch):
 
     assert calls == [0]
 
+
+def test_match_mode_errors_when_fixture_database_unavailable(monkeypatch):
+    calls = []
+    monkeypatch.setattr(lineups, "get_db_connection", lambda: (_ for _ in ()).throw(FileNotFoundError("missing db")))
+    monkeypatch.setattr(lineups, "scrape_team_lineups", lambda round_number=0: calls.append(round_number) or [])
+
+    with pytest.raises(lineups.MatchRoundResolutionError) as exc:
+        lineups.scrape_match_lineup(7043)
+
+    assert "could not open fixture database" in str(exc.value)
+    assert calls == []
+
+
+def test_match_mode_errors_when_matches_schema_unreadable(monkeypatch):
+    conn = sqlite3.connect(":memory:")
+    calls = []
+    monkeypatch.setattr(lineups, "get_db_connection", lambda: conn)
+    monkeypatch.setattr(lineups, "scrape_team_lineups", lambda round_number=0: calls.append(round_number) or [])
+
+    with pytest.raises(lineups.MatchRoundResolutionError) as exc:
+        lineups.scrape_match_lineup(7043)
+
+    assert "could not read fixture data" in str(exc.value)
+    assert calls == []
+
+
+def test_match_mode_errors_when_match_cannot_be_resolved(monkeypatch):
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE matches (match_id INTEGER, round_id INTEGER)")
+    calls = []
+    monkeypatch.setattr(lineups, "get_db_connection", lambda: conn)
+    monkeypatch.setattr(lineups, "scrape_team_lineups", lambda round_number=0: calls.append(round_number) or [])
+
+    with pytest.raises(lineups.MatchRoundResolutionError) as exc:
+        lineups.scrape_match_lineup(7043)
+
+    assert "could not resolve match 7043 to a round" in str(exc.value)
+    assert calls == []
+
+
+def test_main_returns_non_zero_and_logs_when_match_resolution_fails(monkeypatch):
+    errors = []
+    monkeypatch.setattr(lineups, "get_db_connection", lambda: (_ for _ in ()).throw(FileNotFoundError("missing db")))
+    monkeypatch.setattr(lineups.log, "error", errors.append)
+
+    assert lineups.main(["--match", "7043"]) == 1
+
+    assert "Explicit match scrape failed" in errors[0]
+    assert "match 7043" in errors[0]
 
 def test_cli_rejects_conflicting_selectors(capsys):
     with pytest.raises(SystemExit) as exc:
