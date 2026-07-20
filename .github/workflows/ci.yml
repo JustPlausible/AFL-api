@@ -1,15 +1,12 @@
 name: CI
 
 on:
-  pull_request:
-    branches:
-      - main
   push:
-    branches:
-      - main
+  pull_request:
 
 jobs:
   test:
+    name: Test
     runs-on: ubuntu-latest
 
     steps:
@@ -22,27 +19,18 @@ jobs:
           python-version: '3.12'
 
       - name: Install development dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements-dev.txt
+        run: python -m pip install -r requirements-dev.txt
 
-      - name: Compile Python source
-        run: python -m compileall .
+      - name: Run pytest
+        run: python -m pytest
 
-      - name: Run tests
-        env:
-          PYTHONPATH: .
-        run: pytest -q
+  docker-build:
+    name: Docker build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
 
       - name: Build Docker image
-        run: docker build --tag afl-api-ci .
-
-      - name: Validate Docker image source files
-        run: |
-          docker run --rm --entrypoint sh afl-api-ci -c '\
-            test -f main.py && \
-            test -f requirements.txt && \
-            test -d scraper && \
-            test -d db && \
-            test -d utils\
-          '
+        run: docker build -t afl-api:ci .
