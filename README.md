@@ -102,9 +102,12 @@ python3 cli.py --enrich richmond
 python3 cli.py --scrape-injuries
 ```
 
-### Scrape and import team line-ups for a round:
+### Scrape team line-ups:
 
 ```bash
+python3 -m scraper.scrape_afl_lineups --round 9
+python3 -m scraper.scrape_afl_lineups --match 7043
+python3 -m scraper.scrape_afl_lineups 9  # backward-compatible round form
 python3 cli.py --scrape-lineups 9
 ```
 

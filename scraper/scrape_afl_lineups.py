@@ -1,13 +1,14 @@
 # scraper/scrape_afl_lineups.py
 
+import argparse
+import re
+from datetime import datetime, timezone
+
 from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
-import re
-import os
-from datetime import datetime
-import sqlite3
+
+from db.connection import get_db_connection
 from utils.log import setup_logger
-from datetime import datetime, timezone
 
 log = setup_logger("lineup_scraper", "scrape_afl_lineups.log")
 
@@ -150,7 +151,93 @@ def scrape_team_lineups(round_number: int = 0):
         log.warning("⚠️ No players found.")
     return players
 
+
+def get_round_for_match(match_id: int) -> int | None:
+    """Return the round containing a match when fixture data is available."""
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT round_id FROM matches WHERE match_id = ?", (match_id,))
+        row = cursor.fetchone()
+    finally:
+        conn.close()
+
+    return int(row[0]) if row else None
+
+
+def scrape_match_lineup(match_id: int):
+    """Scrape lineup data for a single match only."""
+    round_number = get_round_for_match(match_id)
+    if round_number is None:
+        log.warning(
+            f"⚠️ No round found for match {match_id}; scraping current lineups page and filtering to that match."
+        )
+        players = scrape_team_lineups()
+    else:
+        log.info(f"🎯 Scraping line-up for match {match_id} via Round {round_number}")
+        players = scrape_team_lineups(round_number=round_number)
+
+    match_players = [player for player in players if int(player.get("match_id")) == match_id]
+    if not match_players:
+        log.warning(f"⚠️ No lineup players found for match {match_id}.")
+    return match_players
+
+
+def positive_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"must be an integer: {value!r}") from exc
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="python3 -m scraper.scrape_afl_lineups",
+        description="Scrape AFL team lineups by round or match.",
+    )
+    parser.add_argument("--round", dest="round_number", type=positive_int, help="round number to scrape")
+    parser.add_argument("--match", dest="match_id", type=positive_int, help="match ID to scrape")
+    parser.add_argument(
+        "positional_round",
+        nargs="?",
+        type=positive_int,
+        metavar="ROUND",
+        help="round number to scrape (deprecated; use --round)",
+    )
+    return parser
+
+
+def parse_args(argv=None):
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    selectors = [
+        args.round_number is not None,
+        args.match_id is not None,
+        args.positional_round is not None,
+    ]
+    if sum(selectors) > 1:
+        parser.error("choose only one lineup selector: --round, --match, or positional ROUND")
+    return args
+
+
+def run_from_args(args):
+    if args.match_id is not None:
+        return scrape_match_lineup(match_id=args.match_id)
+    if args.round_number is not None:
+        return scrape_team_lineups(round_number=args.round_number)
+    if args.positional_round is not None:
+        return scrape_team_lineups(round_number=args.positional_round)
+    return scrape_team_lineups(round_number=0)
+
+
+def main(argv=None) -> int:
+    args = parse_args(argv)
+    run_from_args(args)
+    return 0
+
+
 if __name__ == "__main__":
-    import sys
-    round_number = int(sys.argv[1]) if len(sys.argv) > 1 else 0
-    players = scrape_team_lineups(round_number=round_number)
+    raise SystemExit(main())
