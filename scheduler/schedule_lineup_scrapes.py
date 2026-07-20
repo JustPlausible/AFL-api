@@ -12,11 +12,21 @@ log = setup_logger("refresh_afl_lineups", "refresh_afl_lineups.log")
 
 def run_lineup_round_scraper(round_id: int):
     log.info(f"🚀 [Lineups] Running line-up scrape for round {round_id}")
-    subprocess.run(["python3", "-m", "scraper.scrape_afl_lineups", str(round_id)])
+    command = ["python3", "-m", "scraper.scrape_afl_lineups", "--round", str(round_id)]
+    try:
+        subprocess.run(command, check=True)
+    except subprocess.CalledProcessError as exc:
+        log.error(f"❌ [Lineups] Round scrape failed for round {round_id} with exit code {exc.returncode}")
+        raise
 
 def run_lineup_match_scraper(match_id: int):
     log.info(f"🚀 [Lineups] Running line-up scrape for match {match_id}")
-    subprocess.run(["python3", "-m", "scraper.scrape_afl_lineups", "--match", str(match_id)])
+    command = ["python3", "-m", "scraper.scrape_afl_lineups", "--match", str(match_id)]
+    try:
+        subprocess.run(command, check=True)
+    except subprocess.CalledProcessError as exc:
+        log.error(f"❌ [Lineups] Match scrape failed for match {match_id} with exit code {exc.returncode}")
+        raise
 
 def register_lineup_jobs(scheduler):
     log.info("📋 Registering line-up scrape jobs...")
