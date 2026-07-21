@@ -12,6 +12,7 @@ from utils.log import setup_logger
 from merge.helpers import match_injury_player_to_db
 from utils.club_lookup import get_club_by_slug, load_clubs, resolve_club_code
 from utils.dictionary import CLUB_SLUG_ALIASES
+from scraper.afl_selectors import INJURY_SELECTORS
 
 log = setup_logger("injury_scraper", "scrape_afl_injuries.log")
 
@@ -77,10 +78,10 @@ def scrape_injury_list(db_conn) -> dict:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
         page.goto(url, timeout=60000)
-        page.wait_for_selector("div.article__body", timeout=15000)
+        page.wait_for_selector(INJURY_SELECTORS.ARTICLE_BODY, timeout=15000)
         html = page.content()
         soup = BeautifulSoup(html, "html.parser")
-        team_blocks = soup.select("div.articleWidget.full-width")
+        team_blocks = soup.select(INJURY_SELECTORS.TEAM_BLOCKS)
 
         log.debug("✅ Page rendered")
         log.debug(f"🔍 Found {len(team_blocks)} team blocks")
@@ -92,7 +93,7 @@ def scrape_injury_list(db_conn) -> dict:
             comment = block.find(string=lambda text: isinstance(text, Comment))
             if comment:
                 image_soup = BeautifulSoup(comment, "html.parser")
-                img = image_soup.find("img", class_="promo-image__image")
+                img = image_soup.find("img", class_=INJURY_SELECTORS.PROMO_IMAGE_CLASS)
                 if img and img.get("src"):
                     alt_text = img.get("alt", "").strip()
                     club = extract_and_match_club(img["src"], alt_text)

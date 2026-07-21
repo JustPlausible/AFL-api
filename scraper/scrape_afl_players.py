@@ -6,6 +6,8 @@ from merge.helpers import extract_champion_data_id_from_html
 import json
 import re
 from pathlib import Path
+from scraper.afl_selectors import STATS_LEADERS_SELECTORS
+from scraper.afl_selectors import STATS_LEADERS_SELECTORS
 
 log = setup_logger("player_scraper", "scrape_afl_players.log")
 
@@ -13,7 +15,7 @@ OUTPUT_FILE = Path("data/afl_stats_leaderboard.json")
 
 
 def scroll_leaderboard_to_load_images(page, scroll_step=1000, delay_ms=200, max_scrolls=30):
-    container = page.query_selector("div.js-scrollable-container")
+    container = page.query_selector(STATS_LEADERS_SELECTORS.SCROLL_CONTAINER)
     if not container:
         log.warning("⚠️ Could not find scroll container")
         return
@@ -25,7 +27,7 @@ def scroll_leaderboard_to_load_images(page, scroll_step=1000, delay_ms=200, max_
 
 
 def force_load_all_player_images(page):
-    image_elements = page.query_selector_all("img.picture__img")
+    image_elements = page.query_selector_all(STATS_LEADERS_SELECTORS.PLAYER_IMAGES)
     log.debug(f"🔍 Forcing scroll into view for {len(image_elements)} images")
     for img in image_elements:
         try:
@@ -36,7 +38,7 @@ def force_load_all_player_images(page):
 
 
 def scroll_to_bottom_and_force_final_image(page):
-    container = page.query_selector("div.js-scrollable-container")
+    container = page.query_selector(STATS_LEADERS_SELECTORS.SCROLL_CONTAINER)
     if not container:
         log.warning("⚠️ Could not find scroll container")
         return
@@ -44,7 +46,7 @@ def scroll_to_bottom_and_force_final_image(page):
     page.evaluate("(el) => el.scrollTop = el.scrollHeight", container)
     page.wait_for_timeout(2000)
 
-    final_row = page.query_selector("tr.stats-table__body-row:last-child")
+    final_row = page.query_selector(STATS_LEADERS_SELECTORS.FINAL_BODY_ROW)
     if final_row:
         final_row.scroll_into_view_if_needed()
         page.wait_for_timeout(300)
@@ -55,7 +57,7 @@ def load_all_stats_rows(page):
     for i in range(max_clicks):
         scroll_leaderboard_to_load_images(page, scroll_step=800, delay_ms=150, max_scrolls=3)
 
-        button = page.query_selector("button.stats-table-load-more-button")
+        button = page.query_selector(STATS_LEADERS_SELECTORS.LOAD_MORE_BUTTON)
         if button and button.is_visible():
             button.click()
             log.debug(f"🔄 Clicked 'Show more' button [{i+1}/{max_clicks}]")
@@ -71,7 +73,7 @@ def load_all_stats_rows(page):
 
 def parse_row(row):
     try:
-        name_link = row.query_selector("a.stats-leaders-table-player__name")
+        name_link = row.query_selector(STATS_LEADERS_SELECTORS.PLAYER_NAME_LINK)
         if not name_link:
             return None
 
@@ -80,9 +82,9 @@ def parse_row(row):
         afl_id = int(re.search(r"/players/(\d+)", profile_url).group(1))
 
         image_url = None
-        headshot_div = row.query_selector(".stats-leaders-table-player__headshot")
+        headshot_div = row.query_selector(STATS_LEADERS_SELECTORS.PLAYER_HEADSHOT)
         if headshot_div:
-            img_tag = headshot_div.query_selector("img.picture__img")
+            img_tag = headshot_div.query_selector(STATS_LEADERS_SELECTORS.PLAYER_IMAGES)
             if img_tag:
                 img_tag.scroll_into_view_if_needed()
                 img_tag.evaluate("el => new Promise(resolve => setTimeout(resolve, 100))")
@@ -114,7 +116,7 @@ def scrape_afl_stats_leaderboard():
 
             load_all_stats_rows(page)
 
-            rows = page.query_selector_all("tr.stats-table__body-row")
+            rows = page.query_selector_all(STATS_LEADERS_SELECTORS.BODY_ROWS)
             log.info(f"ℹ️ Found {len(rows)} player rows")
 
             players = []

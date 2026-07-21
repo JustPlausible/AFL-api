@@ -5,6 +5,7 @@ from merge.helpers import extract_champion_data_id_from_html
 from datetime import datetime
 import json
 import re
+from scraper.afl_selectors import CLUB_SQUAD_SELECTORS
 
 def scrape_club_players(club: dict) -> list[dict]:
     club_name = club["name"]
@@ -20,7 +21,7 @@ def scrape_club_players(club: dict) -> list[dict]:
         page.goto(url, wait_until="networkidle", timeout=60000)
 
         try:
-            page.wait_for_selector(".squad-list__item", timeout=15000)
+            page.wait_for_selector(CLUB_SQUAD_SELECTORS.SQUAD_CARD, timeout=15000)
         except PlaywrightTimeout:
             log(f"[!] No '.squad-list__item' on page for {club_name} — dumping HTML", "DEBUG")
             log(page.content(), "DEBUG")
@@ -32,12 +33,12 @@ def scrape_club_players(club: dict) -> list[dict]:
         page.wait_for_timeout(2000)
 
         players = []
-        cards = page.query_selector_all(".squad-list__item")
+        cards = page.query_selector_all(CLUB_SQUAD_SELECTORS.SQUAD_CARD)
         scrape_time = datetime.utcnow().isoformat()
 
         for card in cards:
             try:
-                link = card.query_selector("a.player-item")
+                link = card.query_selector(CLUB_SQUAD_SELECTORS.PLAYER_LINK)
                 href = link.get_attribute("href") if link else None
                 club_profile_url = f"{website}{href}" if href else None
                 club_profile_url = club_profile_url.strip() if club_profile_url else None
@@ -49,10 +50,10 @@ def scrape_club_players(club: dict) -> list[dict]:
                     if match:
                         club_id = int(match.group(1))
 
-                first_name_el = card.query_selector("h1.player-item__name")
-                last_name_el = card.query_selector(".player-item__last-name")
-                position_el = card.query_selector(".player-item__position")
-                guernsey_el = card.query_selector(".player-item__jumper-number")
+                first_name_el = card.query_selector(CLUB_SQUAD_SELECTORS.FIRST_NAME)
+                last_name_el = card.query_selector(CLUB_SQUAD_SELECTORS.LAST_NAME)
+                position_el = card.query_selector(CLUB_SQUAD_SELECTORS.POSITION)
+                guernsey_el = card.query_selector(CLUB_SQUAD_SELECTORS.JUMPER_NUMBER)
 
 
                 if first_name_el:
@@ -73,7 +74,7 @@ def scrape_club_players(club: dict) -> list[dict]:
                 guernsey = int(guernsey_el.inner_text().strip()) if guernsey_el else None
 
                 # Image extraction
-                image_el = card.query_selector("img.picture__img") or card.query_selector("picture img")
+                image_el = card.query_selector(CLUB_SQUAD_SELECTORS.PRIMARY_IMAGE) or card.query_selector(CLUB_SQUAD_SELECTORS.FALLBACK_IMAGE)
                 raw_image_url = None
                 if image_el:
                     raw_image_url = (

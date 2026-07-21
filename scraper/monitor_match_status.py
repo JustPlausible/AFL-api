@@ -10,6 +10,7 @@ from utils.http_utils import load_page_with_playwright
 from utils.afl_urls import get_fixture_url_for_round
 from utils.club_lookup import resolve_club_code
 from utils.log import log
+from scraper.afl_selectors import MATCH_CARD_SELECTORS
 
 MATCH_ID_TO_TRACK = 7041
 ROUND_ID = 1155
@@ -19,14 +20,14 @@ LOG_FILE = Path("logs/match_7041_status.log")
 def extract_status_for_match(html: str, match_id: int) -> tuple[str, str]:
     """Return (status, label) for the specified match ID."""
     soup = BeautifulSoup(html, "html.parser")
-    content = soup.select("h2.fixtures__date-header, div.fixtures__item")
+    content = soup.select(MATCH_CARD_SELECTORS.DATE_HEADER_OR_MATCH_CARD)
 
     current_date = None
     for element in content:
-        if element.name == "h2" and "fixtures__date-header" in element.get("class", []):
+        if element.name == "h2" and MATCH_CARD_SELECTORS.DATE_HEADER_CLASS in element.get("class", []):
             current_date = element.get_text(strip=True)
 
-        elif element.name == "div" and "fixtures__item" in element.get("class", []):
+        elif element.name == "div" and MATCH_CARD_SELECTORS.MATCH_CARD_CLASS in element.get("class", []):
             if int(element.get("data-match-id", 0)) != match_id:
                 continue
 
@@ -35,15 +36,15 @@ def extract_status_for_match(html: str, match_id: int) -> tuple[str, str]:
 
             if status == "LIVE":
                 # Look for the quarter and match clock
-                time_container = element.select_one(".fixtures__match-time")
+                time_container = element.select_one(MATCH_CARD_SELECTORS.MATCH_TIME)
                 if time_container:
                     raw_quarter = time_container.contents[0].strip()  # e.g. 'Q3'
-                    clock = time_container.select_one("span.js-match-clock")
+                    clock = time_container.select_one(MATCH_CARD_SELECTORS.LIVE_CLOCK)
                     match_clock = clock.text.strip() if clock else ""
                     label = f"{raw_quarter} {match_clock}".strip()
             else:
                 # Fallback to generic label
-                label_div = element.select_one(".fixtures__status-label")
+                label_div = element.select_one(MATCH_CARD_SELECTORS.STATUS_LABEL)
                 label = label_div.get_text(strip=True) if label_div else ""
 
             return status, label

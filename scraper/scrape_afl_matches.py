@@ -9,6 +9,7 @@ from utils.afl_urls import get_fixture_url_for_round
 from utils.club_lookup import resolve_club_code
 from db.import_to_db import save_matches_to_db
 from utils.match_time import parse_match_time
+from scraper.afl_selectors import MATCH_CARD_SELECTORS
 import config
 
 log = setup_logger("match_scraper", "scrape_afl_matches.log")
@@ -30,7 +31,7 @@ def extract_season_year(html: str) -> int | None:
     log.debug("🔍 Parsing fixture page for season year...")
     soup = BeautifulSoup(html, "html.parser")
 
-    label = soup.select_one("div.competition-nav__season-select .select__current-text")
+    label = soup.select_one(MATCH_CARD_SELECTORS.SEASON_LABEL)
     if not label:
         log.error("❌ Could not find season label in fixture page")
         return None
@@ -55,8 +56,8 @@ def require_selector(element, selector: str, context: str):
 
 def extract_match_data(div, season_year=None, existing_match=None):
     match_id = div.get("data-match-id") or "unknown match"
-    home_name = require_selector(div, ".fixtures__match-team--home span", match_id).text.strip()
-    away_name = require_selector(div, ".fixtures__match-team--away span", match_id).text.strip()
+    home_name = require_selector(div, MATCH_CARD_SELECTORS.HOME_TEAM_NAME, match_id).text.strip()
+    away_name = require_selector(div, MATCH_CARD_SELECTORS.AWAY_TEAM_NAME, match_id).text.strip()
 
     home_code = resolve_club_code(home_name)
     away_code = resolve_club_code(away_name)
@@ -68,7 +69,7 @@ def extract_match_data(div, season_year=None, existing_match=None):
         "status": div.get("data-match-status"),
         "home_team": home_code,
         "away_team": away_code,
-        "venue": require_selector(div, ".fixtures__match-venue", match_id).text.strip(),
+        "venue": require_selector(div, MATCH_CARD_SELECTORS.VENUE, match_id).text.strip(),
         "start_time_utc": None,
         "score_home": None,
         "score_away": None,
@@ -76,7 +77,7 @@ def extract_match_data(div, season_year=None, existing_match=None):
     }
 
     # Try to extract scheduled match time from aria-label
-    details_link = div.select_one("a.fixtures__absolute-link")
+    details_link = div.select_one(MATCH_CARD_SELECTORS.DETAILS_LINK)
     if details_link and details_link.has_attr("aria-label"):
         label = details_link["aria-label"]
         match_time_match = re.search(
@@ -90,19 +91,19 @@ def extract_match_data(div, season_year=None, existing_match=None):
             match["start_time_utc"] = parse_match_time(date_part, time_part)
 
     # Extract match-time label (live or post-game)
-    time_div = div.select_one(".fixtures__match-time")
+    time_div = div.select_one(MATCH_CARD_SELECTORS.MATCH_TIME)
     log.debug(f"🔍 Extracting match time label: {time_div}")
     if time_div and time_div.contents:
         match["match_time_label"] = time_div.contents[0].strip()
         log.debug(f"🕒 Match time label found: {match['match_time_label']}")
     else:
         # Fallback for COMPLETED matches
-        label_div = div.select_one(".fixtures__status-label")
+        label_div = div.select_one(MATCH_CARD_SELECTORS.STATUS_LABEL)
         if label_div:
             match["match_time_label"] = label_div.get_text(strip=True)
 
     # Extract score if match is completed
-    score_divs = div.select(".fixtures__match-score-total")
+    score_divs = div.select(MATCH_CARD_SELECTORS.SCORE_TOTAL)
     if len(score_divs) == 2:
         try:
             match["score_home"] = int(score_divs[0].text.strip())
@@ -119,19 +120,19 @@ def extract_match_data(div, season_year=None, existing_match=None):
 def parse_matches(html: str, existing_matches: dict[int, dict] | None = None) -> list[dict]:
     existing_matches = existing_matches or {}
     soup = BeautifulSoup(html, "html.parser")
-    content = soup.select("h2.fixtures__date-header, div.fixtures__item")
+    content = soup.select(MATCH_CARD_SELECTORS.DATE_HEADER_OR_MATCH_CARD)
 
     matches = []
     season_year = extract_season_year(html)
 
     for element in content:
-        if element.name == "div" and "fixtures__item" in element.get("class", []):
+        if element.name == "div" and MATCH_CARD_SELECTORS.MATCH_CARD_CLASS in element.get("class", []):
             mid = int(element.get("data-match-id"))
             match = extract_match_data(element, season_year, existing_match=existing_matches.get(mid))
             matches.append(match)
 
     if not matches:
-        raise ValueError("No match cards found using selector div.fixtures__item")
+        raise ValueError(f"No match cards found using selector {MATCH_CARD_SELECTORS.MATCH_CARD}")
 
     return matches
 

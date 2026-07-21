@@ -16,6 +16,7 @@ from utils.http_utils import load_page_with_playwright
 from db.import_to_db import save_player_stats_to_db, log_scrape_event
 from merge.helpers import extract_club_player_id, extract_champion_id
 from db.connection import get_db_connection
+from scraper.afl_selectors import PLAYER_STATS_SELECTORS
 
 log = setup_logger("player_stats_scraper", "scrape_afl_player_stats.log")
 
@@ -60,7 +61,7 @@ def retry_load_page(url: str, retries: int = 3, delay: int = 8) -> str | None:
 
 def get_match_status_from_header(html: str) -> str:
     soup = BeautifulSoup(html, "html.parser")
-    label = soup.select_one("span.mc-header__status-label")
+    label = soup.select_one(PLAYER_STATS_SELECTORS.MATCH_STATUS_LABEL)
     if label:
         label_text = label.get_text(strip=True).upper()
         if "FULL TIME" in label_text:
@@ -73,7 +74,7 @@ def get_match_status_from_header(html: str) -> str:
 
 def parse_live_stats(html: str, match_id: int, round_id: int | None, status: str) -> list[dict]:
     soup = BeautifulSoup(html, "html.parser")
-    stats_table = soup.select_one("table.stats-table__table")
+    stats_table = soup.select_one(PLAYER_STATS_SELECTORS.STATS_TABLE)
 
     if not stats_table:
         log.error(f"[match {match_id}] ❌ Could not find player stats table.")
@@ -81,7 +82,7 @@ def parse_live_stats(html: str, match_id: int, round_id: int | None, status: str
 
     headers = [
         th.text.strip().replace("%", "").replace("ToG", "ToG%")  # Normalise for field_map
-        for th in stats_table.select("thead tr.stats-table__header-row th")
+        for th in stats_table.select(PLAYER_STATS_SELECTORS.HEADER_CELLS)
     ]
     log.debug(f"[match {match_id}] 📋 Detected headers: {headers}")
 
@@ -102,7 +103,7 @@ def parse_live_stats(html: str, match_id: int, round_id: int | None, status: str
         "ToG%": "time_on_ground_pct"
     }
 
-    rows = stats_table.select("tbody.stats-table__body-row, tr.stats-table__body-row")
+    rows = stats_table.select(PLAYER_STATS_SELECTORS.BODY_ROWS)
     players = []
 
     for row in rows:
@@ -111,15 +112,15 @@ def parse_live_stats(html: str, match_id: int, round_id: int | None, status: str
             continue
 
         try:
-            profile_link = row.select_one("a.mc-player-stats-table__player")
+            profile_link = row.select_one(PLAYER_STATS_SELECTORS.PLAYER_PROFILE_LINK)
             player_name = profile_link.get_text(" ", strip=True)
             profile_url = profile_link["href"]
             afl_id = extract_club_player_id(profile_url)
 
-            img_url = row.select_one("img.mc-player-stats-table__headshot")["src"]
+            img_url = row.select_one(PLAYER_STATS_SELECTORS.PLAYER_HEADSHOT)["src"]
             champion_id = extract_champion_id(img_url)
 
-            jumper_span = row.select_one("span.mc-player-stats-table__jumper-number")
+            jumper_span = row.select_one(PLAYER_STATS_SELECTORS.JUMPER_NUMBER)
             raw_team_code = jumper_span["class"][-1].upper() if jumper_span else "UNK"
             if raw_team_code not in alias_map:
                 log.warning(f"[match {match_id}] ⚠️ Unknown team alias '{raw_team_code}', using raw value.")
