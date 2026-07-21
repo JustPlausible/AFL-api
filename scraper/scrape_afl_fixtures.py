@@ -7,11 +7,12 @@ from utils.log import log
 from utils.afl_urls import get_fixture_url
 from db.import_to_db import save_rounds_to_db
 import config
+from scraper.afl_selectors import FIXTURE_SELECTORS
 
 
 def parse_fixtures_metadata(html: str) -> dict:
     soup = BeautifulSoup(html, "html.parser")
-    fixture_div = soup.find("div", class_="js-react-fixtures")
+    fixture_div = soup.find("div", class_=FIXTURE_SELECTORS.METADATA_ROOT_CLASS)
 
     if not fixture_div:
         log("Could not find fixture metadata div.", "WARN")
@@ -33,7 +34,7 @@ def parse_fixtures_metadata(html: str) -> dict:
 
 def parse_round_list(html: str) -> list[dict]:
     soup = BeautifulSoup(html, "html.parser")
-    round_items = soup.select("ul.competition-nav__round-list > li")
+    round_items = soup.select(FIXTURE_SELECTORS.ROUND_LIST_ITEMS)
 
     if not round_items:
         log("No rounds found in round list.", "WARN")
@@ -43,7 +44,7 @@ def parse_round_list(html: str) -> list[dict]:
     rounds = []
     for item in round_items:
         round_id = item.get("data-round-id")
-        label_button = item.select_one("button")
+        label_button = item.select_one(FIXTURE_SELECTORS.ROUND_LABEL_BUTTON)
         round_label = label_button.text.strip() if label_button else "?"
         log(f"Round '{round_label}' — ID: {round_id}", "DEBUG")
         rounds.append({

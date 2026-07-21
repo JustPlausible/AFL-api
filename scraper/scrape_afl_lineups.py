@@ -10,6 +10,7 @@ from bs4 import BeautifulSoup
 
 from db.connection import get_db_connection
 from utils.log import setup_logger
+from scraper.afl_selectors import TEAM_LINEUP_SELECTORS
 
 log = setup_logger("lineup_scraper", "scrape_afl_lineups.log")
 
@@ -27,9 +28,9 @@ def parse_lineups_html(html, round_number):
     all_players = []
     now_iso = datetime.now(timezone.utc).isoformat()
 
-    for match in soup.select('div.team-lineups__item'):
+    for match in soup.select(TEAM_LINEUP_SELECTORS.MATCH_ITEM):
         # Extract match_id directly from match page link
-        header_link = match.select_one('a.team-lineups-header')
+        header_link = match.select_one(TEAM_LINEUP_SELECTORS.MATCH_HEADER_LINK)
         match_id = None
         if header_link:
             href = header_link.get('href')
@@ -42,7 +43,7 @@ def parse_lineups_html(html, round_number):
             continue
 
         # --- Team/venue extraction ---
-        header = match.select_one('.team-lineups-header__name')
+        header = match.select_one(TEAM_LINEUP_SELECTORS.MATCH_HEADER_NAME)
         if not header:
             log.warning("⚠️ Could not find match header; skipping match.")
             continue
@@ -54,10 +55,10 @@ def parse_lineups_html(html, round_number):
 
         # IN/OUT/SUB grids (home & away)
         for status in ['in', 'out', 'sub']:
-            grid_home = match.select(f'.team-lineups-ins-and-outs__grid--home .team-lineups-ins-and-outs__grid-item')
-            grid_away = match.select(f'.team-lineups-ins-and-outs__grid--away .team-lineups-ins-and-outs__grid-item')
+            grid_home = match.select(TEAM_LINEUP_SELECTORS.HOME_INS_AND_OUTS_GRID_ITEMS)
+            grid_away = match.select(TEAM_LINEUP_SELECTORS.AWAY_INS_AND_OUTS_GRID_ITEMS)
             for tag in grid_home:
-                player_name = tag.select_one('.team-lineups-ins-and-outs__player-name')
+                player_name = tag.select_one(TEAM_LINEUP_SELECTORS.INS_AND_OUTS_PLAYER_NAME)
                 if not player_name:
                     continue
                 href = tag.get('href')
@@ -73,7 +74,7 @@ def parse_lineups_html(html, round_number):
                     "scraped_at": now_iso
                 })
             for tag in grid_away:
-                player_name = tag.select_one('.team-lineups-ins-and-outs__player-name')
+                player_name = tag.select_one(TEAM_LINEUP_SELECTORS.INS_AND_OUTS_PLAYER_NAME)
                 if not player_name:
                     continue
                 href = tag.get('href')
@@ -90,11 +91,11 @@ def parse_lineups_html(html, round_number):
                 })
 
         # On-field/interchange/substitute players
-        for entry in match.select('a.team-lineups__player-entry'):
+        for entry in match.select(TEAM_LINEUP_SELECTORS.PLAYER_ENTRY):
             href = entry.get('href')
-            name_first = entry.select_one('.team-lineups__player-entry--name-first')
-            name_last = entry.select_one('.team-lineups__player-entry--name-last')
-            team = home_team if 'team-lineups__player-entry--home-team' in entry.get('class', []) else away_team
+            name_first = entry.select_one(TEAM_LINEUP_SELECTORS.PLAYER_ENTRY_FIRST_NAME)
+            name_last = entry.select_one(TEAM_LINEUP_SELECTORS.PLAYER_ENTRY_LAST_NAME)
+            team = home_team if TEAM_LINEUP_SELECTORS.HOME_PLAYER_ENTRY_CLASS in entry.get('class', []) else away_team
 
             all_players.append({
                 "round_number": round_number,
@@ -126,17 +127,17 @@ def scrape_team_lineups(round_number: int = 0):
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
         page.goto(url, timeout=60000)
-        page.wait_for_selector('.competition-nav__round-list')
+        page.wait_for_selector(TEAM_LINEUP_SELECTORS.ROUND_LIST_READY)
 
         if round_number:
             # Try to click the button for the desired round by round_id (will need to map round_number → round_id if available)
-            btn = page.query_selector(f'li[data-round-id="{round_number}"] button')
+            btn = page.query_selector(TEAM_LINEUP_SELECTORS.ROUND_BUTTON_BY_ID_TEMPLATE.format(round_number=round_number))
             if btn:
                 btn.click()
         # Expand all lineups
         try:
-            page.wait_for_selector('label[for="expand-lineups-toggle"]', state='visible', timeout=10000)
-            label = page.query_selector('label[for="expand-lineups-toggle"]')
+            page.wait_for_selector(TEAM_LINEUP_SELECTORS.EXPAND_LINEUPS_TOGGLE_LABEL, state='visible', timeout=10000)
+            label = page.query_selector(TEAM_LINEUP_SELECTORS.EXPAND_LINEUPS_TOGGLE_LABEL)
             if label:
                 label.click()
                 log.info("Clicked expand-all label to expand all lineups.")
@@ -146,7 +147,7 @@ def scrape_team_lineups(round_number: int = 0):
             log.warning(f"⚠️ Could not click expand all label: {e}")
 
         # Wait for all matches to be expanded and visible
-        page.wait_for_selector('.team-lineups__item', timeout=15000)
+        page.wait_for_selector(TEAM_LINEUP_SELECTORS.MATCH_ITEM_READY, timeout=15000)
         html = page.content()
         browser.close()
 

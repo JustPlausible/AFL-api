@@ -6,6 +6,8 @@ from merge.helpers import extract_champion_data_id_from_html
 import csv
 import re
 from pathlib import Path
+from scraper.afl_selectors import STATS_LEADERS_SELECTORS
+from scraper.afl_selectors import STATS_LEADERS_SELECTORS
 
 log = setup_logger("bbbffl_stats_scraper", "scrape_afl_players_with_stats.log")
 
@@ -20,7 +22,7 @@ BBBFFL_STATS = ["Goals", "Disposals", "Hitouts", "Marks", "Tackles"]
 def load_all_rows(page):
     max_clicks = 50
     for _ in range(max_clicks):
-        button = page.query_selector("button.stats-table-load-more-button")
+        button = page.query_selector(STATS_LEADERS_SELECTORS.LOAD_MORE_BUTTON)
         if button and button.is_visible():
             button.click()
             page.wait_for_timeout(1000)
@@ -30,10 +32,10 @@ def load_all_rows(page):
 
 def scrape_table(page):
     players = {}
-    rows = page.query_selector_all("tr.stats-table__body-row")
+    rows = page.query_selector_all(STATS_LEADERS_SELECTORS.BODY_ROWS)
     for row in rows:
         try:
-            name_link = row.query_selector("a.stats-leaders-table-player__name")
+            name_link = row.query_selector(STATS_LEADERS_SELECTORS.PLAYER_NAME_LINK)
             if not name_link:
                 continue
 
@@ -43,7 +45,7 @@ def scrape_table(page):
             html = row.inner_html()
             champ_id, _ = extract_champion_data_id_from_html(html)
 
-            stat_buttons = row.query_selector_all("td.stats-table__cell button")
+            stat_buttons = row.query_selector_all(STATS_LEADERS_SELECTORS.STAT_BUTTONS)
             stats = {}
             for btn in stat_buttons:
                 title = btn.get_attribute("title") or ""
