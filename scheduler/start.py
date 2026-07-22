@@ -1,6 +1,7 @@
 # scheduler/start.py
 
 from fastapi import FastAPI
+from db.migration_runner import migrate_database
 import threading
 from apscheduler.events import (
     EVENT_JOB_EXECUTED,
@@ -21,6 +22,7 @@ log = setup_logger("scheduler_start", "scheduler_start.log")
 scheduler_log = setup_logger("scheduler_jobs", "scheduler_jobs.log")
 
 log.debug("🟢 scheduler/start.py loaded!")
+migrate_database()
 
 # 🔁 Register all dynamic (non-cron) jobs
 def register_all_jobs():
