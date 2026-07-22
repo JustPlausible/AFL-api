@@ -5,9 +5,9 @@ from datetime import datetime, timedelta, timezone
 from utils.log import setup_logger
 import pytz
 import sqlite3
-import random
 import subprocess
 from db.connection import get_db_connection
+from scheduler.registry import add_registered_job, stats_match_job_id
 
 # Dedicated logger for scheduler processes (not scraper internals)
 scheduler_log = setup_logger("scheduler_jobs", "scheduler_jobs.log")
@@ -62,18 +62,18 @@ def register_stat_scrape_jobs(scheduler):
             # Ensure UTC → AWST with proper timezone awareness
             start_dt = datetime.fromisoformat(start_time_utc).replace(tzinfo=timezone.utc)
             match_start = start_dt.astimezone(AWST)
-            scrape_time = match_start + timedelta(seconds=random.randint(3, 15))
+            scrape_time = match_start + timedelta(seconds=10)
 
-            scheduler.add_job(
-                run_stats_scraper,
+            add_registered_job(
+                scheduler, run_stats_scraper,
                 trigger=DateTrigger(run_date=scrape_time),
-                args=[match_id],
-                id=f"stat_scraper_{match_id}",
+                run_date=scrape_time, args=[match_id],
+                job_id=stats_match_job_id(match_id), job_type="player_stats", match_id=match_id,
                 name=f"Run stat scraper for match {match_id}",
                 replace_existing=True
             )
 
-            scheduler_log.info(f"📝 Scheduled job 'stat_scraper_{match_id}' for {scrape_time.isoformat()} AWST")
+            scheduler_log.info(f"📝 Scheduled job 'stats_match_{match_id}' for {scrape_time.isoformat()} AWST")
 
         except Exception as e:
             scheduler_log.error(f"❌ Failed to schedule job for match {match_id}: {e}")
@@ -99,13 +99,11 @@ def register_live_stat_scrapers(scheduler):
             continue
 
         scheduler_log.info(f"🚨 Starting immediate scraper for LIVE match {match_id}")
-        scheduler.add_job(
-            run_stats_scraper,
-            trigger=DateTrigger(run_date=datetime.now()),
-            args=[match_id],
-            id=f"stat_scraper_recovery_{match_id}",
-            name=f"Recovery stat scraper for LIVE match {match_id}",
-            replace_existing=True
+        add_registered_job(
+            scheduler, run_stats_scraper,
+            trigger=DateTrigger(run_date=datetime.now(AWST)), run_date=datetime.now(AWST), args=[match_id],
+            job_id=stats_match_job_id(match_id), job_type="player_stats", match_id=match_id,
+            name=f"Recovery stat scraper for LIVE match {match_id}", replace_existing=True
         )
 
     conn.close()

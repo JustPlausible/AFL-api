@@ -15,6 +15,7 @@ from scheduler.schedule_lineup_scrapes import register_lineup_jobs
 from scheduler.schedule_stat_scrapes import register_stat_scrape_jobs, register_live_stat_scrapers
 from scheduler.schedule_match_scrapes import register_match_scrape_jobs, register_live_match_day_scraper
 from scheduler.api import app as scheduler_api
+from scheduler.registry import reconcile_scheduler, upsert_job, fixture_job_id, injury_job_id, refresh_job_id
 from health import router as health_router
 from utils.log import setup_logger
 
@@ -33,6 +34,11 @@ def register_all_jobs():
     register_live_stat_scrapers(scheduler)
     register_match_scrape_jobs(scheduler)
     register_live_match_day_scraper(scheduler)
+    upsert_job(injury_job_id(), "injury", None, trigger_type="cron", func_ref="scheduler.scheduled_tasks:daily_injury_scrape")
+    upsert_job(fixture_job_id(), "fixture", None, trigger_type="cron", func_ref="scheduler.scheduled_tasks:daily_fixture_scrape")
+    upsert_job(refresh_job_id("matches_daily"), "general_refresh", None, trigger_type="cron", func_ref="scheduler.scheduled_tasks:daily_match_scrape")
+    upsert_job(refresh_job_id("check_match_day"), "general_refresh", None, trigger_type="cron", func_ref="scheduler.scheduled_tasks:check_for_match_day")
+    log.info("🔁 Reconciled persisted scheduler registry: %s", reconcile_scheduler(scheduler))
 
 # ▶ Start APScheduler in a separate thread
 def start_scheduler():

@@ -4,7 +4,8 @@
 {% block content %}
 <h2>📅 Scheduled Jobs</h2>
 <p class="text-muted">
-  <strong>Local time:</strong> <span id="local-clock">--:--:--</span>
+  <strong>Local time:</strong> <span id="local-clock">--:--:--</span><br>
+  APScheduler state is the current in-memory schedule; persisted state is the durable application registry restored across restarts.
 </p>
 <form action="/scheduler/refresh" method="post" class="mb-3">
     {{ csrf_input(request) | safe }}
@@ -22,6 +23,10 @@
                     <th>Function</th>
                     <th>Next Run</th>
                     <th>Trigger</th>
+                    <th>APScheduler state</th>
+                    <th>Persisted state</th>
+                    <th>Attempts</th>
+                    <th>Last error</th>
                 </tr>
             </thead>
             <tbody>
@@ -30,7 +35,11 @@
                     <td>{{ job.id }}</td>
                     <td>{{ job.func }}</td>
                     <td>{{ job.next_run_time or "—" }}</td>
-                    <td>{{ job.trigger }}</td>
+                    <td>{{ job.trigger or "—" }}</td>
+                    <td>{{ job.apscheduler_state or "unknown" }}</td>
+                    <td>{{ job.persisted_status or "untracked" }}</td>
+                    <td>{{ job.persisted_attempt_count if job.persisted_attempt_count is not none else "—" }}</td>
+                    <td>{{ job.persisted_last_error_summary or "—" }}</td>
                 </tr>
             {% endfor %}
             </tbody>

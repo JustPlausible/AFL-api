@@ -5,6 +5,7 @@ from utils.log import setup_logger
 from datetime import datetime
 import sqlite3
 from db.connection import get_db_connection
+from scheduler.registry import add_registered_job, live_match_day_job_id, live_match_refresh_job_id
 from scraper.scrape_afl_matches import run as scrape_matches
 import sys
 import subprocess
@@ -58,22 +59,18 @@ def register_live_match_day_scraper(scheduler):
         return count > 0
 
     if today_has_matches():
-        scheduler.add_job(
-            scrape_today_matches,
-            trigger=IntervalTrigger(minutes=5),
-            id="live_match_scraper",
-            name="Scrape matches frequently during match day",
-            replace_existing=True
+        add_registered_job(
+            scheduler, scrape_today_matches, trigger=IntervalTrigger(minutes=5), args=[],
+            job_id=live_match_day_job_id(), job_type="match_refresh",
+            name="Scrape matches frequently during match day", replace_existing=True, trigger_type="interval"
         )
         log.info("✅ Match day detected. Started frequent scraping job.")
     else:
         log.info("🛌 No matches today — skipping frequent scraping job.")
 
 def register_match_scrape_jobs(scheduler):
-    scheduler.add_job(
-        refresh_live_matches,
-        trigger=IntervalTrigger(minutes=5),
-        id="refresh_live_matches",
-        name="Refresh matches with LIVE status every 5 minutes",
-        replace_existing=True
+    add_registered_job(
+        scheduler, refresh_live_matches, trigger=IntervalTrigger(minutes=5), args=[],
+        job_id=live_match_refresh_job_id(), job_type="match_refresh",
+        name="Refresh matches with LIVE status every 5 minutes", replace_existing=True, trigger_type="interval"
     )
