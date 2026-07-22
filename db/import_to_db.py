@@ -28,17 +28,6 @@ def save_clubs_to_db(conn: sqlite3.Connection, clubs: list[dict]):
     """Insert or update clubs in the database using a shared connection."""
     cur = conn.cursor()
 
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS clubs (
-            code TEXT PRIMARY KEY,
-            name TEXT,
-            slug TEXT,
-            website TEXT,
-            squad_url TEXT,
-            aliases TEXT
-        )
-    """)
-
     for club in clubs:
         aliases_json = json.dumps(club.get("aliases", []))
         cur.execute("""
@@ -156,31 +145,6 @@ def import_players():
 
     now = datetime.now(timezone.utc).isoformat()
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS players (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            afl_id INTEGER UNIQUE NOT NULL,
-            full_name TEXT,
-            first_name TEXT,
-            last_name TEXT,
-            nickname TEXT,
-            formatted_nickname TEXT,
-            formatted_last_name TEXT,
-            club TEXT,
-            guernsey INTEGER,
-            position TEXT,
-            club_profile_url TEXT,
-            image_url TEXT,
-            club_player_id INTEGER,
-            afl_url TEXT,
-            champion_data_id TEXT,
-            source TEXT,
-            scraped_at TEXT,
-            resolved_at TEXT,
-            last_updated TEXT
-        )
-    """)
-
     enriched_files = sorted(f for f in DATA_DIR.glob("players-*.json") if "-raw" not in f.stem)
     total_imported = 0
 
@@ -255,23 +219,6 @@ def save_injuries_to_db(data: dict, conn: sqlite3.Connection):
     """
     cur = conn.cursor()
 
-    # Create the table if it doesn't exist
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS injuries (
-            afl_id INTEGER NOT NULL,
-            club TEXT NOT NULL,
-            player_name TEXT NOT NULL,
-            injury TEXT,
-            return_info TEXT,
-            updated TEXT,
-            first_updated TEXT,
-            source TEXT,
-            scraped_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            current INTEGER DEFAULT 1,
-            UNIQUE(afl_id, updated)
-        )
-    """)
-
     # Track all currently listed injuries
     currently_listed_ids = set()
 
@@ -330,22 +277,6 @@ def save_lineups_to_db(players: list[dict], conn: sqlite3.Connection, round_numb
 
     now = datetime.now(timezone.utc).isoformat()
 
-    # Create table if it doesn't exist
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS lineups (
-            round_number INTEGER NOT NULL,
-            match_id TEXT NOT NULL,
-            afl_id INTEGER NOT NULL,
-            first_name TEXT,
-            surname TEXT,
-            team TEXT,
-            position_group TEXT,
-            champion_id TEXT,
-            scraped_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (match_id, afl_id)
-        )
-    """)
-
     inserted = 0
     for player in players:
         try:
@@ -391,16 +322,6 @@ def save_rounds_to_db(rounds: list[dict], metadata: dict, conn: sqlite3.Connecti
 
     now = datetime.now(timezone.utc).isoformat()
 
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS rounds (
-            round_id INTEGER PRIMARY KEY,
-            round_label TEXT,
-            season_id INTEGER,
-            competition_id INTEGER,
-            scraped_at TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
     inserted = 0
 
     for round_info in rounds:
@@ -435,23 +356,6 @@ def save_matches_to_db(matches: list[dict], conn: sqlite3.Connection):
     cur = conn.cursor()
 
     now = datetime.now(timezone.utc).isoformat()
-
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS matches (
-            match_id INTEGER PRIMARY KEY,
-            match_provider_id TEXT,
-            round_id INTEGER NOT NULL,
-            home_team TEXT,
-            away_team TEXT,
-            venue TEXT,
-            status TEXT,
-            start_time_utc TEXT,
-            score_home INTEGER,
-            score_away INTEGER,
-            match_time_label TEXT,
-            scraped_at TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
 
     inserted = 0
 
@@ -498,35 +402,6 @@ def save_player_stats_to_db(stats: list[dict], conn: sqlite3.Connection):
     cur = conn.cursor()
 
     now = datetime.now(timezone.utc).isoformat()
-
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS player_stats (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            match_id INTEGER NOT NULL,
-            round_id INTEGER,
-            afl_id INTEGER,
-            champion_id TEXT,
-            player_name TEXT NOT NULL,
-            jumper_number INTEGER,
-            team_code TEXT NOT NULL,
-            af_score INTEGER,
-            goals INTEGER,
-            behinds INTEGER,
-            disposals INTEGER,
-            kicks INTEGER,
-            handballs INTEGER,
-            marks INTEGER,
-            tackles INTEGER,
-            hitouts INTEGER,
-            clearances INTEGER,
-            metres_gained INTEGER,
-            goal_assists INTEGER,
-            time_on_ground_pct REAL,
-            status TEXT CHECK(status IN ('LIVE', 'COMPLETED')) NOT NULL,
-            scraped_at TEXT NOT NULL,
-            UNIQUE(match_id, afl_id)
-        )
-    """)
 
     for stat in stats:
         cur.execute("""
@@ -591,17 +466,6 @@ def log_scrape_event(conn, match_id: int, round_id: int | None, status: str):
     now = datetime.now(timezone.utc).isoformat()
 
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS scrape_log (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            match_id INTEGER NOT NULL,
-            round_id INTEGER,
-            status TEXT,
-            scraped_at TEXT NOT NULL,
-            UNIQUE(match_id, scraped_at)
-        )
-    """)
-
-    cur.execute("""
         INSERT INTO scrape_log (match_id, round_id, status, scraped_at)
         VALUES (?, ?, ?, ?)
     """, (match_id, round_id, status, now))
@@ -613,18 +477,6 @@ def update_scrape_summary(conn: sqlite3.Connection, match_id: int):
     Aggregates scrape_log data and stores summary for the match.
     """
     cur = conn.cursor()
-
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS scrape_summary (
-            match_id INTEGER PRIMARY KEY,
-            round_id INTEGER,
-            total_scrapes INTEGER,
-            first_scraped TEXT,
-            last_scraped TEXT,
-            completed_scrape BOOLEAN DEFAULT 0,
-            notes TEXT
-        )
-    """)
     
     cur.execute("""
         SELECT round_id, COUNT(*), MIN(scraped_at), MAX(scraped_at),

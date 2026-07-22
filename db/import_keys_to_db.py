@@ -1,14 +1,15 @@
 import sqlite3
+
 from api_key_security import api_key_prefix, generate_api_key, hash_api_key
-from db.init_db import create_api_keys_table
 from db.connection import get_db_path, validate_db_parent
+from db.migration_runner import migrate_database
 
 # Connect to the configured SQLite database (will create if it does not exist)
 db_path = validate_db_parent(get_db_path())
 print(f"Using SQLite database: {db_path}")
+migrate_database(db_path)
 conn = sqlite3.connect(db_path)
 cursor = conn.cursor()
-create_api_keys_table(cursor)
 
 # Create a sample development key only if no keys exist. The full key is shown once.
 existing_count = cursor.execute("SELECT COUNT(*) FROM api_keys").fetchone()[0]

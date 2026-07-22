@@ -249,3 +249,5 @@ PRs welcome. Please raise an issue first if you’d like to propose a major chan
 ## 📄 License
 
 MIT
+
+- [SQLite database migrations](docs_database_migrations.md)
