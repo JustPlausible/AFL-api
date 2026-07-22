@@ -6,6 +6,7 @@ import pytz
 import subprocess
 from utils.log import setup_logger
 from db.connection import get_db_connection
+from scheduler.registry import add_registered_job, lineup_match_job_id, lineup_round_job_id
 
 AWST = pytz.timezone("Australia/Perth")
 log = setup_logger("refresh_afl_lineups", "refresh_afl_lineups.log")
@@ -42,13 +43,13 @@ def register_lineup_jobs(scheduler):
 
         # T-1 day @ 5pm AWST
         day_before_5pm = round_start.replace(hour=17, minute=0, second=0, microsecond=0) - timedelta(days=1)
-        scheduler.add_job(run_lineup_round_scraper, trigger=DateTrigger(run_date=day_before_5pm), args=[round_id])
+        add_registered_job(scheduler, run_lineup_round_scraper, trigger=DateTrigger(run_date=day_before_5pm), run_date=day_before_5pm, args=[round_id], job_id=lineup_round_job_id(round_id, "day_before_5pm"), job_type="lineup", round_id=round_id)
         log.info(f"📅 Scheduled: T-1 day 5pm for Round {round_id} → {day_before_5pm}")
 
         # If Thursday, also 5pm Thursday
         if round_start.weekday() == 3:  # Thursday
             thursday_5pm = round_start.replace(hour=17, minute=0, second=0, microsecond=0)
-            scheduler.add_job(run_lineup_round_scraper, trigger=DateTrigger(run_date=thursday_5pm), args=[round_id])
+            add_registered_job(scheduler, run_lineup_round_scraper, trigger=DateTrigger(run_date=thursday_5pm), run_date=thursday_5pm, args=[round_id], job_id=lineup_round_job_id(round_id, "thursday_5pm"), job_type="lineup", round_id=round_id)
             log.info(f"📅 Scheduled: Thursday 5pm for Round {round_id} → {thursday_5pm}")
 
         # 1-hour-before each match
@@ -64,7 +65,7 @@ def register_lineup_jobs(scheduler):
         for match_id, match_start_utc in match_rows:
             match_start = datetime.fromisoformat(match_start_utc).astimezone(AWST)
             one_hour_before = match_start - timedelta(hours=1)
-            scheduler.add_job(run_lineup_match_scraper, trigger=DateTrigger(run_date=one_hour_before), args=[match_id], id=f"lineup_scraper_pre-{match_id}",)
+            add_registered_job(scheduler, run_lineup_match_scraper, trigger=DateTrigger(run_date=one_hour_before), run_date=one_hour_before, args=[match_id], job_id=lineup_match_job_id(match_id), job_type="lineup", match_id=match_id)
             log.debug(f"📅 Scheduled: 1 hour before match {match_id} → {one_hour_before}")
 
     conn.close()

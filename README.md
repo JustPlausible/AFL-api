@@ -251,3 +251,4 @@ PRs welcome. Please raise an issue first if you’d like to propose a major chan
 MIT
 
 - [SQLite database migrations](docs_database_migrations.md)
+- [Scheduler registry and restart recovery](docs_scheduler_registry.md)
