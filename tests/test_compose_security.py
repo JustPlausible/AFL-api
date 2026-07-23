@@ -40,6 +40,8 @@ def test_admin_remains_authenticated_management_interface_on_configured_port():
     assert "127.0.0.1:${AFL_ADMIN_PORT" not in admin
     assert "security = HTTPBasic()" in admin_source
     assert "dependencies=[Depends(verify_admin)]" in admin_source
+    assert "- management" in admin
+    assert "- admin-access" in admin
 
 
 def test_scheduler_has_no_published_host_ports_for_mutation_endpoints():
@@ -69,7 +71,9 @@ def test_network_topology_keeps_scheduler_off_default_but_preserves_egress():
 
     assert "- default" not in admin
     assert "- default" not in scheduler
+    assert "- admin-access" not in scheduler
     assert "- scheduler-egress" in scheduler
     assert "  management:" in networks
     assert "    internal: true" in networks
+    assert "  admin-access:" in networks
     assert "  scheduler-egress:" in networks

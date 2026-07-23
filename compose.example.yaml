@@ -38,6 +38,7 @@ services:
     restart: unless-stopped
     networks:
       - management
+      - admin-access
 
   afl-scheduler:
     build:
@@ -77,5 +78,7 @@ networks:
   management:
     driver: bridge
     internal: true
+  admin-access:
+    driver: bridge
   scheduler-egress:
     driver: bridge
