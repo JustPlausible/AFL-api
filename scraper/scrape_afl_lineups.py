@@ -9,6 +9,7 @@ from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
 
 from db.connection import get_db_connection
+from db.scrape_runs import audited_scrape_run
 from utils.log import setup_logger
 from scraper.afl_selectors import TEAM_LINEUP_SELECTORS
 
@@ -112,7 +113,13 @@ def parse_lineups_html(html, round_number):
     log.info(f"🏁 Finished scrape. Total players extracted: {len(all_players)}")
     return all_players
 
-def scrape_team_lineups(round_number: int = 0):
+def scrape_team_lineups(round_number: int = 0, trigger_source: str | None = None, correlation_id: str | None = None):
+    with audited_scrape_run("lineup", target_type="round", target_identifier=round_number or None, trigger_source=trigger_source, correlation_id=correlation_id) as audit:
+        players = _scrape_team_lineups(round_number)
+        audit["rows_read"] = len(players)
+        return players
+
+def _scrape_team_lineups(round_number: int = 0):
     """
     Drop-in replacement for previous scraper.
     - Loads AFL lineups page (optionally navigates to specific round)
@@ -184,7 +191,13 @@ def get_round_for_match(match_id: int) -> int:
     return int(row[0])
 
 
-def scrape_match_lineup(match_id: int):
+def scrape_match_lineup(match_id: int, trigger_source: str | None = None, correlation_id: str | None = None):
+    with audited_scrape_run("lineup", target_type="match", target_identifier=match_id, trigger_source=trigger_source, correlation_id=correlation_id) as audit:
+        players = _scrape_match_lineup(match_id)
+        audit["rows_read"] = len(players)
+        return players
+
+def _scrape_match_lineup(match_id: int):
     """Scrape lineup data for a single match only."""
     round_number = get_round_for_match(match_id)
     log.info(f"🎯 Scraping line-up for match {match_id} via Round {round_number}")

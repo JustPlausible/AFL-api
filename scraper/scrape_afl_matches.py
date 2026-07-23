@@ -8,6 +8,7 @@ from utils.log import setup_logger
 from utils.afl_urls import get_fixture_url_for_round
 from utils.club_lookup import resolve_club_code
 from db.import_to_db import save_matches_to_db
+from db.scrape_runs import audited_scrape_run
 from utils.match_time import parse_match_time
 from scraper.afl_selectors import MATCH_CARD_SELECTORS
 import config
@@ -165,7 +166,11 @@ def scrape_round(round_id: int, conn: sqlite3.Connection):
         log.warning(f"⚠️ No matches found for round {round_id}")
 
 
-def run(round_id: int | None = None):
+def run(round_id: int | None = None, trigger_source: str | None = None, correlation_id: str | None = None):
+    with audited_scrape_run("match", target_type="round" if round_id else "all_rounds", target_identifier=round_id, trigger_source=trigger_source, correlation_id=correlation_id) as audit:
+        return _run(round_id, audit)
+
+def _run(round_id: int | None = None, audit=None):
     conn = sqlite3.connect("data/afl_players.db")
 
     if round_id:
@@ -177,6 +182,9 @@ def run(round_id: int | None = None):
         for (rid,) in cursor.fetchall():
             scrape_round(rid, conn)
 
+    if audit is not None:
+        audit["rows_read"] = None
+        audit["rows_written"] = None
     conn.close()
 
 

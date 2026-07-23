@@ -4,6 +4,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from db.import_to_db import save_injuries_to_db
+from db.scrape_runs import audited_scrape_run
 
 from bs4 import BeautifulSoup, Comment
 from playwright.sync_api import sync_playwright
@@ -70,7 +71,13 @@ def extract_and_match_club(img_src: str, alt_text: str = "") -> dict | None:
     log.warning(f"[!] ❓ Could not match normalised slug: {slug_cleaned}")
     return None
 
-def scrape_injury_list(db_conn) -> dict:
+def scrape_injury_list(db_conn, trigger_source: str | None = None, correlation_id: str | None = None) -> dict:
+    with audited_scrape_run("injury", target_type="injury_list", trigger_source=trigger_source, correlation_id=correlation_id, conn=db_conn) as audit:
+        result = _scrape_injury_list(db_conn)
+        audit["rows_read"] = sum(team.get("player_count", 0) for team in result.get("teams", []))
+        return result
+
+def _scrape_injury_list(db_conn) -> dict:
     url = "https://www.afl.com.au/matches/injury-list"
     log.info(f"🌐 Fetching injury list from: {url}")
 
