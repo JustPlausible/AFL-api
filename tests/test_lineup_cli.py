@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import contextmanager
 import subprocess
 
 import pytest
@@ -19,6 +20,17 @@ def _load_scheduler_module():
 
 
 schedule_lineup_scrapes = _load_scheduler_module()
+
+
+@pytest.fixture(autouse=True)
+def no_audit_for_lineup_unit_tests(monkeypatch):
+    """Keep legacy lineup CLI tests focused on parsing/resolution, not audit persistence."""
+
+    @contextmanager
+    def noop_audit(*args, **kwargs):
+        yield {"run_id": "unit-test", "rows_read": None, "rows_written": None}
+
+    monkeypatch.setattr(lineups, "audited_scrape_run", noop_audit)
 
 
 def test_explicit_round_cli_parsing_and_dispatch(monkeypatch):
@@ -80,6 +92,7 @@ def test_match_mode_errors_when_matches_schema_unreadable(monkeypatch):
 
     assert "could not read fixture data" in str(exc.value)
     assert calls == []
+    conn.close()
 
 
 def test_match_mode_errors_when_match_cannot_be_resolved(monkeypatch):
@@ -94,6 +107,7 @@ def test_match_mode_errors_when_match_cannot_be_resolved(monkeypatch):
 
     assert "could not resolve match 7043 to a round" in str(exc.value)
     assert calls == []
+    conn.close()
 
 
 def test_main_returns_non_zero_and_logs_when_match_resolution_fails(monkeypatch):

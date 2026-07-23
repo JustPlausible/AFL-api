@@ -190,10 +190,7 @@ def audited_scrape_run(scrape_type: str, *, target_type: str | None = None, targ
     if os.getenv("AFL_SCRAPE_RUN_ACTIVE"):
         yield {"run_id": None, "rows_read": None, "rows_written": None}
         return
-    try:
-        run_id = start_scrape_run(scrape_type, target_type=target_type, target_identifier=target_identifier, trigger_source=trigger_source, correlation_id=correlation_id, conn=conn)
-    except FileNotFoundError:
-        run_id = None
+    run_id = start_scrape_run(scrape_type, target_type=target_type, target_identifier=target_identifier, trigger_source=trigger_source, correlation_id=correlation_id, conn=conn)
     counts: dict[str, Any] = {"run_id": run_id, "rows_read": None, "rows_written": None}
     previous_active = os.environ.get("AFL_SCRAPE_RUN_ACTIVE")
     os.environ["AFL_SCRAPE_RUN_ACTIVE"] = "1"

@@ -1,21 +1,11 @@
+import importlib
 import sqlite3
 
 import pytest
 
-import importlib
-from pathlib import Path
-
 import config
 from db.migration_runner import migrate_database
 from db.scrape_runs import STATUS_COMPLETED, STATUS_FAILED, TRIGGER_SCHEDULER
-
-Path("data").mkdir(exist_ok=True)
-Path("data/clubs.json").write_text("[]")
-scrape_afl_fixtures = importlib.import_module("scraper.scrape_afl_fixtures")
-scrape_afl_injuries = importlib.import_module("scraper.scrape_afl_injuries")
-scrape_afl_lineups = importlib.import_module("scraper.scrape_afl_lineups")
-scrape_afl_matches = importlib.import_module("scraper.scrape_afl_matches")
-scrape_afl_player_stats = importlib.import_module("scraper.scrape_afl_player_stats")
 
 
 def _setup_db(tmp_path, monkeypatch):
@@ -25,10 +15,29 @@ def _setup_db(tmp_path, monkeypatch):
     return db
 
 
+def _import_scraper_modules(tmp_path, monkeypatch):
+    """Import scraper modules with any import-time data files isolated in tmp_path."""
+    (tmp_path / "logs").mkdir(exist_ok=True)
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(exist_ok=True)
+    (data_dir / "clubs.json").write_text("[]")
+    monkeypatch.chdir(tmp_path)
+    return {
+        "fixture": importlib.import_module("scraper.scrape_afl_fixtures"),
+        "injury": importlib.import_module("scraper.scrape_afl_injuries"),
+        "lineup": importlib.import_module("scraper.scrape_afl_lineups"),
+        "match": importlib.import_module("scraper.scrape_afl_matches"),
+        "player_stats": importlib.import_module("scraper.scrape_afl_player_stats"),
+    }
+
+
 def _rows(db):
     c = sqlite3.connect(db)
     c.row_factory = sqlite3.Row
-    return c.execute("SELECT * FROM scrape_runs ORDER BY started_at").fetchall()
+    try:
+        return c.execute("SELECT * FROM scrape_runs ORDER BY started_at").fetchall()
+    finally:
+        c.close()
 
 
 def _assert_running_exists(db, scrape_type):
@@ -38,15 +47,16 @@ def _assert_running_exists(db, scrape_type):
     assert rows[0]["status"] == "running"
 
 
-@pytest.mark.parametrize("module,func,patch_name,args,scrape_type,return_value", [
-    (scrape_afl_fixtures, "update_fixture_cache", "_update_fixture_cache", (), "fixture", "ok"),
-    (scrape_afl_lineups, "scrape_team_lineups", "_scrape_team_lineups", (9,), "lineup", [{"match_id": 1}]),
-    (scrape_afl_lineups, "scrape_match_lineup", "_scrape_match_lineup", (7043,), "lineup", [{"match_id": 7043}]),
-    (scrape_afl_matches, "run", "_run", (9,), "match", None),
-    (scrape_afl_player_stats, "run_scraper", "_run_scraper", (7043, True), "player_stats", None),
+@pytest.mark.parametrize("module_key,func,patch_name,args,scrape_type,return_value", [
+    ("fixture", "update_fixture_cache", "_update_fixture_cache", (), "fixture", "ok"),
+    ("lineup", "scrape_team_lineups", "_scrape_team_lineups", (9,), "lineup", [{"match_id": 1}]),
+    ("lineup", "scrape_match_lineup", "_scrape_match_lineup", (7043,), "lineup", [{"match_id": 7043}]),
+    ("match", "run", "_run", (9,), "match", None),
+    ("player_stats", "run_scraper", "_run_scraper", (7043, True), "player_stats", None),
 ])
-def test_scraper_entrypoint_success_audits_before_work(tmp_path, monkeypatch, module, func, patch_name, args, scrape_type, return_value):
+def test_scraper_entrypoint_success_audits_before_work(tmp_path, monkeypatch, module_key, func, patch_name, args, scrape_type, return_value):
     db = _setup_db(tmp_path, monkeypatch)
+    module = _import_scraper_modules(tmp_path, monkeypatch)[module_key]
 
     def fake(*fake_args, **fake_kwargs):
         _assert_running_exists(db, scrape_type)
@@ -61,15 +71,16 @@ def test_scraper_entrypoint_success_audits_before_work(tmp_path, monkeypatch, mo
     assert row["correlation_id"] == "job-1"
 
 
-@pytest.mark.parametrize("module,func,patch_name,args,scrape_type", [
-    (scrape_afl_fixtures, "update_fixture_cache", "_update_fixture_cache", (), "fixture"),
-    (scrape_afl_injuries, "scrape_injury_list", "_scrape_injury_list", (None,), "injury"),
-    (scrape_afl_lineups, "scrape_team_lineups", "_scrape_team_lineups", (9,), "lineup"),
-    (scrape_afl_matches, "run", "_run", (9,), "match"),
-    (scrape_afl_player_stats, "run_scraper", "_run_scraper", (7043, True), "player_stats"),
+@pytest.mark.parametrize("module_key,func,patch_name,args,scrape_type", [
+    ("fixture", "update_fixture_cache", "_update_fixture_cache", (), "fixture"),
+    ("injury", "scrape_injury_list", "_scrape_injury_list", (None,), "injury"),
+    ("lineup", "scrape_team_lineups", "_scrape_team_lineups", (9,), "lineup"),
+    ("match", "run", "_run", (9,), "match"),
+    ("player_stats", "run_scraper", "_run_scraper", (7043, True), "player_stats"),
 ])
-def test_scraper_entrypoint_failure_audits_and_preserves_exception(tmp_path, monkeypatch, module, func, patch_name, args, scrape_type):
+def test_scraper_entrypoint_failure_audits_and_preserves_exception(tmp_path, monkeypatch, module_key, func, patch_name, args, scrape_type):
     db = _setup_db(tmp_path, monkeypatch)
+    module = _import_scraper_modules(tmp_path, monkeypatch)[module_key]
 
     def boom(*fake_args, **fake_kwargs):
         _assert_running_exists(db, scrape_type)
