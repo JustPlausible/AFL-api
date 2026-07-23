@@ -37,8 +37,8 @@ services:
       - afl-api-logs:/app/logs
     restart: unless-stopped
     networks:
-      - default
       - management
+      - admin-access
 
   afl-scheduler:
     build:
@@ -57,8 +57,6 @@ services:
       - .:/app
       - afl-api-data:/app/data
       - afl-api-logs:/app/logs
-    depends_on:
-      - afl-api
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=2).read()\""]
@@ -67,8 +65,8 @@ services:
       retries: 3
       start_period: 20s
     networks:
-      - default
       - management
+      - scheduler-egress
 
 volumes:
   afl-api-data:
@@ -80,3 +78,7 @@ networks:
   management:
     driver: bridge
     internal: true
+  admin-access:
+    driver: bridge
+  scheduler-egress:
+    driver: bridge
