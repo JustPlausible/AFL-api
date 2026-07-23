@@ -6,6 +6,7 @@ from utils.http_utils import load_page_with_playwright
 from utils.log import log
 from utils.afl_urls import get_fixture_url
 from db.import_to_db import save_rounds_to_db
+from db.scrape_runs import audited_scrape_run
 import config
 from scraper.afl_selectors import FIXTURE_SELECTORS
 
@@ -55,7 +56,11 @@ def parse_round_list(html: str) -> list[dict]:
     return rounds
 
 
-def update_fixture_cache():
+def update_fixture_cache(trigger_source: str | None = None, correlation_id: str | None = None):
+    with audited_scrape_run("fixture", target_type="fixture_index", trigger_source=trigger_source, correlation_id=correlation_id) as audit:
+        return _update_fixture_cache(audit)
+
+def _update_fixture_cache(audit=None):
     log("Starting AFL fixture scrape...", "INFO")
     url = get_fixture_url()
 
@@ -70,6 +75,9 @@ def update_fixture_cache():
     if rounds and metadata:
         conn = sqlite3.connect("data/afl_players.db")
         save_rounds_to_db(rounds, metadata, conn)
+        if audit is not None:
+            audit["rows_read"] = len(rounds)
+            audit["rows_written"] = len(rounds)
         conn.close()
     else:
         log("Skipping DB save due to missing data.", "WARN")

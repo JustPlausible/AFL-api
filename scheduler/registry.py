@@ -16,6 +16,7 @@ from __future__ import annotations
 import importlib
 import json
 import re
+import os
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -125,7 +126,15 @@ def mark_skipped(job_id: str, reason: str) -> None:
 def execute_registered_job(job_id: str, func: Callable[..., Any], *args: Any) -> Any:
     try:
         mark_running(job_id)
-        result = func(*args)
+        previous_job_id = os.environ.get("AFL_SCHEDULER_JOB_ID")
+        os.environ["AFL_SCHEDULER_JOB_ID"] = job_id
+        try:
+            result = func(*args)
+        finally:
+            if previous_job_id is None:
+                os.environ.pop("AFL_SCHEDULER_JOB_ID", None)
+            else:
+                os.environ["AFL_SCHEDULER_JOB_ID"] = previous_job_id
         if isinstance(result, subprocess.CompletedProcess) and result.returncode:
             raise subprocess.CalledProcessError(result.returncode, result.args, stderr=result.stderr)
         mark_succeeded(job_id)

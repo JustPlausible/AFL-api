@@ -7,6 +7,7 @@ from scraper.scrape_afl_clubs import save_club_players_to_json
 from scraper.scrape_afl_injuries import scrape_injury_list, save_injuries_to_db
 from scraper.scrape_afl_lineups import scrape_team_lineups
 from scraper import scrape_afl_matches, scrape_afl_player_stats
+from db.scrape_runs import audited_scrape_run
 from merge.helpers import resolve_players_for_club
 from utils.club_lookup import load_clubs, get_club
 from db.import_to_db import import_players, save_lineups_to_db, save_clubs_to_db
@@ -50,10 +51,13 @@ def enrich_all_clubs(skip_existing=False):
 def scrape_injuries_to_db(print_json=False):
     conn = get_db_connection()
     conn.row_factory = sqlite3.Row
-    data = scrape_injury_list(conn)
-    save_injuries_to_db(data, conn)
-    if print_json:
-        print(json.dumps(data, indent=2))
+    with audited_scrape_run("injury", target_type="injury_list", conn=conn) as audit:
+        data = scrape_injury_list(conn)
+        audit["rows_read"] = sum(team.get("player_count", 0) for team in data.get("teams", []))
+        save_injuries_to_db(data, conn)
+        audit["rows_written"] = audit["rows_read"]
+        if print_json:
+            print(json.dumps(data, indent=2))
     conn.close()
 
 def scrape_lineups_to_db(round_number: int, print_json: bool = False):
@@ -61,12 +65,15 @@ def scrape_lineups_to_db(round_number: int, print_json: bool = False):
     conn.row_factory = sqlite3.Row
 
     log(f"🧹 Scraping and importing lineups for Round {round_number}", "INFO")
-    players = scrape_team_lineups(round_number=round_number)
-    save_lineups_to_db(players, conn, round_number)
+    with audited_scrape_run("lineup", target_type="round", target_identifier=round_number, conn=conn) as audit:
+        players = scrape_team_lineups(round_number=round_number)
+        audit["rows_read"] = len(players)
+        save_lineups_to_db(players, conn, round_number)
+        audit["rows_written"] = len(players)
 
-    if print_json:
-        import json
-        print(json.dumps(players, indent=2))
+        if print_json:
+            import json
+            print(json.dumps(players, indent=2))
 
     conn.close()
 

@@ -16,6 +16,7 @@ from utils.http_utils import load_page_with_playwright
 from db.import_to_db import save_player_stats_to_db, log_scrape_event
 from merge.helpers import extract_club_player_id, extract_champion_id
 from db.connection import get_db_connection
+from db.scrape_runs import audited_scrape_run
 from scraper.afl_selectors import PLAYER_STATS_SELECTORS
 
 log = setup_logger("player_stats_scraper", "scrape_afl_player_stats.log")
@@ -161,7 +162,11 @@ def parse_live_stats(html: str, match_id: int, round_id: int | None, status: str
     log.debug(f"[match {match_id}] ✅ Parsed {len(players)} player stat rows")
     return players
 
-def run_scraper(match_id: int, once: bool = False):
+def run_scraper(match_id: int, once: bool = False, trigger_source: str | None = None, correlation_id: str | None = None):
+    with audited_scrape_run("player_stats", target_type="match", target_identifier=match_id, trigger_source=trigger_source, correlation_id=correlation_id) as audit:
+        return _run_scraper(match_id, once, audit)
+
+def _run_scraper(match_id: int, once: bool = False, audit=None):
     now = datetime.now(timezone.utc).isoformat()
     conn = get_db_connection()
     log.info(f"[match {match_id}] 🟢 Starting stat scrape for match {match_id} (once={once})")
@@ -184,6 +189,9 @@ def run_scraper(match_id: int, once: bool = False):
         stats = parse_live_stats(html, match_id, round_id, match_status)
         if stats:
             save_player_stats_to_db(stats, conn)
+            if audit is not None:
+                audit["rows_read"] = len(stats)
+                audit["rows_written"] = len(stats)
     else:
         while True:
             html = retry_load_page(url)
@@ -193,6 +201,9 @@ def run_scraper(match_id: int, once: bool = False):
             stats = parse_live_stats(html, match_id, round_id, match_status)
             if stats:
                 save_player_stats_to_db(stats, conn)
+                if audit is not None:
+                    audit["rows_read"] = len(stats)
+                    audit["rows_written"] = len(stats)
                 log_scrape_event(conn, match_id, round_id, match_status)
 
             if match_status == "COMPLETED":

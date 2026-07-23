@@ -252,3 +252,4 @@ MIT
 
 - [SQLite database migrations](docs_database_migrations.md)
 - [Scheduler registry and restart recovery](docs_scheduler_registry.md)
+- [Scrape run audit records](docs_scrape_run_audit.md)
