@@ -81,6 +81,19 @@ services:
 
 This keeps `/opt/docker/appdata/afl-api` as persistent runtime state only while the application source and Docker build context live under `/opt/projects/afl-api`.
 
+
+## 🔐 Production Admin and Scheduler Exposure
+
+The intended production boundary is:
+
+- `afl-api` is the only service designed for public exposure, either by publishing its API port directly or by placing a reverse proxy in front of it. The public API still requires `x-api-key` authentication on API routes.
+- `afl-admin` is an operator-facing management interface protected by HTTP Basic authentication and CSRF protection. It remains reachable through the configured `${AFL_ADMIN_PORT:-8001}` port so deployments can secure it with trusted LAN access, firewall rules, VPNs, SSH forwarding, a private reverse proxy, or equivalent controls. Do not treat it as a public unauthenticated service.
+- `afl-scheduler` has scheduler management and mutation routes such as `/scheduler/refresh`, `/scheduler/run/{job_id}`, and `/scheduler/job/{job_id}`. These routes must not be published to a host port or exposed by a public reverse proxy.
+- `afl-admin` and `afl-scheduler` communicate over the Compose `management` network at `http://afl-scheduler:8000`. That network is marked `internal: true`, so it is the trusted service-to-service management path.
+- `afl-admin` is not attached to Docker's default network in the documented Compose layout because it only needs the scheduler management path. `afl-scheduler` is not attached to the default application network either; it joins the internal `management` network for admin calls and a separate `scheduler-egress` bridge network only to preserve outbound internet access required by AFL scraping jobs.
+
+Do not publish scheduler ports in production Compose files. If scheduler mutation endpoints become reachable outside the trusted management network in a supported deployment, add the smallest practical shared internal token for those mutation routes before exposing that deployment. For the documented production Compose model, a separate scheduler token is not required because the scheduler is not host-published, admin reaches it on the internal management network, and the configured egress network is for outbound scraping rather than inbound management access.
+
 ## 🧩 Commands
 
 ### Run full scrape and enrich:
