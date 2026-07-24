@@ -248,7 +248,25 @@ Jobs are registered during startup via `scheduler/start.py`, including:
 
 Admin UI `/schedule` shows all currently registered jobs.
 
-Jobs run in background threads using Python's `threading` and `os.system` to launch specific scraping modules.
+### Scheduler startup and shutdown
+
+The supported production scheduler command is:
+
+```bash
+python -m uvicorn scheduler.start:app --host 0.0.0.0 --port 8000
+```
+
+Uvicorn owns the FastAPI process lifecycle. During application startup, `scheduler/start.py` runs database migrations, registers scheduler jobs once, and starts APScheduler in a managed background thread. During application shutdown, it stops APScheduler and waits for executors to finish before the interpreter exits.
+
+Standalone module execution is also supported for local operation and diagnostics:
+
+```bash
+python -m scheduler.start
+```
+
+This standalone mode starts the same scheduler bootstrap path, then blocks the main process in APScheduler. Stop it with normal process interruption or termination, such as `Ctrl+C` or `SIGTERM`; the signal handler shuts down APScheduler and its executors before exit.
+
+At startup, historical one-time date jobs whose scheduled run time is already in the past are intentionally marked `skipped` instead of being submitted to APScheduler. This prevents old fixture data from creating a backlog of obsolete scrapes while preserving future one-time jobs and recurring cron or interval jobs.
 
 
 ---

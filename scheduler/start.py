@@ -1,29 +1,54 @@
 # scheduler/start.py
 
-from fastapi import FastAPI
-from db.migration_runner import migrate_database
+from __future__ import annotations
+
+import signal
 import threading
+from contextlib import asynccontextmanager
+
 from apscheduler.events import (
-    EVENT_JOB_EXECUTED,
     EVENT_JOB_ERROR,
+    EVENT_JOB_EXECUTED,
     EVENT_JOB_MISSED,
 )
-from scheduler.scheduled_tasks import scheduler  # Just defines scheduler + decorators
-from scheduler import scheduled_tasks  # 👈 force import to register cron jobs
-from scheduler.schedule_refresh_jobs import register_refresh_jobs
-from scheduler.schedule_lineup_scrapes import register_lineup_jobs
-from scheduler.schedule_stat_scrapes import register_stat_scrape_jobs, register_live_stat_scrapers
-from scheduler.schedule_match_scrapes import register_match_scrape_jobs, register_live_match_day_scraper
-from scheduler.api import app as scheduler_api
-from scheduler.registry import reconcile_scheduler, upsert_job, fixture_job_id, injury_job_id, refresh_job_id
+from apscheduler.schedulers.base import STATE_STOPPED
+from fastapi import FastAPI
+
+from db.migration_runner import migrate_database
 from health import router as health_router
+from scheduler import scheduled_tasks  # force import to register cron jobs
+from scheduler.api import app as scheduler_api
+from scheduler.registry import (
+    fixture_job_id,
+    injury_job_id,
+    reconcile_scheduler,
+    refresh_job_id,
+    upsert_job,
+)
+from scheduler.schedule_lineup_scrapes import register_lineup_jobs
+from scheduler.schedule_match_scrapes import (
+    register_live_match_day_scraper,
+    register_match_scrape_jobs,
+)
+from scheduler.schedule_refresh_jobs import register_refresh_jobs
+from scheduler.schedule_stat_scrapes import (
+    register_live_stat_scrapers,
+    register_stat_scrape_jobs,
+)
+from scheduler.scheduled_tasks import scheduler
 from utils.log import setup_logger
+
+SUPPORTED_UVICORN_COMMAND = "python -m uvicorn scheduler.start:app --host 0.0.0.0 --port 8000"
 
 log = setup_logger("scheduler_start", "scheduler_start.log")
 scheduler_log = setup_logger("scheduler_jobs", "scheduler_jobs.log")
 
 log.debug("🟢 scheduler/start.py loaded!")
-migrate_database()
+
+_bootstrap_lock = threading.Lock()
+_jobs_registered = False
+_scheduler_thread: threading.Thread | None = None
+
 
 # 🔁 Register all dynamic (non-cron) jobs
 def register_all_jobs():
@@ -40,10 +65,18 @@ def register_all_jobs():
     upsert_job(refresh_job_id("check_match_day"), "general_refresh", None, trigger_type="cron", func_ref="scheduler.scheduled_tasks:check_for_match_day")
     log.info("🔁 Reconciled persisted scheduler registry: %s", reconcile_scheduler(scheduler))
 
-# ▶ Start APScheduler in a separate thread
-def start_scheduler():
-    log.info("📆 Starting APScheduler background thread...")
-    scheduler.start()
+
+def bootstrap_scheduler() -> None:
+    """Run one-time scheduler startup work without starting APScheduler twice."""
+    global _jobs_registered
+    with _bootstrap_lock:
+        if _jobs_registered:
+            log.info("Scheduler bootstrap already completed; skipping duplicate registration.")
+            return
+        migrate_database()
+        register_all_jobs()
+        _jobs_registered = True
+
 
 def scheduler_listener(event):
     job_id = getattr(event, "job_id", "unknown")
@@ -54,16 +87,88 @@ def scheduler_listener(event):
     elif event.code == EVENT_JOB_MISSED:
         scheduler_log.warning(f"⚠️ Job '{job_id}' MISSED its scheduled time.")
 
+
 scheduler.add_listener(
     scheduler_listener,
-    EVENT_JOB_EXECUTED | EVENT_JOB_ERROR | EVENT_JOB_MISSED
+    EVENT_JOB_EXECUTED | EVENT_JOB_ERROR | EVENT_JOB_MISSED,
 )
 
+
+def start_scheduler_blocking() -> None:
+    """Start APScheduler in the current thread and block until shutdown."""
+    if scheduler.running:
+        log.info("APScheduler is already running; not starting a duplicate instance.")
+        return
+    bootstrap_scheduler()
+    log.info("📆 Starting APScheduler in blocking standalone mode...")
+    scheduler.start()
+
+
+def start_scheduler_for_app() -> None:
+    """Start APScheduler for the FastAPI/Uvicorn lifecycle in one managed thread."""
+    global _scheduler_thread
+    with _bootstrap_lock:
+        if scheduler.running:
+            log.info("APScheduler is already running; not starting a duplicate instance.")
+            return
+        if _scheduler_thread and _scheduler_thread.is_alive():
+            log.info("APScheduler thread is already alive; not starting a duplicate instance.")
+            return
+        if not _jobs_registered:
+            migrate_database()
+            register_all_jobs()
+            globals()["_jobs_registered"] = True
+        log.info("📆 Starting APScheduler background thread for FastAPI lifecycle...")
+        _scheduler_thread = threading.Thread(target=scheduler.start, name="apscheduler", daemon=True)
+        _scheduler_thread.start()
+
+
+def shutdown_scheduler(wait: bool = True) -> None:
+    """Stop APScheduler and wait for executors so interpreter shutdown is clean."""
+    if scheduler.state != STATE_STOPPED:
+        log.info("🛑 Shutting down APScheduler...")
+        scheduler.shutdown(wait=wait)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    start_scheduler_for_app()
+    try:
+        yield
+    finally:
+        shutdown_scheduler(wait=True)
+
+
 # 🌐 FastAPI app for live job inspection
-app = FastAPI()
+app = FastAPI(lifespan=lifespan)
 app.include_router(health_router)
 app.mount("/", scheduler_api)
 
-# 🟢 Bootstrap the job system
-register_all_jobs()
-threading.Thread(target=start_scheduler, daemon=True).start()
+
+def _install_shutdown_handlers() -> threading.Event:
+    stop_event = threading.Event()
+
+    def request_shutdown(signum, frame):  # pragma: no cover - exercised via subprocess
+        log.info("Received signal %s; requesting scheduler shutdown.", signum)
+        stop_event.set()
+        shutdown_scheduler(wait=True)
+
+    signal.signal(signal.SIGTERM, request_shutdown)
+    signal.signal(signal.SIGINT, request_shutdown)
+    return stop_event
+
+
+def main() -> int:
+    """Run `python -m scheduler.start` as a blocking standalone scheduler."""
+    _install_shutdown_handlers()
+    try:
+        start_scheduler_blocking()
+    except (KeyboardInterrupt, SystemExit):
+        shutdown_scheduler(wait=True)
+    finally:
+        shutdown_scheduler(wait=True)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

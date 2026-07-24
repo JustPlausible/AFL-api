@@ -145,8 +145,21 @@ def execute_registered_job(job_id: str, func: Callable[..., Any], *args: Any) ->
         except Exception: log.exception("Failed to persist failure for %s", job_id)
         raise
 
-def add_registered_job(scheduler, func: Callable[..., Any], *, job_id: str, job_type: str, run_date: datetime | None = None, trigger=None, args=None, match_id=None, round_id=None, name=None, replace_existing=True, trigger_type="date", **kwargs):
+def _as_aware_utc(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def add_registered_job(scheduler, func: Callable[..., Any], *, job_id: str, job_type: str, run_date: datetime | None = None, trigger=None, args=None, match_id=None, round_id=None, name=None, replace_existing=True, trigger_type="date", now: datetime | None = None, **kwargs):
     upsert_job(job_id, job_type, run_date, match_id=match_id, round_id=round_id, func_ref=_func_ref(func), args=args or [], trigger_type=trigger_type)
+    # One-time date jobs generated from old fixture data have no useful work once
+    # their scheduled time has already passed. Skip them before handing them to
+    # APScheduler so startup cannot submit a backlog of obsolete historical jobs.
+    if trigger_type == "date" and run_date is not None and _as_aware_utc(run_date) < (now or datetime.now(timezone.utc)):
+        mark_skipped(job_id, "Registration skipped: scheduled run time is in the past")
+        log.info("Skipped expired one-time scheduler job %s scheduled for %s", job_id, _iso(run_date))
+        return None
     wrapped_args = [job_id, func, *(args or [])]
     return scheduler.add_job(execute_registered_job, trigger=trigger or DateTrigger(run_date=run_date), args=wrapped_args, id=job_id, name=name, replace_existing=replace_existing, **kwargs)
 
