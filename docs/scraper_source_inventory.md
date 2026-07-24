@@ -406,6 +406,22 @@ The inspection report now includes a `findings` object and prints a matching hum
 
 When either required acquisition mode fails, contract and Playwright-requirement findings are reported as `Unknown`, and the recommendation is `Inconclusive`. Recommendations remain marked `Pending verification`; they are workflow triage hints only, not production scraper architecture decisions.
 
+
+### Player-stats inspection preset
+
+Use the `player-stats` preset to inspect the contract used by `scraper/scrape_afl_player_stats.py` without changing scraper behaviour:
+
+```bash
+python -m tools.inspect_scraper_source \
+  'https://www.afl.com.au/afl/matches/8210#player-stats' \
+  --preset player-stats \
+  --output /tmp/match-8210-player-stats.json
+```
+
+The preset uses `PLAYER_STATS_SELECTORS` from `scraper.afl_selectors` and supports both match-centre URLs with and without the `#player-stats` fragment. Its human-readable summary reports plain HTTP success, Playwright success, stats-table/status-label presence, interpreted match state (`pre-match`, `live`, `completed`, or `unknown`), detected table headers, row count, player identity field presence, required stat-column coverage, missing required columns, unexpected additional columns, player-stats contract status, whether Playwright appears required, and whether structured player-stat API responses were observed.
+
+The required recognised stat headers mirror the current parser mapping: `AF`, `G`, `B`, `D`, `K`, `H`, `M`, `T`, `HO`, `CLR`, `MG`, `GA`, and `ToG%`. Structured API responses observed during Playwright execution are reported with the same safe metadata, redaction, JSON-shape summary, and credential-free direct-fetch checks used for fixture API endpoint inspection. All recommendations remain **Pending verification** until returned fields are compared with the current player-stat database requirements.
+
 ### Playwright data-source response metadata
 
 When Playwright rendering succeeds, the inspection helper records structured metadata for likely data-source responses, prioritising `https://aflapi.afl.com.au/afl/v2/` and suppressing analytics, advertising, images, fonts, scripts, store links, and unrelated static content by default. For each likely data-source response the report includes:

@@ -6,13 +6,14 @@ import importlib.metadata
 import json
 import re
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Iterable
 from urllib.parse import urlsplit
 
 import requests
 from bs4 import BeautifulSoup
 
-from scraper.afl_selectors import FIXTURE_SELECTORS, MATCH_CARD_SELECTORS
+from scraper.afl_selectors import FIXTURE_SELECTORS, MATCH_CARD_SELECTORS, PLAYER_STATS_SELECTORS
 from utils.http_utils import ScraperHttpClient, ScraperHttpError, ScraperHttpPolicy
 
 SENSITIVE_HEADERS = {"authorization", "cookie", "set-cookie", "x-api-key", "proxy-authorization"}
@@ -69,7 +70,29 @@ FIXTURE_MATCH_PRESET = {
         "matches.match_time_label_candidate": {"selector": f"{MATCH_CARD_SELECTORS.MATCH_CARD} {MATCH_CARD_SELECTORS.MATCH_TIME}, {MATCH_CARD_SELECTORS.MATCH_CARD} {MATCH_CARD_SELECTORS.STATUS_LABEL}", "text": True},
     },
 }
-PRESETS = {"fixture-match": FIXTURE_MATCH_PRESET}
+PLAYER_STATS_REQUIRED_HEADERS = ("AF", "G", "B", "D", "K", "H", "M", "T", "HO", "CLR", "MG", "GA", "ToG%")
+PLAYER_STATS_IDENTITY_HEADERS = {"", "#", "NO.", "PLAYER", "PLAYERS"}
+PLAYER_STATS_PRESET = {
+    "description": "Selectors used by scraper.scrape_afl_player_stats.",
+    "selectors": {
+        "player_stats.match_status_label": PLAYER_STATS_SELECTORS.MATCH_STATUS_LABEL,
+        "player_stats.stats_table": PLAYER_STATS_SELECTORS.STATS_TABLE,
+        "player_stats.header_cells": f"{PLAYER_STATS_SELECTORS.STATS_TABLE} {PLAYER_STATS_SELECTORS.HEADER_CELLS}",
+        "player_stats.body_rows": f"{PLAYER_STATS_SELECTORS.STATS_TABLE} {PLAYER_STATS_SELECTORS.BODY_ROWS}",
+        "player_stats.player_profile_link": f"{PLAYER_STATS_SELECTORS.STATS_TABLE} {PLAYER_STATS_SELECTORS.PLAYER_PROFILE_LINK}",
+        "player_stats.player_headshot": f"{PLAYER_STATS_SELECTORS.STATS_TABLE} {PLAYER_STATS_SELECTORS.PLAYER_HEADSHOT}",
+        "player_stats.jumper_number": f"{PLAYER_STATS_SELECTORS.STATS_TABLE} {PLAYER_STATS_SELECTORS.JUMPER_NUMBER}",
+    },
+    "field_checks": {
+        "player_stats.match_status_label": {"selector": PLAYER_STATS_SELECTORS.MATCH_STATUS_LABEL, "text": True},
+        "player_stats.stats_table": {"selector": PLAYER_STATS_SELECTORS.STATS_TABLE},
+        "player_stats.body_rows": {"selector": f"{PLAYER_STATS_SELECTORS.STATS_TABLE} {PLAYER_STATS_SELECTORS.BODY_ROWS}"},
+        "player_stats.player_profile_link": {"selector": f"{PLAYER_STATS_SELECTORS.STATS_TABLE} {PLAYER_STATS_SELECTORS.PLAYER_PROFILE_LINK}"},
+        "player_stats.player_headshot": {"selector": f"{PLAYER_STATS_SELECTORS.STATS_TABLE} {PLAYER_STATS_SELECTORS.PLAYER_HEADSHOT}"},
+        "player_stats.jumper_number": {"selector": f"{PLAYER_STATS_SELECTORS.STATS_TABLE} {PLAYER_STATS_SELECTORS.JUMPER_NUMBER}"},
+    },
+}
+PRESETS = {"fixture-match": FIXTURE_MATCH_PRESET, "player-stats": PLAYER_STATS_PRESET}
 PLAYWRIGHT_INSTALL_CHROMIUM = "python -m playwright install chromium"
 PLAYWRIGHT_INSTALL_DEPS = "sudo python -m playwright install-deps chromium"
 PLAYWRIGHT_INSTALL_WITH_DEPS = "sudo python -m playwright install --with-deps chromium"
@@ -129,6 +152,7 @@ class ResponseInspection:
     observed_network_requests: list[str]
     data_source_responses: list[DataSourceResponse] | None = None
     likely_fixture_data_endpoints: list[DataSourceResponse] | None = None
+    player_stats_contract: dict[str, object] | None = None
     error: InspectionError | None = None
     unfiltered_html_url_candidates: list[str] | None = None
     unfiltered_observed_network_requests: list[str] | None = None
@@ -204,6 +228,8 @@ def classify_plain_error(exc: Exception, *, verbose: bool = False) -> Inspection
 
 def _field_present(soup: BeautifulSoup, check: dict[str, object]) -> bool:
     for element in soup.select(str(check["selector"])):
+        if not check.get("text") and not check.get("attribute"):
+            return True
         if check.get("text") and element.get_text(strip=True):
             return True
         attr = check.get("attribute")
@@ -240,7 +266,7 @@ def inspect_html(mode: str, url: str, html: str, selectors: dict[str, str] | Ite
             label = script_id or script_type or "inline-script"
             json_candidates.append(label[:120])
     html_candidates, unfiltered = extract_html_url_candidates(html, verbose=verbose)
-    return ResponseInspection(mode, url, status_code, final_url, redact_headers(headers or {}), len(html.encode("utf-8")), selector_presence, field_presence, json_candidates[:100], html_candidates, [], unfiltered_html_url_candidates=unfiltered)
+    return ResponseInspection(mode, url, status_code, final_url, redact_headers(headers or {}), len(html.encode("utf-8")), selector_presence, field_presence, json_candidates[:100], html_candidates, [], player_stats_contract=inspect_player_stats_contract(html), unfiltered_html_url_candidates=unfiltered)
 
 
 def _empty_error_result(mode: str, url: str, selectors: dict[str, str] | Iterable[str], field_checks: dict[str, dict[str, object]] | None, error: InspectionError) -> ResponseInspection:
@@ -547,6 +573,122 @@ def render_findings(findings: dict[str, str]) -> str:
         f"Recommendation status: {findings['recommendation_status']}",
     ])
 
+
+def normalize_player_stats_header(value: str) -> str:
+    return value.strip().replace("%", "").replace("ToG", "ToG%")
+
+
+def interpret_match_state(status_label: str | None) -> str:
+    if not status_label:
+        return "unknown"
+    label = status_label.strip().upper()
+    if "FULL TIME" in label:
+        return "completed"
+    if "Q1" in label or "Q2" in label or "Q3" in label or "Q4" in label or "LIVE" in label:
+        return "live"
+    if any(token in label for token in ("UPCOMING", "SCHEDULED", "BOUNCE", "START", "PM", "AM")):
+        return "pre-match"
+    return "unknown"
+
+
+def inspect_player_stats_contract(html: str) -> dict[str, object]:
+    soup = BeautifulSoup(html, "html.parser")
+    status_el = soup.select_one(PLAYER_STATS_SELECTORS.MATCH_STATUS_LABEL)
+    status_label = status_el.get_text(" ", strip=True) if status_el else None
+    table = soup.select_one(PLAYER_STATS_SELECTORS.STATS_TABLE)
+    headers = [normalize_player_stats_header(cell.get_text(" ", strip=True)) for cell in soup.select(f"{PLAYER_STATS_SELECTORS.STATS_TABLE} {PLAYER_STATS_SELECTORS.HEADER_CELLS}")]
+    rows = soup.select(f"{PLAYER_STATS_SELECTORS.STATS_TABLE} {PLAYER_STATS_SELECTORS.BODY_ROWS}") if table else []
+    profile_links = soup.select(f"{PLAYER_STATS_SELECTORS.STATS_TABLE} {PLAYER_STATS_SELECTORS.PLAYER_PROFILE_LINK}") if table else []
+    headshots = soup.select(f"{PLAYER_STATS_SELECTORS.STATS_TABLE} {PLAYER_STATS_SELECTORS.PLAYER_HEADSHOT}") if table else []
+    jumper_numbers = soup.select(f"{PLAYER_STATS_SELECTORS.STATS_TABLE} {PLAYER_STATS_SELECTORS.JUMPER_NUMBER}") if table else []
+    required = set(PLAYER_STATS_REQUIRED_HEADERS)
+    header_set = set(headers)
+    missing_required = [header for header in PLAYER_STATS_REQUIRED_HEADERS if header not in header_set]
+    unexpected = [header for header in headers if header and header not in required and header.upper() not in PLAYER_STATS_IDENTITY_HEADERS]
+    team_code_rows = 0
+    for jumper in jumper_numbers:
+        classes = jumper.get("class", [])
+        if len(classes) > 1 and any(str(cls).strip() for cls in classes[1:]):
+            team_code_rows += 1
+    row_count = len(rows)
+    profile_links_present = row_count > 0 and len(profile_links) >= row_count
+    headshots_present = row_count > 0 and len(headshots) >= row_count
+    jumper_numbers_present = row_count > 0 and len(jumper_numbers) >= row_count
+    team_codes_present = row_count > 0 and team_code_rows >= row_count
+    required_columns_present = not missing_required
+    contract_satisfied = bool(
+        table and status_el and row_count > 0 and required_columns_present
+        and profile_links_present and headshots_present and jumper_numbers_present and team_codes_present
+    )
+    return {
+        "player_stats_table_present": "Yes" if table else "No",
+        "match_status_label_present": "Yes" if status_el else "No",
+        "interpreted_match_state": interpret_match_state(status_label),
+        "detected_table_headers": headers,
+        "player_row_count": row_count,
+        "player_profile_links_present": "Yes" if profile_links_present else "No",
+        "player_headshots_present": "Yes" if headshots_present else "No",
+        "jumper_numbers_present": "Yes" if jumper_numbers_present else "No",
+        "team_codes_present": "Yes" if team_codes_present else "No",
+        "current_required_stat_columns_present": "Yes" if required_columns_present else "No",
+        "missing_required_stat_columns": missing_required,
+        "unexpected_additional_stat_columns": unexpected,
+        "current_player_stats_scraper_contract_satisfied": "Yes" if contract_satisfied else "No",
+    }
+
+
+def player_stats_summary(results: list[ResponseInspection]) -> dict[str, object]:
+    raw = next((r for r in results if r.mode == "plain-http"), None)
+    rendered = next((r for r in results if r.mode == "playwright-rendered"), None)
+    raw_success = bool(raw and not raw.error)
+    rendered_success = bool(rendered and not rendered.error)
+    # The ResponseInspection intentionally does not retain full HTML. Recompute from selector/field summaries is not
+    # sufficient for headers/identity details, so fetch helpers attach this summary after inspection.
+    rendered_stats = getattr(rendered, "player_stats_contract", None) if rendered else None
+    raw_stats = getattr(raw, "player_stats_contract", None) if raw else None
+    summary = dict(rendered_stats or raw_stats or inspect_player_stats_contract(""))
+    summary["plain_http_inspection_success"] = "Yes" if raw_success else "No"
+    summary["playwright_inspection_success"] = "Yes" if rendered_success else "No"
+    rendered_satisfied = rendered_stats and rendered_stats["current_player_stats_scraper_contract_satisfied"] == "Yes"
+    raw_satisfied = raw_stats and raw_stats["current_player_stats_scraper_contract_satisfied"] == "Yes"
+    if not rendered_success:
+        summary["current_player_stats_scraper_contract_satisfied"] = "Inconclusive"
+        summary["playwright_required"] = "Inconclusive"
+    else:
+        summary["current_player_stats_scraper_contract_satisfied"] = "Yes" if rendered_satisfied else "No"
+        if raw_success and raw_satisfied:
+            summary["playwright_required"] = "No"
+        elif rendered_satisfied:
+            summary["playwright_required"] = "Yes"
+        else:
+            summary["playwright_required"] = "Inconclusive"
+    structured = bool(rendered and rendered.data_source_responses)
+    summary["structured_player_stat_api_responses_observed"] = "Yes" if structured else "No"
+    return summary
+
+
+def render_player_stats_summary(summary: dict[str, object]) -> str:
+    return "\n".join([
+        "Player stats summary:",
+        f"Plain HTTP inspection success: {summary['plain_http_inspection_success']}",
+        f"Playwright inspection success: {summary['playwright_inspection_success']}",
+        f"Player stats table present: {summary['player_stats_table_present']}",
+        f"Match status label present: {summary['match_status_label_present']}",
+        f"Interpreted match state: {summary['interpreted_match_state']}",
+        f"Detected table headers: {', '.join(summary['detected_table_headers']) if summary['detected_table_headers'] else '(none)'}",
+        f"Player row count: {summary['player_row_count']}",
+        f"Player profile links present: {summary['player_profile_links_present']}",
+        f"Player headshots present: {summary['player_headshots_present']}",
+        f"Jumper numbers present: {summary['jumper_numbers_present']}",
+        f"Team codes present: {summary['team_codes_present']}",
+        f"Current required stat columns present: {summary['current_required_stat_columns_present']}",
+        f"Missing required stat columns: {', '.join(summary['missing_required_stat_columns']) if summary['missing_required_stat_columns'] else '(none)'}",
+        f"Unexpected additional stat columns: {', '.join(summary['unexpected_additional_stat_columns']) if summary['unexpected_additional_stat_columns'] else '(none)'}",
+        f"Current player-stats scraper contract satisfied: {summary['current_player_stats_scraper_contract_satisfied']}",
+        f"Playwright required: {summary['playwright_required']}",
+        f"Structured player-stat API responses observed: {summary['structured_player_stat_api_responses_observed']}",
+    ])
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Compare plain HTTP and Playwright-rendered AFL source responses without saving captures.",
@@ -564,6 +706,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--mode", choices=("plain", "playwright", "both"), default="both", help="Fetch raw HTTP, Playwright-rendered HTML, or both; default compares both")
     parser.add_argument("--verbose", action="store_true", help="Include underlying exception diagnostics and unfiltered URL/request candidates")
     parser.add_argument("--json-only", action="store_true", help="Print only the machine-readable JSON report")
+    parser.add_argument("--output", type=Path, help="Write the machine-readable JSON inspection report to this path")
     args = parser.parse_args(argv)
 
     preset = PRESETS.get(args.preset) if args.preset else None
@@ -577,6 +720,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.mode in ("playwright", "both"):
         results.append(fetch_playwright(args.url, selectors, field_checks, verbose=args.verbose))
     findings = derive_findings(results, field_checks)
+    stats_summary = player_stats_summary(results) if args.preset == "player-stats" else None
     output = {
         "note": "No pages, cookies, credentials, or raw network captures were written to disk.",
         "environment": dependency_context(),
@@ -591,6 +735,7 @@ def main(argv: list[str] | None = None) -> int:
             "fields": comparison_matrix(results, "field_presence"),
         },
         "findings": findings,
+        "player_stats_summary": stats_summary,
         "acquisition_method_conclusion": "Pending verification until both plain HTTP and Playwright-rendered inspections succeed." if any(result.error for result in results) else "Both requested modes completed; human review is still required before changing scraper dependencies.",
         "results": [asdict(result) for result in results],
         "human_judgement_required": [
@@ -603,8 +748,14 @@ def main(argv: list[str] | None = None) -> int:
         print(render_terminal_summary(results))
         print()
         print(render_findings(findings))
+        if stats_summary:
+            print()
+            print(render_player_stats_summary(stats_summary))
         print()
-    print(json.dumps(output, indent=2))
+    rendered_output = json.dumps(output, indent=2)
+    if args.output:
+        args.output.write_text(rendered_output + "\n", encoding="utf-8")
+    print(rendered_output)
     return 0
 
 if __name__ == "__main__":

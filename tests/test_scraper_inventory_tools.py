@@ -345,3 +345,81 @@ def test_render_findings_is_human_readable():
     })
     assert "Embedded JSON found? No" in text
     assert "Recommendation: Inconclusive" in text
+
+
+def fixture_text(name: str) -> str:
+    return Path("tests/fixtures/afl" , name).read_text(encoding="utf-8")
+
+
+def test_player_stats_completed_match_fixture_contract_passes():
+    summary = inspect_scraper_source.inspect_player_stats_contract(fixture_text("player_stats_completed.html"))
+    assert summary["player_stats_table_present"] == "Yes"
+    assert summary["match_status_label_present"] == "Yes"
+    assert summary["interpreted_match_state"] == "completed"
+    assert summary["detected_table_headers"][-1] == "ToG%"
+    assert summary["player_row_count"] == 2
+    assert summary["player_profile_links_present"] == "Yes"
+    assert summary["player_headshots_present"] == "Yes"
+    assert summary["jumper_numbers_present"] == "Yes"
+    assert summary["team_codes_present"] == "Yes"
+    assert summary["current_required_stat_columns_present"] == "Yes"
+    assert summary["missing_required_stat_columns"] == []
+    assert summary["unexpected_additional_stat_columns"] == []
+    assert summary["current_player_stats_scraper_contract_satisfied"] == "Yes"
+
+
+def test_player_stats_live_match_fixture_interprets_state():
+    summary = inspect_scraper_source.inspect_player_stats_contract(fixture_text("player_stats_live.html"))
+    assert summary["interpreted_match_state"] == "live"
+    assert summary["current_player_stats_scraper_contract_satisfied"] == "Yes"
+
+
+def test_player_stats_missing_stats_table_fails_contract():
+    summary = inspect_scraper_source.inspect_player_stats_contract('<span class="mc-header__status-label">FULL TIME</span>')
+    assert summary["player_stats_table_present"] == "No"
+    assert summary["player_row_count"] == 0
+    assert summary["current_player_stats_scraper_contract_satisfied"] == "No"
+
+
+def test_player_stats_missing_and_changed_headers_are_reported():
+    html = fixture_text("player_stats_completed.html").replace("<th>CLR</th>", "").replace("<th>MG</th>", "<th>XYZ</th>")
+    summary = inspect_scraper_source.inspect_player_stats_contract(html)
+    assert summary["current_required_stat_columns_present"] == "No"
+    assert summary["missing_required_stat_columns"] == ["CLR", "MG"]
+    assert "XYZ" in summary["unexpected_additional_stat_columns"]
+    assert summary["current_player_stats_scraper_contract_satisfied"] == "No"
+
+
+def test_player_stats_unexpected_extra_columns_are_reported():
+    html = fixture_text("player_stats_completed.html").replace("<th>ToG%</th>", "<th>ToG%</th><th>NEW</th>")
+    summary = inspect_scraper_source.inspect_player_stats_contract(html)
+    assert summary["unexpected_additional_stat_columns"] == ["NEW"]
+    assert summary["current_player_stats_scraper_contract_satisfied"] == "Yes"
+
+
+def test_player_stats_rows_with_missing_identity_fields_fail_contract():
+    html = fixture_text("player_stats_completed.html").replace('class="mc-player-stats-table__headshot"', 'class="missing-headshot"', 1)
+    summary = inspect_scraper_source.inspect_player_stats_contract(html)
+    assert summary["player_headshots_present"] == "No"
+    assert summary["current_player_stats_scraper_contract_satisfied"] == "No"
+
+
+def test_player_stats_summary_pass_fail_and_inconclusive():
+    raw = inspect_scraper_source.inspect_html("plain-http", "u", "<html></html>", inspect_scraper_source.PLAYER_STATS_PRESET["selectors"], field_checks=inspect_scraper_source.PLAYER_STATS_PRESET["field_checks"])
+    rendered = inspect_scraper_source.inspect_html("playwright-rendered", "u", fixture_text("player_stats_completed.html"), inspect_scraper_source.PLAYER_STATS_PRESET["selectors"], field_checks=inspect_scraper_source.PLAYER_STATS_PRESET["field_checks"])
+    summary = inspect_scraper_source.player_stats_summary([raw, rendered])
+    assert summary["current_player_stats_scraper_contract_satisfied"] == "Yes"
+    assert summary["playwright_required"] == "Yes"
+
+    rendered_error = inspect_scraper_source.ResponseInspection("playwright-rendered", "u", None, None, {}, 0, {}, {}, [], [], [], error=inspect_scraper_source.InspectionError("playwright_browser_missing", "missing", "install"))
+    inconclusive = inspect_scraper_source.player_stats_summary([rendered_error])
+    assert inconclusive["current_player_stats_scraper_contract_satisfied"] == "Inconclusive"
+    assert inconclusive["playwright_required"] == "Inconclusive"
+
+
+def test_player_stats_summary_reports_failed_contract_when_rendered_page_missing_table():
+    raw = inspect_scraper_source.inspect_html("plain-http", "u", "<html></html>", inspect_scraper_source.PLAYER_STATS_PRESET["selectors"], field_checks=inspect_scraper_source.PLAYER_STATS_PRESET["field_checks"])
+    rendered = inspect_scraper_source.inspect_html("playwright-rendered", "u", '<span class="mc-header__status-label">FULL TIME</span>', inspect_scraper_source.PLAYER_STATS_PRESET["selectors"], field_checks=inspect_scraper_source.PLAYER_STATS_PRESET["field_checks"])
+    summary = inspect_scraper_source.player_stats_summary([raw, rendered])
+    assert summary["current_player_stats_scraper_contract_satisfied"] == "No"
+    assert summary["playwright_required"] == "Inconclusive"
