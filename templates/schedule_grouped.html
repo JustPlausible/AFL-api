@@ -12,6 +12,20 @@
     <button class="btn btn-primary btn-sm">🔄 Refresh Scheduled Jobs</button>
 </form>
 
+<div class="card mb-4 border-warning">
+  <div class="card-header fw-bold">🛠 Manual scheduler triggers</div>
+  <div class="card-body">
+    <p class="text-muted mb-3">Manual triggers queue one narrowly scoped scheduler job and return before long-running AFL scraping completes. Use the scheduler listing and scrape-run audit table to inspect progress. Match statistics refreshes can be expensive; confirm the match ID before submitting.</p>
+    <div class="row g-3">
+      <div class="col-md-6"><form action="/scheduler/manual/injuries" method="post" class="border rounded p-2 h-100">{{ csrf_input(request) | safe }}<strong>Refresh injuries</strong><p class="small text-muted">No identifier required.</p><button class="btn btn-warning btn-sm">Queue injury refresh</button></form></div>
+      <div class="col-md-6"><form action="/scheduler/manual/fixtures_round" method="post" class="border rounded p-2 h-100">{{ csrf_input(request) | safe }}<strong>Refresh fixtures for one round</strong><label class="form-label small d-block mt-2">Round ID<input class="form-control form-control-sm" name="round_id" inputmode="numeric" required></label><button class="btn btn-warning btn-sm">Queue round fixture refresh</button></form></div>
+      <div class="col-md-6"><form action="/scheduler/manual/lineups_round" method="post" class="border rounded p-2 h-100">{{ csrf_input(request) | safe }}<strong>Refresh lineups for one round</strong><label class="form-label small d-block mt-2">Round ID<input class="form-control form-control-sm" name="round_id" inputmode="numeric" required></label><button class="btn btn-warning btn-sm">Queue round lineup refresh</button></form></div>
+      <div class="col-md-6"><form action="/scheduler/manual/lineups_match" method="post" class="border rounded p-2 h-100">{{ csrf_input(request) | safe }}<strong>Refresh lineups for one match</strong><label class="form-label small d-block mt-2">Match ID<input class="form-control form-control-sm" name="match_id" inputmode="numeric" required></label><button class="btn btn-warning btn-sm">Queue match lineup refresh</button></form></div>
+      <div class="col-md-6"><form action="/scheduler/manual/player_stats_match" method="post" class="border rounded p-2 h-100">{{ csrf_input(request) | safe }}<strong>Refresh player stats for one match</strong><p class="small text-danger">Potentially expensive. Queues explicit once-only stats refresh.</p><label class="form-label small d-block">Match ID<input class="form-control form-control-sm" name="match_id" inputmode="numeric" required></label><button class="btn btn-danger btn-sm">I understand — queue stats refresh</button></form></div>
+    </div>
+  </div>
+</div>
+
 {% for group, jobs in grouped_jobs.items() %}
 <div class="card mb-3">
     <div class="card-header fw-bold">{{ group }}</div>

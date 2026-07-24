@@ -11,10 +11,12 @@ from scheduler.schedule_refresh_jobs import register_refresh_jobs
 from scheduler.schedule_lineup_scrapes import register_lineup_jobs
 from scheduler.registry import registry_rows
 from utils.log import log
+from scheduler.manual_triggers import router as manual_triggers_router
 
 log("🔍 scheduler/api.py loaded", "DEBUG")
 
 app = FastAPI(title="Scheduler API")
+app.include_router(manual_triggers_router)
 
 @app.get("/scheduler/jobs")
 def list_jobs():
