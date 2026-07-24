@@ -285,3 +285,19 @@ MIT
 - [Scheduler registry and restart recovery](docs_scheduler_registry.md)
 - [Scrape run audit records](docs_scrape_run_audit.md)
 - [Admin manual scheduler triggers](docs_admin_manual_triggers.md)
+
+## Scraper HTTP network policy
+
+Plain HTTP scraper calls must use the shared synchronous client in `utils.http_utils` instead of calling `requests`, `httpx`, or `urllib` directly. Rendered-page scraping remains a separate Playwright responsibility: future modules should keep Playwright for pages whose usable content depends on JavaScript rendering, including player-stat pages unless deterministic fixtures/tests prove plain HTTP contains all required data.
+
+The default scraper HTTP policy is intentionally conservative:
+
+- User-Agent: `AFL-api/1.0 (+https://github.com/JustPlausible/AFL-api)`.
+- Timeout: 5 seconds to connect and 20 seconds to read by default.
+- Retries: at most 3 attempts for transient failures only.
+- Retryable failures: HTTP 429, HTTP 500, 502, 503, 504, connection failures, timeouts, and clearly transient transport errors such as chunked transfer or content decoding failures.
+- Non-retryable failures: permanent HTTP 4xx responses are not retried unnecessarily.
+- Backoff: bounded exponential backoff starting at 0.5 seconds, capped at 8 seconds, with up to 0.25 seconds of jitter. `Retry-After` is honoured where practical and capped at 10 seconds.
+- Rate limiting: one thread-safe bucket per host, per Python process, with a default 1 second spacing between same-host requests. This is not a distributed or cross-container rate limiter.
+
+The supported operational knobs are the `ScraperHttpPolicy` values passed to `ScraperHttpClient` for explicit module-specific overrides. Overrides should be rare, local to the module that needs them, and documented in code with the reason; do not introduce competing request helpers for one-off timeout, retry, or rate-limit changes. Tests can inject sessions, clocks, sleep functions, jitter functions, and rate limiters, and can reset the process default client with `reset_scraper_http_client()` to avoid live network access or real sleeping.
