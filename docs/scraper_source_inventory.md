@@ -305,10 +305,30 @@ Playwright: FAILED — Chromium system dependencies are missing
 Suggested action: Likely host-level command: `sudo python -m playwright install-deps chromium`. For a fresh Linux environment, use `sudo python -m playwright install --with-deps chromium`. Use the project Docker image if host-level dependency installation is unavailable.
 Rendered-page and acquisition-method conclusions cannot be drawn until all required modes succeed.
 
+Findings:
+Embedded JSON found? No
+Hydration data found? No
+Structured API endpoints observed? No
+Current scraper contract satisfied? Unknown
+Does the rendered page expose additional required fields? Unknown
+Does this page still appear to require Playwright? Unknown
+Recommendation: Inconclusive
+Recommendation status: Pending verification
+
 {
   "note": "No pages, cookies, credentials, or raw network captures were written to disk.",
   "preset": "fixture-match",
   "preset_description": "Selectors used by scraper.scrape_afl_fixtures and scraper.scrape_afl_matches.",
+  "findings": {
+    "embedded_json_found": "No",
+    "hydration_data_found": "No",
+    "structured_api_endpoints_observed": "No",
+    "current_scraper_contract_satisfied": "Unknown",
+    "rendered_page_exposes_additional_required_fields": "Unknown",
+    "page_still_appears_to_require_playwright": "Unknown",
+    "recommendation": "Inconclusive",
+    "recommendation_status": "Pending verification"
+  },
   "documentation_mapping": {
     "fixtures-rounds": "docs/scraper_source_inventory.md#source-contract-fixtures-rounds",
     "matches-status": "docs/scraper_source_inventory.md#source-contract-matches-status"
@@ -370,6 +390,21 @@ When either mode fails, `comparison.selectors.*` and `comparison.fields.*` use `
 
 If the maintainer's environment cannot reach `www.afl.com.au` or does not have Playwright browsers installed, the tool still exits successfully and records a structured `error` object for the affected mode with a stable code, concise summary, detected missing executable or library when available, and remediation command. That diagnostic output demonstrates tooling safety but is not live source evidence for changing a contract.
 
+
+
+### Human-readable findings summary
+
+The inspection report now includes a `findings` object and prints a matching human-readable `Findings:` block before the JSON output. This block is derived from the detailed selector, field, embedded-data, and observed-network results so maintainers do not have to infer the high-level answers manually. It explicitly reports:
+
+- `Embedded JSON found?`
+- `Hydration data found?`
+- `Structured API endpoints observed?`
+- `Current scraper contract satisfied?`
+- `Does the rendered page expose additional required fields?`
+- `Does this page still appear to require Playwright?`
+- `Recommendation: Continue current scraper / Investigate structured API / Inconclusive`
+
+When either required acquisition mode fails, contract and Playwright-requirement findings are reported as `Unknown`, and the recommendation is `Inconclusive`. Recommendations remain marked `Pending verification`; they are workflow triage hints only, not production scraper architecture decisions.
 
 ### Playwright data-source response metadata
 

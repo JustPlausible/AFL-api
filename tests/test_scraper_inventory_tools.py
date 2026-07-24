@@ -285,3 +285,63 @@ def test_direct_fetch_uses_shared_client_without_browser_headers(monkeypatch):
     assert result.status_code == 200
     assert calls[0].max_attempts == 1
     assert calls[1:] == ["https://aflapi.afl.com.au/afl/v2/rounds", "closed"]
+
+
+def test_derive_findings_answers_maintainer_questions_for_rendered_only_contract():
+    raw = inspect_scraper_source.ResponseInspection(
+        "plain-http", "u", 200, "u", {}, 1,
+        {}, {"fixtures.season_id": False}, ["__NEXT_DATA__"], [], []
+    )
+    rendered = inspect_scraper_source.ResponseInspection(
+        "playwright-rendered", "u", 200, "u", {}, 1,
+        {}, {"fixtures.season_id": True}, ["__NEXT_DATA__"], [], ["https://aflapi.afl.com.au/afl/v2/rounds"],
+        data_source_responses=[inspect_scraper_source.DataSourceResponse(
+            "https://aflapi.afl.com.au/afl/v2/rounds", "GET", "xhr", 200, "application/json",
+            False, False, False, 2, inspect_scraper_source.JsonShapeSummary("object", ["rounds"]),
+            inspect_scraper_source.DirectFetchResult(True, 200, "application/json", 2), "public_directly_callable"
+        )],
+    )
+    findings = inspect_scraper_source.derive_findings(
+        [raw, rendered],
+        {"fixtures.season_id": {"selector": "div.js-react-fixtures", "attribute": "data-season-id"}},
+    )
+    assert findings == {
+        "embedded_json_found": "Yes",
+        "hydration_data_found": "Yes",
+        "structured_api_endpoints_observed": "Yes",
+        "current_scraper_contract_satisfied": "Yes",
+        "rendered_page_exposes_additional_required_fields": "Yes",
+        "page_still_appears_to_require_playwright": "Yes",
+        "recommendation": "Investigate structured API",
+        "recommendation_status": "Pending verification",
+    }
+
+
+def test_derive_findings_uses_unknown_when_required_mode_failed():
+    rendered_error = inspect_scraper_source.ResponseInspection(
+        "playwright-rendered", "u", None, None, {}, 0, {}, {"fixtures.season_id": False}, [], [], [],
+        error=inspect_scraper_source.InspectionError("playwright_browser_missing", "Chromium browser executable is missing", "install"),
+    )
+    findings = inspect_scraper_source.derive_findings(
+        [rendered_error],
+        {"fixtures.season_id": {"selector": "div.js-react-fixtures", "attribute": "data-season-id"}},
+    )
+    assert findings["current_scraper_contract_satisfied"] == "Unknown"
+    assert findings["rendered_page_exposes_additional_required_fields"] == "Unknown"
+    assert findings["page_still_appears_to_require_playwright"] == "Unknown"
+    assert findings["recommendation"] == "Inconclusive"
+
+
+def test_render_findings_is_human_readable():
+    text = inspect_scraper_source.render_findings({
+        "embedded_json_found": "No",
+        "hydration_data_found": "No",
+        "structured_api_endpoints_observed": "No",
+        "current_scraper_contract_satisfied": "Unknown",
+        "rendered_page_exposes_additional_required_fields": "Unknown",
+        "page_still_appears_to_require_playwright": "Unknown",
+        "recommendation": "Inconclusive",
+        "recommendation_status": "Pending verification",
+    })
+    assert "Embedded JSON found? No" in text
+    assert "Recommendation: Inconclusive" in text

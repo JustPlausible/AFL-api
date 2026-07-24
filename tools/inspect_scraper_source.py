@@ -452,6 +452,101 @@ def render_terminal_summary(results: list[ResponseInspection]) -> str:
     return "\n".join(lines)
 
 
+TRUTH_YES = "Yes"
+TRUTH_NO = "No"
+TRUTH_UNKNOWN = "Unknown"
+
+
+def required_contract_field_names(field_checks: dict[str, dict[str, object]]) -> set[str]:
+    return {name for name in field_checks if not name.endswith("_candidate")}
+
+
+def any_embedded_json(results: list[ResponseInspection]) -> bool:
+    return any(result.embedded_json_candidates for result in results)
+
+
+def any_hydration_data(results: list[ResponseInspection]) -> bool:
+    hydration_re = re.compile(r"(__NEXT_DATA__|__APOLLO_STATE__|hydration|hydrate|preloaded|initialState)", re.I)
+    return any(any(hydration_re.search(candidate) for candidate in result.embedded_json_candidates) for result in results)
+
+
+def any_structured_api_endpoints(results: list[ResponseInspection]) -> bool:
+    return any(result.data_source_responses for result in results)
+
+
+def contract_satisfied(result: ResponseInspection | None, required_fields: set[str]) -> bool | None:
+    if result is None or result.error:
+        return None
+    if not required_fields:
+        return None
+    return all(result.field_presence.get(field) for field in required_fields)
+
+
+def derive_findings(results: list[ResponseInspection], field_checks: dict[str, dict[str, object]] | None = None) -> dict[str, str]:
+    field_checks = field_checks or {}
+    required_fields = required_contract_field_names(field_checks)
+    raw = next((r for r in results if r.mode == "plain-http"), None)
+    rendered = next((r for r in results if r.mode == "playwright-rendered"), None)
+    raw_satisfied = contract_satisfied(raw, required_fields)
+    rendered_satisfied = contract_satisfied(rendered, required_fields)
+
+    if rendered_satisfied is None:
+        current_contract = TRUTH_UNKNOWN
+    else:
+        current_contract = TRUTH_YES if rendered_satisfied else TRUTH_NO
+
+    if raw is None or rendered is None or raw.error or rendered.error or not required_fields:
+        rendered_additional = TRUTH_UNKNOWN
+        requires_playwright = TRUTH_UNKNOWN
+    else:
+        rendered_additional_fields = [
+            field for field in required_fields
+            if rendered.field_presence.get(field) and not raw.field_presence.get(field)
+        ]
+        rendered_additional = TRUTH_YES if rendered_additional_fields else TRUTH_NO
+        if raw_satisfied:
+            requires_playwright = TRUTH_NO
+        elif rendered_satisfied:
+            requires_playwright = TRUTH_YES
+        else:
+            requires_playwright = TRUTH_UNKNOWN
+
+    structured_api = any_structured_api_endpoints(results)
+    if structured_api:
+        recommendation = "Investigate structured API"
+    elif current_contract == TRUTH_YES:
+        recommendation = "Continue current scraper"
+    else:
+        recommendation = "Inconclusive"
+
+    if raw is None or rendered is None or raw.error or rendered.error:
+        recommendation = "Inconclusive"
+
+    return {
+        "embedded_json_found": TRUTH_YES if any_embedded_json(results) else TRUTH_NO,
+        "hydration_data_found": TRUTH_YES if any_hydration_data(results) else TRUTH_NO,
+        "structured_api_endpoints_observed": TRUTH_YES if structured_api else TRUTH_NO,
+        "current_scraper_contract_satisfied": current_contract,
+        "rendered_page_exposes_additional_required_fields": rendered_additional,
+        "page_still_appears_to_require_playwright": requires_playwright,
+        "recommendation": recommendation,
+        "recommendation_status": "Pending verification",
+    }
+
+
+def render_findings(findings: dict[str, str]) -> str:
+    return "\n".join([
+        "Findings:",
+        f"Embedded JSON found? {findings['embedded_json_found']}",
+        f"Hydration data found? {findings['hydration_data_found']}",
+        f"Structured API endpoints observed? {findings['structured_api_endpoints_observed']}",
+        f"Current scraper contract satisfied? {findings['current_scraper_contract_satisfied']}",
+        f"Does the rendered page expose additional required fields? {findings['rendered_page_exposes_additional_required_fields']}",
+        f"Does this page still appear to require Playwright? {findings['page_still_appears_to_require_playwright']}",
+        f"Recommendation: {findings['recommendation']}",
+        f"Recommendation status: {findings['recommendation_status']}",
+    ])
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Compare plain HTTP and Playwright-rendered AFL source responses without saving captures.",
@@ -481,6 +576,7 @@ def main(argv: list[str] | None = None) -> int:
         results.append(fetch_plain(args.url, selectors, field_checks, verbose=args.verbose))
     if args.mode in ("playwright", "both"):
         results.append(fetch_playwright(args.url, selectors, field_checks, verbose=args.verbose))
+    findings = derive_findings(results, field_checks)
     output = {
         "note": "No pages, cookies, credentials, or raw network captures were written to disk.",
         "environment": dependency_context(),
@@ -494,6 +590,7 @@ def main(argv: list[str] | None = None) -> int:
             "selectors": comparison_matrix(results, "selector_presence"),
             "fields": comparison_matrix(results, "field_presence"),
         },
+        "findings": findings,
         "acquisition_method_conclusion": "Pending verification until both plain HTTP and Playwright-rendered inspections succeed." if any(result.error for result in results) else "Both requested modes completed; human review is still required before changing scraper dependencies.",
         "results": [asdict(result) for result in results],
         "human_judgement_required": [
@@ -504,6 +601,8 @@ def main(argv: list[str] | None = None) -> int:
     }
     if not args.json_only:
         print(render_terminal_summary(results))
+        print()
+        print(render_findings(findings))
         print()
     print(json.dumps(output, indent=2))
     return 0
