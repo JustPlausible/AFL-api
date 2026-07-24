@@ -10,7 +10,7 @@ The remaining risk is concentrated in the scraper subsystem. Most scrapers still
 
 | Area | Strengths | Technical debt | Unnecessary complexity | Missing capabilities | Maturity |
 | --- | --- | --- | --- | --- | --- |
-| Repository structure | Clear top-level domains for `api`, `db`, `scheduler`, `scraper`, `templates`, `tests`, and `utils`; deployment files live at the root. | Flat application modules (`admin.py`, `main.py`, `cli.py`, `config.py`) make boundaries less explicit; docs are split between root `docs_*.md` files and `docs/`. | Multiple one-off root docs and compatibility modules increase navigation cost. | Package-level architecture overview and ownership map. | 7/10 |
+| Repository structure | Clear top-level domains for `api`, `db`, `scheduler`, `scraper`, `templates`, `tests`, and `utils`; deployment files live at the root. | Flat application modules (`admin.py`, `main.py`, `cli.py`, `config.py`) make boundaries less explicit; documentation now lives under `docs/`, after previously being split between root files and `docs/`. | Multiple one-off root docs and compatibility modules increase navigation cost. | Package-level architecture overview and ownership map. | 7/10 |
 | Scraper architecture | Separate modules exist for fixtures, matches, lineups, injuries, players, and stats; active CSS selectors are centralised; scrape-run auditing wraps major entrypoints. | Scrapers mix browser/network loading, parsing, transformation, persistence, retry policy, CLI parsing, and logging; import-time filesystem/DNS work exists in the stats scraper. | Legacy scraper variants and special-case retry wrappers duplicate concepts now handled elsewhere. | Source inventory, page contract docs, scraper interface, fixtures for every active scraper, and explicit fetch-mode choice per source. | 5/10 |
 | Parser architecture | Some parser functions are pure enough for tests (`parse_fixtures_metadata`, `parse_round_list`, `parse_matches`, `parse_lineups_html`, `parse_live_stats`). | Parser outputs are loose dictionaries with inconsistent naming (`round_number` vs `round_id`, `champion_id` vs `champion_data_id`) and broad exception swallowing inside row parsing. | Dataclass selector containers are useful, but parser abstractions are not yet present, so central selectors alone do not enforce contracts. | Typed domain models, parse diagnostics, golden fixtures for injuries/players/stats/lineups, and explicit nullability rules. | 5/10 |
 | Networking layer | `ScraperHttpClient` provides timeouts, retry/backoff, per-host rate limiting, redaction, and test coverage. | Active high-value scrapers still call Playwright directly or through `load_page_with_playwright`; HTTP client is not yet the primary acquisition path. | Both bespoke Playwright retry code and shared HTTP retry policy coexist. | JSON/API discovery, HTTP-first fetchers, cacheable fixture collection, and consistent user-agent/timeout use by all scrapers. | 6/10 |
@@ -61,7 +61,7 @@ The following completed TODO items appear obsolete as open issues if they still 
 
 ## Simplification opportunities
 
-- Move root `docs_*.md` files under `docs/` and add a single index.
+- Keep project documentation consolidated under `docs/` with a single index.
 - Convert root application modules into a package once import paths are stable.
 - Delete or archive `scrape_afl_lineups-early2025.py` after fixture parity is proven.
 - Replace bespoke `retry_load_page` with the shared network policy or a browser-specific equivalent.

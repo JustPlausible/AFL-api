@@ -143,7 +143,7 @@ python3 scraper/scrape_afl_player_stats.py --round-id 1155 --once
 
 ## 🔐 API Key Authentication
 
-All API routes require an `x-api-key` header. Full API keys are shown only when created or renewed; SQLite stores only a non-reversible hash plus a short administrative prefix. Existing plaintext keys are migrated in place during database initialisation as described in `docs_api_key_migration.md`.
+All API routes require an `x-api-key` header. Full API keys are shown only when created or renewed; SQLite stores only a non-reversible hash plus a short administrative prefix. Existing plaintext keys are migrated in place during database initialisation as described in [`docs/api_key_migration.md`](docs/api_key_migration.md).
 
 Manage your keys via:
 
@@ -281,10 +281,17 @@ PRs welcome. Please raise an issue first if you’d like to propose a major chan
 
 MIT
 
-- [SQLite database migrations](docs_database_migrations.md)
-- [Scheduler registry and restart recovery](docs_scheduler_registry.md)
-- [Scrape run audit records](docs_scrape_run_audit.md)
-- [Admin manual scheduler triggers](docs_admin_manual_triggers.md)
+---
+
+## 📚 Documentation
+
+- [Documentation index](docs/README.md)
+- [Administrator CSRF protection](docs/admin_csrf.md)
+- [Admin manual scheduler triggers](docs/admin_manual_triggers.md)
+- [API key storage migration](docs/api_key_migration.md)
+- [SQLite database migrations](docs/database_migrations.md)
+- [Scheduler registry and restart recovery](docs/scheduler_registry.md)
+- [Scrape run audit records](docs/scrape_run_audit.md)
 
 ## Scraper HTTP network policy
 
