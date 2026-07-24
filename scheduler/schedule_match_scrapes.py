@@ -3,7 +3,6 @@
 from apscheduler.triggers.interval import IntervalTrigger
 from utils.log import setup_logger
 from datetime import datetime
-import sqlite3
 from db.connection import get_db_connection
 from scheduler.registry import add_registered_job, live_match_day_job_id, live_match_refresh_job_id
 from scraper.scrape_afl_matches import run as scrape_matches
@@ -48,7 +47,7 @@ def scrape_today_matches():
 
 def register_live_match_day_scraper(scheduler):
     def today_has_matches():
-        conn = sqlite3.connect("data/afl_players.db")
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("""
             SELECT COUNT(*) FROM matches
