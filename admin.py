@@ -23,6 +23,50 @@ from admin_csrf import csrf_input, require_csrf
 
 security = HTTPBasic()
 
+SCHEDULER_BASE_URL = "http://afl-scheduler:8000"
+MANUAL_TRIGGER_ENDPOINTS = {
+    "injuries": "/scheduler/manual/injuries",
+    "fixtures_round": "/scheduler/manual/fixtures/round",
+    "lineups_round": "/scheduler/manual/lineups/round",
+    "lineups_match": "/scheduler/manual/lineups/match",
+    "player_stats_match": "/scheduler/manual/player-stats/match",
+}
+
+def _parse_positive_int(value: str | None, label: str) -> tuple[int | None, str | None]:
+    if value is None or not str(value).strip():
+        return None, f"{label} is required."
+    text = str(value).strip()
+    if not text.isdecimal():
+        return None, f"{label} must be a positive numeric identifier."
+    parsed = int(text)
+    if parsed <= 0:
+        return None, f"{label} must be greater than zero."
+    return parsed, None
+
+def _identifier_exists(table: str, column: str, value: int) -> bool:
+    conn = sqlite3.connect(get_db_path())
+    try:
+        return conn.execute(f"SELECT 1 FROM {table} WHERE {column}=? LIMIT 1", (value,)).fetchone() is not None
+    finally:
+        conn.close()
+
+def _manual_message(request: Request, message: str, status_code: int = 200):
+    return templates.TemplateResponse(request=request, name="message.html", context={"message": message}, status_code=status_code)
+
+def _post_manual_trigger(kind: str, payload: dict):
+    endpoint = MANUAL_TRIGGER_ENDPOINTS[kind]
+    response = httpx.post(f"{SCHEDULER_BASE_URL}{endpoint}", json=payload, timeout=5)
+    if response.status_code == 409:
+        return response.json()
+    response.raise_for_status()
+    return response.json()
+
+def _format_trigger_response(data: dict) -> str:
+    if data.get("status") == "already_running":
+        return f"ℹ️ Equivalent manual job is already queued or running: {data.get('job_id', 'unknown job')}."
+    return f"✅ Manual job queued: {data.get('job_id', 'unknown job')}. Acceptance means queued, not completed; inspect scheduler and scrape-run audit status for progress."
+
+
 
 def verify_admin(credentials: HTTPBasicCredentials = Depends(security)) -> str:
     expected_username = os.getenv("ADMIN_USERNAME", "admin")
@@ -112,6 +156,47 @@ def refresh_all_jobs(request: Request, _: None = Depends(require_csrf)):
             name="message.html",
             context={"message": f"❌ Failed to refresh scheduler: {e}"},
         )
+
+
+@app.post("/scheduler/manual/{kind}", response_class=HTMLResponse)
+def trigger_manual_job(request: Request, kind: str, round_id: str = Form(None), match_id: str = Form(None), _: None = Depends(require_csrf)):
+    if kind not in MANUAL_TRIGGER_ENDPOINTS:
+        raise HTTPException(status_code=404, detail="Unsupported manual scheduler trigger")
+    payload = {}
+    if kind in {"fixtures_round", "lineups_round"}:
+        parsed, error = _parse_positive_int(round_id, "Round ID")
+        if error:
+            return _manual_message(request, f"❌ {error}", 422)
+        if match_id and match_id.strip():
+            return _manual_message(request, "❌ Limit each request to one round or one match.", 422)
+        if not _identifier_exists("rounds", "round_id", parsed):
+            return _manual_message(request, "❌ Unknown round identifier.", 422)
+        payload["round_id"] = parsed
+    elif kind in {"lineups_match", "player_stats_match"}:
+        parsed, error = _parse_positive_int(match_id, "Match ID")
+        if error:
+            return _manual_message(request, f"❌ {error}", 422)
+        if round_id and round_id.strip():
+            return _manual_message(request, "❌ Limit each request to one round or one match.", 422)
+        if not _identifier_exists("matches", "match_id", parsed):
+            return _manual_message(request, "❌ Unknown match identifier.", 422)
+        payload["match_id"] = parsed
+    elif kind == "injuries":
+        if (round_id and round_id.strip()) or (match_id and match_id.strip()):
+            return _manual_message(request, "❌ Injury refresh does not accept a round or match identifier.", 422)
+    try:
+        data = _post_manual_trigger(kind, payload)
+        return _manual_message(request, _format_trigger_response(data))
+    except httpx.HTTPStatusError as exc:
+        detail = "Scheduler rejected the manual trigger."
+        try:
+            detail = exc.response.json().get("detail", detail)
+        except Exception:
+            pass
+        return _manual_message(request, f"❌ {detail}", exc.response.status_code)
+    except Exception:
+        log("❌ Scheduler unavailable for manual trigger", "ERROR")
+        return _manual_message(request, "❌ Scheduler service is unavailable. No manual job was queued.", 503)
 
 @app.get("/tables", response_class=HTMLResponse)
 def show_tables(request: Request):
