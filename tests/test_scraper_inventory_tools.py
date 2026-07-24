@@ -180,3 +180,108 @@ def test_verbose_candidate_lists_include_filtered_static_assets_separately():
     assert result.html_url_candidates == ["/api/fixtures?Round=1"]
     assert "https://example.test/image.png" in result.unfiltered_html_url_candidates
     assert "https://ad.doubleclick.net/ad" in result.unfiltered_html_url_candidates
+
+
+class FakeRequest:
+    def __init__(self, url, method="GET", resource_type="xhr", headers=None):
+        self.url = url
+        self.method = method
+        self.resource_type = resource_type
+        self.headers = headers or {}
+
+
+class FakeResponse:
+    def __init__(self, url, *, body=b"{}", status=200, content_type="application/json", headers=None, request_headers=None):
+        self.request = FakeRequest(url, headers=request_headers)
+        self.status = status
+        self.headers = headers or {"content-type": content_type}
+        self._body = body
+
+    def body(self):
+        return self._body
+
+
+def test_json_shape_summary_for_object_and_array():
+    obj = inspect_scraper_source.summarize_json_shape(b'{"matches": [], "rounds": []}')
+    assert obj.kind == "object"
+    assert obj.top_level_keys == ["matches", "rounds"]
+    arr = inspect_scraper_source.summarize_json_shape(b'[{"id": 1, "name": "A"}, {"id": 2}]')
+    assert arr.kind == "array"
+    assert arr.item_count == 2
+    assert arr.representative_item_keys == ["id", "name"]
+
+
+def test_build_data_source_response_records_safe_metadata_and_header_flags(monkeypatch):
+    monkeypatch.setattr(
+        inspect_scraper_source,
+        "direct_fetch_without_browser_credentials",
+        lambda url, method: inspect_scraper_source.DirectFetchResult(True, 200, "application/json", 10),
+    )
+    response = FakeResponse(
+        "https://aflapi.afl.com.au/afl/v2/matches?roundId=1343",
+        body=b'{"matches": [{"id": 1, "home": "A"}]}',
+        request_headers={"cookie": "secret", "authorization": "secret", "x-api-key": "secret"},
+    )
+    summary = inspect_scraper_source.build_data_source_response(response)
+    assert summary.url == "https://aflapi.afl.com.au/afl/v2/matches?roundId=1343"
+    assert summary.method == "GET"
+    assert summary.resource_type == "xhr"
+    assert summary.status == 200
+    assert summary.content_type == "application/json"
+    assert summary.request_had_cookie is True
+    assert summary.request_had_authorization is True
+    assert summary.request_had_api_key_header is True
+    assert summary.response_byte_size == len(b'{"matches": [{"id": 1, "home": "A"}]}')
+    assert summary.json_shape.kind == "object"
+    assert summary.json_shape.top_level_keys == ["matches"]
+    assert summary.direct_fetch.status_code == 200
+    assert summary.endpoint_access == "authenticated"
+
+
+def test_endpoint_access_classification_public_browser_dependent_and_inconclusive():
+    assert inspect_scraper_source.endpoint_access_classification(
+        direct_fetch=inspect_scraper_source.DirectFetchResult(True, 200, "application/json", 2),
+        observed_status=200,
+        had_sensitive_headers=False,
+    ) == "public_directly_callable"
+    assert inspect_scraper_source.endpoint_access_classification(
+        direct_fetch=inspect_scraper_source.DirectFetchResult(True, 403, None, None),
+        observed_status=200,
+        had_sensitive_headers=False,
+    ) == "browser_context_dependent"
+    assert inspect_scraper_source.endpoint_access_classification(
+        direct_fetch=inspect_scraper_source.DirectFetchResult(False, None, None, None),
+        observed_status=None,
+        had_sensitive_headers=False,
+    ) == "inconclusive"
+
+
+def test_likely_data_source_prioritises_aflapi_and_suppresses_assets():
+    assert inspect_scraper_source.is_likely_data_source("https://aflapi.afl.com.au/afl/v2/rounds")
+    assert inspect_scraper_source.is_likely_data_source("https://www.afl.com.au/api/matches", "xhr", "application/json")
+    assert not inspect_scraper_source.is_likely_data_source("https://www.afl.com.au/static/app.js", "script", "application/javascript")
+    assert not inspect_scraper_source.is_likely_data_source("https://ad.doubleclick.net/activity", "xhr", "application/json")
+
+
+def test_direct_fetch_uses_shared_client_without_browser_headers(monkeypatch):
+    calls = []
+
+    class FakeClient:
+        def __init__(self, policy):
+            calls.append(policy)
+        def get(self, url):
+            calls.append(url)
+            class Response:
+                status_code = 200
+                headers = {"Content-Type": "application/json"}
+                content = b"{}"
+            return Response()
+        def close(self):
+            calls.append("closed")
+
+    monkeypatch.setattr(inspect_scraper_source, "ScraperHttpClient", FakeClient)
+    result = inspect_scraper_source.direct_fetch_without_browser_credentials("https://aflapi.afl.com.au/afl/v2/rounds", "GET")
+    assert result.attempted is True
+    assert result.status_code == 200
+    assert calls[0].max_attempts == 1
+    assert calls[1:] == ["https://aflapi.afl.com.au/afl/v2/rounds", "closed"]

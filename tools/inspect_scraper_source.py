@@ -7,11 +7,13 @@ import json
 import re
 from dataclasses import asdict, dataclass
 from typing import Iterable
+from urllib.parse import urlsplit
 
 import requests
 from bs4 import BeautifulSoup
 
 from scraper.afl_selectors import FIXTURE_SELECTORS, MATCH_CARD_SELECTORS
+from utils.http_utils import ScraperHttpClient, ScraperHttpError, ScraperHttpPolicy
 
 SENSITIVE_HEADERS = {"authorization", "cookie", "set-cookie", "x-api-key", "proxy-authorization"}
 JSON_PATTERNS = [
@@ -24,6 +26,8 @@ HTML_URL_RE = re.compile(r"(?:https?:)?//[^\"'<>\s]+|/[^\"'<>\s]+", re.I)
 DATA_CANDIDATE_RE = re.compile(r"(api|graphql|fixture|fixtures|match|matches|round|competition|season|stats|squad|json)", re.I)
 STATIC_ASSET_RE = re.compile(r"\.(?:png|jpe?g|gif|webp|svg|ico|css|js|woff2?|ttf|mp4|webm)(?:[?#].*)?$", re.I)
 LOW_RELEVANCE_RE = re.compile(r"(doubleclick|googletagmanager|google-analytics|facebook|instagram|twitter|x\.com|youtube|app-store|play\.google|advert|adsystem|scorecardresearch)", re.I)
+AFL_API_HOSTS = {"aflapi.afl.com.au"}
+SENSITIVE_REQUEST_HEADER_NAMES = {"cookie", "authorization", "x-api-key", "api-key", "apikey", "x-api-token"}
 MISSING_EXECUTABLE_RE = re.compile(r"Executable doesn't exist at (?P<path>[^\n]+)")
 MISSING_LIBRARY_RE = re.compile(r"error while loading shared libraries: (?P<library>[^:\s]+)")
 
@@ -81,6 +85,36 @@ class InspectionError:
     diagnostic: str | None = None
 
 @dataclass
+class JsonShapeSummary:
+    kind: str
+    top_level_keys: list[str]
+    item_count: int | None = None
+    representative_item_keys: list[str] | None = None
+
+@dataclass
+class DirectFetchResult:
+    attempted: bool
+    status_code: int | None
+    content_type: str | None
+    byte_size: int | None
+    error: str | None = None
+
+@dataclass
+class DataSourceResponse:
+    url: str
+    method: str
+    resource_type: str
+    status: int | None
+    content_type: str | None
+    request_had_cookie: bool
+    request_had_authorization: bool
+    request_had_api_key_header: bool
+    response_byte_size: int | None
+    json_shape: JsonShapeSummary | None
+    direct_fetch: DirectFetchResult
+    endpoint_access: str
+
+@dataclass
 class ResponseInspection:
     mode: str
     url: str
@@ -93,6 +127,8 @@ class ResponseInspection:
     embedded_json_candidates: list[str]
     html_url_candidates: list[str]
     observed_network_requests: list[str]
+    data_source_responses: list[DataSourceResponse] | None = None
+    likely_fixture_data_endpoints: list[DataSourceResponse] | None = None
     error: InspectionError | None = None
     unfiltered_html_url_candidates: list[str] | None = None
     unfiltered_observed_network_requests: list[str] | None = None
@@ -212,6 +248,115 @@ def _empty_error_result(mode: str, url: str, selectors: dict[str, str] | Iterabl
     return ResponseInspection(mode, url, None, None, {}, 0, {name: 0 for name in selector_map}, {name: False for name in (field_checks or {})}, [], [], [], error=error)
 
 
+
+def summarize_json_shape(body: bytes) -> JsonShapeSummary | None:
+    try:
+        data = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if isinstance(data, dict):
+        return JsonShapeSummary(kind="object", top_level_keys=sorted(str(key) for key in data.keys())[:50])
+    if isinstance(data, list):
+        representative = next((item for item in data if isinstance(item, dict)), None)
+        return JsonShapeSummary(
+            kind="array",
+            top_level_keys=[],
+            item_count=len(data),
+            representative_item_keys=sorted(str(key) for key in representative.keys())[:50] if representative else [],
+        )
+    return JsonShapeSummary(kind=type(data).__name__, top_level_keys=[])
+
+
+def request_header_flags(headers: dict[str, str]) -> tuple[bool, bool, bool]:
+    lowered = {name.lower() for name in headers}
+    return (
+        "cookie" in lowered,
+        "authorization" in lowered,
+        bool(lowered & {"x-api-key", "api-key", "apikey", "x-api-token"}),
+    )
+
+
+def is_likely_data_source(url: str, resource_type: str | None = None, content_type: str | None = None) -> bool:
+    parsed = urlsplit(url)
+    if (parsed.hostname or "").lower() in AFL_API_HOSTS:
+        return True
+    if content_type and "json" in content_type.lower() and not LOW_RELEVANCE_RE.search(url):
+        return True
+    if resource_type in {"xhr", "fetch"} and is_relevant_candidate(url):
+        return True
+    return is_relevant_candidate(url)
+
+
+def direct_fetch_without_browser_credentials(url: str, method: str) -> DirectFetchResult:
+    if method.upper() != "GET":
+        return DirectFetchResult(False, None, None, None, "direct fetch skipped for non-GET request")
+    client = ScraperHttpClient(policy=ScraperHttpPolicy(max_attempts=1, rate_limit_seconds=0))
+    try:
+        response = client.get(url)
+        return DirectFetchResult(True, response.status_code, response.headers.get("Content-Type"), len(response.content), None)
+    except ScraperHttpError as exc:
+        return DirectFetchResult(True, exc.status_code, None, None, redact_text(str(exc)))
+    except requests.RequestException as exc:
+        return DirectFetchResult(True, None, None, None, redact_text(str(exc)))
+    finally:
+        client.close()
+
+
+def endpoint_access_classification(*, direct_fetch: DirectFetchResult, observed_status: int | None, had_sensitive_headers: bool) -> str:
+    if had_sensitive_headers:
+        return "authenticated"
+    if direct_fetch.attempted and direct_fetch.status_code is not None and 200 <= direct_fetch.status_code < 400:
+        return "public_directly_callable"
+    if observed_status is not None and 200 <= observed_status < 400 and direct_fetch.attempted and direct_fetch.status_code is not None and direct_fetch.status_code >= 400:
+        return "browser_context_dependent"
+    return "inconclusive"
+
+
+def build_data_source_response(response, *, verbose: bool = False) -> DataSourceResponse | None:
+    request = response.request
+    url = request.url
+    method = request.method.upper()
+    resource_type = request.resource_type
+    content_type = response.headers.get("content-type") or response.headers.get("Content-Type")
+    if not is_likely_data_source(url, resource_type, content_type):
+        return None
+    headers = request.headers
+    had_cookie, had_authorization, had_api_key = request_header_flags(headers)
+    body: bytes | None = None
+    byte_size: int | None = None
+    json_shape: JsonShapeSummary | None = None
+    try:
+        body = response.body()
+        byte_size = len(body)
+    except Exception:
+        body = None
+    if body is not None and content_type and "json" in content_type.lower():
+        json_shape = summarize_json_shape(body)
+    direct_fetch = direct_fetch_without_browser_credentials(url, method)
+    had_sensitive = had_cookie or had_authorization or had_api_key
+    return DataSourceResponse(
+        url=url,
+        method=method,
+        resource_type=resource_type,
+        status=response.status,
+        content_type=content_type,
+        request_had_cookie=had_cookie,
+        request_had_authorization=had_authorization,
+        request_had_api_key_header=had_api_key,
+        response_byte_size=byte_size,
+        json_shape=json_shape,
+        direct_fetch=direct_fetch,
+        endpoint_access=endpoint_access_classification(direct_fetch=direct_fetch, observed_status=response.status, had_sensitive_headers=had_sensitive),
+    )
+
+
+def likely_fixture_endpoint_rows(responses: list[DataSourceResponse]) -> list[DataSourceResponse]:
+    return [
+        response for response in responses
+        if (urlsplit(response.url).hostname or "").lower() in AFL_API_HOSTS
+        or DATA_CANDIDATE_RE.search(urlsplit(response.url).path)
+    ]
+
 def fetch_plain(url: str, selectors: dict[str, str] | Iterable[str], field_checks: dict[str, dict[str, object]] | None = None, timeout: float = 20.0, *, verbose: bool = False) -> ResponseInspection:
     try:
         response = requests.get(url, timeout=timeout, headers={"User-Agent": "AFL-api-source-inspector/1.0"})
@@ -223,22 +368,27 @@ def fetch_plain(url: str, selectors: dict[str, str] | Iterable[str], field_check
 def fetch_playwright(url: str, selectors: dict[str, str] | Iterable[str], field_checks: dict[str, dict[str, object]] | None = None, timeout_ms: int = 60000, *, verbose: bool = False) -> ResponseInspection:
     from playwright.sync_api import Error as PlaywrightError, sync_playwright
     captured: set[str] = set()
+    observed_responses = []
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()
             page.on("request", lambda request: captured.add(request.url))
+            page.on("response", lambda response: observed_responses.append(response))
             response = page.goto(url, wait_until="networkidle", timeout=timeout_ms)
             html = page.content()
             final_url = page.url
             headers = response.headers if response else {}
             status = response.status if response else None
+            data_source_responses = [summary for response in observed_responses if (summary := build_data_source_response(response, verbose=verbose)) is not None]
             browser.close()
     except PlaywrightError as exc:
         return _empty_error_result("playwright-rendered", url, selectors, field_checks, classify_playwright_error(exc, verbose=verbose))
     result = inspect_html("playwright-rendered", url, html, selectors, field_checks=field_checks, status_code=status, final_url=final_url, headers=dict(headers), verbose=verbose)
     unfiltered_observed = sorted(captured)[:250]
-    result.observed_network_requests = filter_candidates(unfiltered_observed)[:150]
+    result.observed_network_requests = [response.url for response in data_source_responses][:150] or filter_candidates(unfiltered_observed)[:150]
+    result.data_source_responses = data_source_responses[:150]
+    result.likely_fixture_data_endpoints = likely_fixture_endpoint_rows(data_source_responses)[:50]
     if verbose:
         result.unfiltered_observed_network_requests = unfiltered_observed
     return result

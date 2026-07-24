@@ -370,6 +370,36 @@ When either mode fails, `comparison.selectors.*` and `comparison.fields.*` use `
 
 If the maintainer's environment cannot reach `www.afl.com.au` or does not have Playwright browsers installed, the tool still exits successfully and records a structured `error` object for the affected mode with a stable code, concise summary, detected missing executable or library when available, and remediation command. That diagnostic output demonstrates tooling safety but is not live source evidence for changing a contract.
 
+
+### Playwright data-source response metadata
+
+When Playwright rendering succeeds, the inspection helper records structured metadata for likely data-source responses, prioritising `https://aflapi.afl.com.au/afl/v2/` and suppressing analytics, advertising, images, fonts, scripts, store links, and unrelated static content by default. For each likely data-source response the report includes:
+
+- request URL, HTTP method, and Playwright resource type;
+- response status and response `Content-Type`;
+- boolean flags indicating whether request cookies, `Authorization`, or API-key-style headers were present, without exposing values;
+- response byte size;
+- a safe JSON shape summary for JSON responses: object/array kind, top-level object keys, array item count, and representative item keys;
+- a direct-fetch result using the shared scraper HTTP client without copying browser cookies, credentials, or tokens;
+- an `endpoint_access` classification of `public_directly_callable`, `browser_context_dependent`, `authenticated`, or `inconclusive`.
+
+`html_url_candidates` are URLs discovered in the HTML body. `observed_network_requests` and `data_source_responses` are reserved for Playwright-observed browser traffic. Full response bodies, cookies, credentials, tokens, and browser profiles are not saved.
+
+### Likely fixture data endpoints from successful local inspection
+
+A successful maintainer run observed high-value AFL API requests under `https://aflapi.afl.com.au/afl/v2/`, including competitions, compseasons, rounds, matches, teams, and venues. The inspection tool now surfaces these as `likely_fixture_data_endpoints` when they are observed in Playwright network traffic. Until each endpoint's returned fields are compared against the current fixture and match database requirements, architectural recommendations remain **Pending verification**.
+
+| Endpoint family | Expected report evidence | Access classification | Contract status |
+|---|---|---|---|
+| competitions | `likely_fixture_data_endpoints[].url` path includes competitions | Reported by tool as public/browser/authenticated/inconclusive | Pending verification |
+| compseasons | `likely_fixture_data_endpoints[].url` path includes compseasons | Reported by tool as public/browser/authenticated/inconclusive | Pending verification |
+| rounds | `likely_fixture_data_endpoints[].url` path includes rounds | Reported by tool as public/browser/authenticated/inconclusive | Pending verification |
+| matches | `likely_fixture_data_endpoints[].url` path includes matches | Reported by tool as public/browser/authenticated/inconclusive | Pending verification |
+| teams | `likely_fixture_data_endpoints[].url` path includes teams | Reported by tool as public/browser/authenticated/inconclusive | Pending verification |
+| venues | `likely_fixture_data_endpoints[].url` path includes venues | Reported by tool as public/browser/authenticated/inconclusive | Pending verification |
+
+Interpret `endpoint_access` conservatively: `public_directly_callable` means the tool's credential-free direct fetch returned a 2xx/3xx response; `browser_context_dependent` means the browser observed a successful response but credential-free direct fetch did not; `authenticated` means cookies, `Authorization`, or API-key-style request headers were present; `inconclusive` means the run did not provide enough evidence. Do not convert any of these endpoint families into production scraper dependencies in this phase.
+
 ### Mapping fixture/match output to this inventory
 
 - `documentation_mapping.fixtures-rounds` and `documentation_mapping.matches-status` identify which contract sections should be reviewed.
