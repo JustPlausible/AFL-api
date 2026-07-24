@@ -267,7 +267,7 @@ Mapped statistic fields are optional because they depend on table headers and pa
 
 ## Manual inspection tool
 
-Use `python -m tools.inspect_scraper_source URL --selector CSS --selector CSS` during later live investigation. The tool can compare plain HTTP and Playwright-rendered responses, report selector counts, embedded JSON or hydration candidates, and browser network request candidates. It redacts sensitive headers and prints a note that it does not write pages, cookies, credentials, or raw captures to disk.
+Use `python -m tools.inspect_scraper_source URL --selector CSS --selector CSS` during later live investigation. The tool can compare plain HTTP and Playwright-rendered responses, report selector counts, embedded JSON or hydration candidates, and observed Playwright browser request candidates. It redacts sensitive headers and prints a note that it does not write pages, cookies, credentials, or raw captures to disk.
 
 ## How to investigate a source
 
@@ -279,9 +279,10 @@ The inspection tool is a repository-maintenance helper, not scraper runtime beha
 - `requirements.txt` includes `playwright==1.61.0`, `beautifulsoup4`, and `requests`; Playwright is therefore already a runtime dependency rather than a new tool-only dependency.
 - `requirements-dev.txt` includes `pytest` for the focused helper tests.
 - The project Dockerfile uses `mcr.microsoft.com/playwright/python:v1.61.0-noble`, so Docker-based maintainers should already have the matching Playwright browser stack available.
-- Local non-Docker environments may have the Python `playwright` package installed without Chromium browser assets. If the rendered mode reports that the Chromium executable is missing, run `python -m playwright install chromium` and retry, or run the inspection from the project Docker image.
+- Local non-Docker environments may have the Python `playwright` package installed without Chromium browser assets. If the rendered mode reports that the Chromium executable is missing, run `python -m playwright install chromium` and retry.
+- Fresh non-Docker Linux environments may also lack host browser libraries. The likely host-level dependency command is `sudo python -m playwright install-deps chromium`; on a new Linux environment this can be done in one step with `sudo python -m playwright install --with-deps chromium`. Do not assume `sudo` is available in every environment; when host-level dependency installation is unavailable, use the project Docker image.
 
-The tool includes an `environment` block in its JSON output that repeats the Playwright package status, the pinned requirement, the Chromium install command, and the Docker browser-stack hint.
+The tool includes an `environment` block in its JSON output that repeats the Playwright package status, the pinned requirement, the Chromium install command, the Linux dependency command, the fresh-Linux one-step command, and the Docker browser-stack hint.
 
 ### Fixtures and match-card demonstration command
 
@@ -295,9 +296,15 @@ The single `fixture-match` preset checks every selector currently used by `scrap
 
 ### Example console output
 
-The output is JSON so maintainers can paste it into notes or compare runs. This is an abbreviated example showing the fields to review; counts and candidate URLs must be regenerated during live verification rather than copied into the contract as permanent facts.
+The default output starts with a concise terminal summary, followed by JSON so maintainers can paste it into notes or compare runs. This is an abbreviated example showing the fields to review; counts and candidate URLs must be regenerated during live verification rather than copied into the contract as permanent facts. Use `--json-only` for machine-readable output without the summary, or `--verbose` to include underlying exception diagnostics and unfiltered candidate URL/request lists.
 
-```json
+```text
+INSPECTION INCOMPLETE
+Plain HTTP: SUCCESS
+Playwright: FAILED — Chromium system dependencies are missing
+Suggested action: Likely host-level command: `sudo python -m playwright install-deps chromium`. For a fresh Linux environment, use `sudo python -m playwright install --with-deps chromium`. Use the project Docker image if host-level dependency installation is unavailable.
+Rendered-page and acquisition-method conclusions cannot be drawn until all required modes succeed.
+
 {
   "note": "No pages, cookies, credentials, or raw network captures were written to disk.",
   "preset": "fixture-match",
@@ -311,13 +318,17 @@ The output is JSON so maintainers can paste it into notes or compare runs. This 
       "raw_http_only": [],
       "rendered_html_only": ["fixtures.metadata_root", "matches.match_card"],
       "both": [],
-      "neither": ["matches.live_clock"]
+      "neither": [],
+      "unknown": ["fixtures.metadata_root", "matches.match_card", "matches.live_clock"],
+      "not_compared_reason": "Both plain HTTP and Playwright-rendered inspections must succeed before acquisition-method conclusions can be drawn."
     },
     "fields": {
       "raw_http_only": [],
       "rendered_html_only": ["fixtures.season_id", "matches.match_id", "matches.home_team"],
       "both": [],
-      "neither": ["matches.score_home_away_candidate"]
+      "neither": [],
+      "unknown": ["fixtures.season_id", "matches.match_id", "matches.home_team", "matches.score_home_away_candidate"],
+      "not_compared_reason": "Both plain HTTP and Playwright-rendered inspections must succeed before acquisition-method conclusions can be drawn."
     }
   },
   "results": [
@@ -327,15 +338,24 @@ The output is JSON so maintainers can paste it into notes or compare runs. This 
       "selector_presence": {"fixtures.metadata_root": 0, "matches.match_card": 0},
       "field_presence": {"fixtures.season_id": false, "matches.match_id": false},
       "embedded_json_candidates": ["__NEXT_DATA__"],
-      "network_request_candidates": ["/api/example-candidate"]
+      "html_url_candidates": ["/api/example-candidate"],
+      "observed_network_requests": []
     },
     {
       "mode": "playwright-rendered",
-      "status_code": 200,
-      "selector_presence": {"fixtures.metadata_root": 1, "matches.match_card": 2},
-      "field_presence": {"fixtures.season_id": true, "matches.match_id": true},
-      "embedded_json_candidates": ["__NEXT_DATA__"],
-      "network_request_candidates": ["https://www.afl.com.au/api/example-candidate"]
+      "status_code": null,
+      "selector_presence": {"fixtures.metadata_root": 0, "matches.match_card": 0},
+      "field_presence": {"fixtures.season_id": false, "matches.match_id": false},
+      "embedded_json_candidates": [],
+      "html_url_candidates": [],
+      "observed_network_requests": [],
+      "error": {
+        "code": "playwright_system_dependency_missing",
+        "summary": "Chromium system dependencies are missing",
+        "remediation": "Likely host-level command: `sudo python -m playwright install-deps chromium`. For a fresh Linux environment, use `sudo python -m playwright install --with-deps chromium`. Use the project Docker image if host-level dependency installation is unavailable.",
+        "missing_library": "libnspr4.so",
+        "diagnostic": null
+      }
     }
   ],
   "human_judgement_required": [
@@ -346,20 +366,22 @@ The output is JSON so maintainers can paste it into notes or compare runs. This 
 }
 ```
 
-If the maintainer's environment cannot reach `www.afl.com.au` or does not have Playwright browsers installed, the tool still exits successfully and records an `error` field for the affected mode with empty selector/field results. That diagnostic output demonstrates tooling safety but is not live source evidence for changing a contract.
+When either mode fails, `comparison.selectors.*` and `comparison.fields.*` use `unknown` instead of false `raw_http_only`, `rendered_html_only`, or `neither` conclusions. No acquisition-method conclusion can be made until both modes succeed.
+
+If the maintainer's environment cannot reach `www.afl.com.au` or does not have Playwright browsers installed, the tool still exits successfully and records a structured `error` object for the affected mode with a stable code, concise summary, detected missing executable or library when available, and remediation command. That diagnostic output demonstrates tooling safety but is not live source evidence for changing a contract.
 
 ### Mapping fixture/match output to this inventory
 
 - `documentation_mapping.fixtures-rounds` and `documentation_mapping.matches-status` identify which contract sections should be reviewed.
 - `comparison.selectors.raw_http_only`, `rendered_html_only`, `both`, and `neither` map to each section's **Selectors or structured data access** heading. These buckets report selector presence only; they do not prove a selector is semantically correct.
 - `comparison.fields.*` maps to **Required output fields** and **Optional output fields**. For fixture metadata this checks the documented `data-*` attributes. For match cards this checks IDs/status/team/venue text plus candidate time/score labels.
-- `results[].embedded_json_candidates` and `results[].network_request_candidates` map to **Verification status** because any decision to use a JSON, REST, GraphQL, or hydration source is Pending verification and requires human review.
+- `results[].embedded_json_candidates`, `results[].html_url_candidates`, and `results[].observed_network_requests` map to **Verification status** because any decision to use a JSON, REST, GraphQL, hydration source, or observed browser request is Pending verification and requires human review. Plain-response URL discoveries are HTML URL candidates; observed network requests are reserved for Playwright browser traffic.
 - `results[].headers` demonstrates redaction behavior for sensitive response headers. Request cookies and credentials are not persisted.
-- `results[].error`, if present, means that mode did not produce page evidence and the contract should remain Pending verification.
+- `results[].error`, if present, means that mode did not produce page evidence and the contract should remain Pending verification. Default errors are concise; rerun with `--verbose` to include underlying exception diagnostics and unfiltered URL/request candidates.
 
 ### Observations that still require human judgement
 
-- Whether any embedded JSON, REST, GraphQL, or hydration candidate is stable, documented enough, and acceptable as a future dependency.
+- Whether any embedded JSON, HTML URL candidate, observed REST/GraphQL/browser request, or hydration candidate is stable, documented enough, and acceptable as a future dependency.
 - Whether a rendered-only selector means Playwright is required or simply that a plain HTTP request needs different headers, timing, or parsing.
 - Whether selectors that appear in the page also contain the expected semantic data for all fixture states.
 - Whether optional fields are absent because of page state, fixture status, or selector drift.
