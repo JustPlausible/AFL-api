@@ -24,6 +24,7 @@ This project scrapes, enriches, and serves AFL player data across all clubs. It 
 - 🧭 Lineup scrapes run at predictable times (T-1 day 5pm, Thursday 5pm, and 1h before each match)
 - 📈 Player stat scrapes run automatically 2 minutes before each match start
 - 🕒 Admin page shows all upcoming scheduled jobs
+- 📚 Scraper source inventory: [`docs/scraper_source_inventory.md`](docs/scraper_source_inventory.md)
 ---
 
 ## 🚀 Quick Start
