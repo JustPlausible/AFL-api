@@ -6,7 +6,7 @@ from utils.log import log
 from scraper.scrape_afl_clubs import save_club_players_to_json
 from scraper.scrape_afl_injuries import scrape_injury_list, save_injuries_to_db
 from scraper.scrape_afl_lineups import scrape_team_lineups
-from scraper import scrape_afl_matches, scrape_afl_player_stats
+from scraper import scrape_afl_matches
 from db.scrape_runs import audited_scrape_run
 from merge.helpers import resolve_players_for_club
 from utils.club_lookup import load_clubs, get_club
@@ -168,6 +168,10 @@ def main():
 
     elif args.scrape_match:
         log(f"📊 Scraping player stats for match_id {args.scrape_match}", "INFO")
+        # This legacy scraper loads club aliases during import. Keep that
+        # runtime-data dependency out of argument parsing and unrelated CLI
+        # commands, including --help and public metadata collection.
+        from scraper import scrape_afl_player_stats
         scrape_afl_player_stats.run_scraper(match_id=args.scrape_match, once=True)
 
     elif args.collect_afl_metadata:

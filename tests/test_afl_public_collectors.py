@@ -5,7 +5,13 @@ from pathlib import Path
 import pytest
 
 from afl_json import AflJsonResponse
-from afl_json.collectors import CollectionError, PaginationError, PublicAflCollector, select_season
+from afl_json.collectors import (
+    CollectionError,
+    PaginationError,
+    PublicAflCollector,
+    resolve_competition,
+    select_season,
+)
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "afl_json"
@@ -61,6 +67,31 @@ def test_collects_complete_hierarchy_and_resolves_stable_identifiers():
     assert scheduled["home_team"]["providerId"] == "CD_T10"
     assert concluded["home_score"]["totalScore"] == 65
     assert concluded["away_score"]["totalScore"] == 55
+
+
+def competition_records():
+    return PublicAflCollector(hierarchy_client()).competitions()
+
+
+def test_competition_resolver_requires_both_configured_selectors_to_match_same_record():
+    selected = resolve_competition(competition_records(), code="AFL", provider_id="CD_C014")
+    assert selected["afl_id"] == 1
+
+
+def test_competition_resolver_rejects_when_only_one_of_two_selectors_matches():
+    with pytest.raises(CollectionError, match="was not found"):
+        resolve_competition(competition_records(), code="AFL", provider_id="CD_MISSING")
+
+
+def test_competition_resolver_rejects_selectors_matching_different_records():
+    with pytest.raises(CollectionError, match="inconsistent.*different records"):
+        resolve_competition(competition_records(), code="AFLW", provider_id="CD_C014")
+
+
+@pytest.mark.parametrize("code, provider_id", [("AFL", None), (None, "CD_C014")])
+def test_competition_resolver_supports_one_configured_selector(code, provider_id):
+    selected = resolve_competition(competition_records(), code=code, provider_id=provider_id)
+    assert selected["afl_id"] == 1
 
 
 def test_current_season_is_not_selected_by_highest_numeric_id():

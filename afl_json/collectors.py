@@ -162,13 +162,28 @@ class PublicAflCollector:
 def resolve_competition(competitions: Iterable[dict[str, Any]], *, code: str | None,
                         provider_id: str | None) -> dict[str, Any]:
     values = list(competitions)
-    matches = [item for item in values if
-               (provider_id is not None and item.get("provider_id") == provider_id) or
-               (code is not None and str(item.get("code", "")).casefold() == code.casefold())]
+    if code is None and provider_id is None:
+        raise CollectionError("Premiership competition selection requires a configured code or provider ID")
+
+    code_matches = [item for item in values
+                    if code is not None and str(item.get("code", "")).casefold() == code.casefold()]
+    provider_matches = [item for item in values
+                        if provider_id is not None and item.get("provider_id") == provider_id]
+    if code is not None and provider_id is not None:
+        # When both stable selectors are configured they describe one expected
+        # identity. Requiring both prevents a stale/mistyped value from silently
+        # selecting a record using only the other value.
+        matches = [item for item in code_matches if item in provider_matches]
+    else:
+        matches = code_matches if code is not None else provider_matches
     if len(matches) == 1:
         return matches[0]
     requested = f"code={code!r}, providerId={provider_id!r}"
     if not matches:
+        if code is not None and provider_id is not None and code_matches and provider_matches:
+            raise CollectionError(
+                f"Premiership competition selectors are inconsistent: {requested} matched different records"
+            )
         raise CollectionError(f"Premiership competition was not found using {requested}; configure a stable code or provider ID")
     raise CollectionError(f"Premiership competition selection is ambiguous using {requested}; matched {len(matches)} records")
 
