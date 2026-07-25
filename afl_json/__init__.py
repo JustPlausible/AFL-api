@@ -25,9 +25,11 @@ from .client import (
 )
 from .collectors import (
     CollectionError,
+    CollectionDiagnostic,
     CollectionResult,
     PaginationError,
     PublicAflCollector,
+    PlayerCollectionResult,
     RawResponseWriter,
     resolve_competition,
     select_season,
@@ -54,9 +56,11 @@ __all__ = [
     "HttpPolicy",
     "WMCTokenProvider",
     "CollectionError",
+    "CollectionDiagnostic",
     "CollectionResult",
     "PaginationError",
     "PublicAflCollector",
+    "PlayerCollectionResult",
     "RawResponseWriter",
     "resolve_competition",
     "select_season",

@@ -9,6 +9,7 @@ interface to downstream adapters.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from copy import deepcopy
 from dataclasses import dataclass
@@ -18,6 +19,8 @@ from typing import Any, Iterable, Mapping
 
 from .client import AflJsonClient, AflJsonInvalidResponse
 from .contracts import IDENTIFIER_TYPES, Pagination, get_endpoint
+
+logger = logging.getLogger(__name__)
 
 
 class CollectionError(RuntimeError):
@@ -35,6 +38,24 @@ class CollectionResult:
     rounds: list[dict[str, Any]]
     teams: list[dict[str, Any]]
     matches: list[dict[str, Any]]
+
+
+@dataclass(frozen=True, slots=True)
+class CollectionDiagnostic:
+    """A non-secret, record-level problem found during collection."""
+
+    code: str
+    message: str
+    context: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class PlayerCollectionResult:
+    """Permanent player identities and their distinct season listings."""
+
+    players: list[dict[str, Any]]
+    player_seasons: list[dict[str, Any]]
+    diagnostics: list[CollectionDiagnostic]
 
 
 class RawResponseWriter:
@@ -71,6 +92,13 @@ class PublicAflCollector:
         self.page_size = page_size
         self.max_pages = max_pages
         self.raw_writer = RawResponseWriter(raw_directory) if raw_directory is not None else None
+
+    @staticmethod
+    def _diagnose(diagnostics: list[CollectionDiagnostic], code: str, message: str,
+                  **context: Any) -> None:
+        diagnostic = CollectionDiagnostic(code, message, context)
+        diagnostics.append(diagnostic)
+        logger.warning("%s: %s (%s)", code, message, context)
 
     def collect_endpoint(self, endpoint: str, *, path_parameters: Mapping[str, object] | None = None,
                          params: Mapping[str, object] | None = None) -> list[dict[str, Any]]:
@@ -138,6 +166,146 @@ class PublicAflCollector:
             "competitionId": competition_id, "compSeasonId": season_id, "roundNumber": round_number,
         })
         return [_normalise_match(item) for item in items]
+
+    def player_id_map(self) -> tuple[dict[str, int], list[CollectionDiagnostic]]:
+        """Collect and validate the independently reusable CD-to-AFL crosswalk."""
+        response = self.client.get("player_id_map")
+        payload = response.data
+        if self.raw_writer:
+            self.raw_writer.write("player_id_map", payload, scope={}, page=1)
+        rows = _extract_id_map_rows(payload)
+        mappings: dict[str, int] = {}
+        reverse: dict[int, str] = {}
+        diagnostics: list[CollectionDiagnostic] = []
+        seen_rows: set[tuple[str, int]] = set()
+        for champion_id, afl_id in rows:
+            if not _valid_provider_player_id(champion_id) or not _valid_afl_id(afl_id):
+                self._diagnose(diagnostics, "malformed_player_id_map",
+                               "Player ID-map row has invalid identifiers",
+                               champion_data_player_id=champion_id, afl_player_id=afl_id)
+                continue
+            row = (champion_id, afl_id)
+            if row in seen_rows:
+                self._diagnose(diagnostics, "duplicate_player_id_map_row",
+                               "Duplicate player ID-map row", champion_data_player_id=champion_id,
+                               afl_player_id=afl_id)
+                continue
+            seen_rows.add(row)
+            if champion_id in mappings and mappings[champion_id] != afl_id:
+                self._diagnose(diagnostics, "contradictory_champion_data_id",
+                               "Champion Data ID maps to multiple AFL IDs",
+                               champion_data_player_id=champion_id,
+                               afl_player_ids=[mappings[champion_id], afl_id])
+                continue
+            if afl_id in reverse and reverse[afl_id] != champion_id:
+                self._diagnose(diagnostics, "contradictory_afl_id",
+                               "AFL ID maps to multiple Champion Data IDs", afl_player_id=afl_id,
+                               champion_data_player_ids=[reverse[afl_id], champion_id])
+                continue
+            mappings[champion_id] = afl_id
+            reverse[afl_id] = champion_id
+        return mappings, diagnostics
+
+    def season_players(self, provider_season_id: str) -> tuple[list[dict[str, Any]], list[CollectionDiagnostic]]:
+        """Collect a complete season population, paging only when totals require it."""
+        if not provider_season_id:
+            raise ValueError("provider_season_id is required")
+        diagnostics: list[CollectionDiagnostic] = []
+        records: list[dict[str, Any]] = []
+        seen: set[str] = set()
+
+        def consume(payload: Any, page: int) -> int:
+            page_records = _extract_season_players(payload)
+            if self.raw_writer:
+                self.raw_writer.write("season_players", payload,
+                                      scope={"seasonId": provider_season_id}, page=page)
+            for index, item in enumerate(page_records):
+                if not isinstance(item, dict) or not _valid_provider_player_id(item.get("playerId")):
+                    self._diagnose(diagnostics, "malformed_season_player",
+                                   "Season-player record has no valid Champion Data player ID",
+                                   provider_season_id=provider_season_id, page=page, record_index=index)
+                    continue
+                player_id = item["playerId"]
+                if player_id in seen:
+                    self._diagnose(diagnostics, "duplicate_season_player",
+                                   "Duplicate player in provider season",
+                                   provider_season_id=provider_season_id,
+                                   champion_data_player_id=player_id, page=page)
+                    continue
+                seen.add(player_id)
+                records.append(deepcopy(item))
+            return len(page_records)
+
+        initial = self.client.get("season_players", params={"seasonId": provider_season_id}).data
+        # Page zero denotes the endpoint's unpaged/default completeness probe;
+        # explicit page numbers therefore cannot overwrite its raw capture.
+        initial_count = consume(initial, 0)
+        total = _reported_total(initial)
+        represented_count = _represented_player_count(initial)
+        if represented_count is not None and represented_count != initial_count:
+            self._diagnose(diagnostics, "season_player_count_mismatch",
+                           "players.Count does not match returned player records",
+                           provider_season_id=provider_season_id,
+                           players_count=represented_count, returned_count=initial_count)
+        if total is None:
+            self._diagnose(diagnostics, "missing_season_player_total",
+                           "Season-player response did not report totalResults",
+                           provider_season_id=provider_season_id, collected_count=len(records))
+            return records, diagnostics
+        if len(records) < total:
+            # The unpaged response is only a completeness probe. Explicit pages
+            # are collected from page one because its implicit size/order is not
+            # assumed to match the API's paged view.
+            records.clear()
+            seen.clear()
+            for page in range(1, self.max_pages + 1):
+                payload = self.client.get("season_players", params={
+                    "seasonId": provider_season_id, "pageSize": self.page_size, "pageNum": page,
+                }).data
+                page_count = consume(payload, page)
+                page_total = _reported_total(payload)
+                if page_total is not None and page_total != total:
+                    self._diagnose(diagnostics, "season_player_total_changed",
+                                   "totalResults changed during pagination",
+                                   provider_season_id=provider_season_id,
+                                   initial_total=total, page_total=page_total, page=page)
+                if len(records) >= total:
+                    break
+                if page_count == 0:
+                    break
+            else:
+                raise PaginationError(f"season_players exceeded the safe limit of {self.max_pages} pages")
+        if len(records) != total:
+            self._diagnose(diagnostics, "unreconciled_season_player_total",
+                           "Collected unique players do not match totalResults",
+                           provider_season_id=provider_season_id,
+                           collected_count=len(records), total_results=total)
+        return records, diagnostics
+
+    def collect_players(self, provider_season_id: str,
+                        id_map: Mapping[str, int] | None = None) -> PlayerCollectionResult:
+        """Normalise one season and join it to an independent player ID map."""
+        if id_map is None:
+            mappings, diagnostics = self.player_id_map()
+        else:
+            mappings, diagnostics = dict(id_map), []
+        raw_players, season_diagnostics = self.season_players(provider_season_id)
+        diagnostics.extend(season_diagnostics)
+        identities: list[dict[str, Any]] = []
+        associations: list[dict[str, Any]] = []
+        for item in raw_players:
+            champion_id = item["playerId"]
+            afl_id = mappings.get(champion_id)
+            name = _player_name(item.get("playerName"))
+            identities.append({"champion_data_player_id": champion_id,
+                               "afl_player_id": afl_id, "name": name})
+            associations.append(_normalise_player_season(item, provider_season_id))
+            if afl_id is None:
+                self._diagnose(diagnostics, "unmapped_player",
+                               "No AFL numeric ID for season player",
+                               provider_season_id=provider_season_id,
+                               champion_data_player_id=champion_id)
+        return PlayerCollectionResult(identities, associations, diagnostics)
 
     def collect(self, *, competition_code: str = "AFL", competition_provider_id: str = "CD_C014",
                 season: str | int | None = None, relevant_date: date | None = None) -> CollectionResult:
@@ -244,6 +412,89 @@ def _extract_collection(payload: Any, paths: tuple[str, ...], endpoint: str) -> 
     raise AflJsonInvalidResponse(
         f"AFL response is missing collection path(s): {', '.join(paths)}", endpoint=endpoint
     )
+
+
+def _extract_season_players(payload: Any) -> list[Any]:
+    if not isinstance(payload, dict):
+        raise AflJsonInvalidResponse("Season-player response is not an object", endpoint="season_players")
+    players = payload.get("players")
+    if isinstance(players, list):
+        return players
+    if isinstance(players, dict):
+        for key in ("items", "Items", "results", "Results"):
+            if isinstance(players.get(key), list):
+                return players[key]
+    raise AflJsonInvalidResponse("Season-player response has no players collection", endpoint="season_players")
+
+
+def _reported_total(payload: Any) -> int | None:
+    if not isinstance(payload, dict):
+        return None
+    direct = _integer(payload, "totalResults", "total", "totalCount")
+    metadata = _pagination_metadata(payload)
+    return direct if direct is not None else (_integer(metadata, "totalResults", "total", "totalCount")
+                                               if metadata is not None else None)
+
+
+def _represented_player_count(payload: Any) -> int | None:
+    if not isinstance(payload, dict):
+        return None
+    players = payload.get("players")
+    if isinstance(players, dict):
+        return _integer(players, "Count", "count")
+    return _integer(payload, "players.Count")
+
+
+def _extract_id_map_rows(payload: Any) -> list[tuple[Any, Any]]:
+    if not isinstance(payload, dict):
+        raise AflJsonInvalidResponse("Player ID-map response is not an object", endpoint="player_id_map")
+    container = payload.get("idMapResponse")
+    ids = container.get("ids") if isinstance(container, dict) else None
+    if isinstance(ids, dict):
+        return list(ids.items())
+    if isinstance(ids, list):
+        rows = []
+        for item in ids:
+            if isinstance(item, dict):
+                rows.append((item.get("playerId", item.get("championDataPlayerId")),
+                             item.get("aflPlayerId", item.get("aflId"))))
+            else:
+                rows.append((None, None))
+        return rows
+    raise AflJsonInvalidResponse("Player ID-map response has no idMapResponse.ids", endpoint="player_id_map")
+
+
+def _valid_provider_player_id(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _valid_afl_id(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _player_name(value: Any) -> str | None:
+    if isinstance(value, str):
+        return value.strip() or None
+    if isinstance(value, dict):
+        parts = [value.get("givenName"), value.get("surname")]
+        name = " ".join(part.strip() for part in parts if isinstance(part, str) and part.strip())
+        return name or None
+    return None
+
+
+def _normalise_player_season(item: dict[str, Any], provider_season_id: str) -> dict[str, Any]:
+    team = item.get("team") if isinstance(item.get("team"), dict) else {}
+    return {
+        "champion_data_player_id": item["playerId"],
+        "provider_season_id": provider_season_id,
+        "team_id": team.get("teamId"),
+        "team_abbreviation": team.get("teamAbbr"),
+        "team_name": team.get("teamName"),
+        "jumper_number": item.get("jumperNumber"),
+        "listed_position": item.get("playerPosition"),
+        "photo_url": item.get("photoURL"),
+        "source": deepcopy(item),
+    }
 
 
 def _record_identity(record: Mapping[str, Any], entity: str | None) -> object:

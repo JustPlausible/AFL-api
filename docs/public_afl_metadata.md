@@ -45,3 +45,18 @@ The public response shapes can gain new fields. Normalised records therefore
 include a `source` copy of each record in addition to the currently understood
 identity, name, reference, time, score, bye and metadata fields. No mapping is
 invented for undocumented fields.
+
+## Player identity collection
+
+`PublicAflCollector.player_id_map()` independently collects the public mapping
+from Champion Data player IDs to AFL numeric IDs. `season_players(provider_id)`
+collects the practical CFS population for one provider season, first checking
+the endpoint's default response against `players.Count` (when present) and
+`totalResults`, then explicitly paging from page one only if it is incomplete.
+
+`collect_players(provider_id)` joins those sources and returns separate
+`players` identities and `player_seasons` associations. Unmapped identities are
+retained with a null AFL ID; malformed, duplicate, contradictory, count and
+unmapped cases are returned as structured diagnostics. When raw capture is
+enabled, both endpoints use the same endpoint/scope/page filename convention as
+the metadata hierarchy.
