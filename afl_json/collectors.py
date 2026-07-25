@@ -9,6 +9,7 @@ interface to downstream adapters.
 from __future__ import annotations
 
 import json
+import re
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -317,10 +318,36 @@ def _normalise_competition(item: dict[str, Any]) -> dict[str, Any]:
 
 def _normalise_season(item: dict[str, Any]) -> dict[str, Any]:
     return {**_base(item), "name": item.get("name"), "short_name": item.get("shortName"),
-            "year": item.get("year"), "current": item.get("current", item.get("isCurrent")),
+            "year": _season_year(item), "current": item.get("current", item.get("isCurrent")),
             "current_round_number": item.get("currentRoundNumber"),
             "start_time": item.get("utcStartTime", item.get("startDate")),
             "end_time": item.get("utcEndTime", item.get("endDate")), "metadata": item.get("metadata")}
+
+
+def _season_year(item: Mapping[str, Any]) -> int | None:
+    """Return the explicit year, or a documented unambiguous source fallback.
+
+    The live competition-season response has no top-level ``year`` or date: its
+    name is currently shaped like ``2026 Toyota AFL Premiership``. Provider IDs
+    are opaque and deliberately excluded from year extraction.
+    """
+    explicit = item.get("year")
+    if isinstance(explicit, int) and not isinstance(explicit, bool) and 1000 <= explicit <= 9999:
+        return explicit
+    if isinstance(explicit, str) and re.fullmatch(r"\d{4}", explicit):
+        return int(explicit)
+
+    named_years: set[int] = set()
+    for field in ("name", "shortName"):
+        value = item.get(field)
+        if isinstance(value, str):
+            named_years.update(int(match) for match in re.findall(r"(?<!\d)(\d{4})(?!\d)", value))
+    if len(named_years) == 1:
+        return named_years.pop()
+
+    start = item.get("utcStartTime", item.get("startDate"))
+    start_date = _as_date(start)
+    return start_date.year if not named_years and start_date is not None else None
 
 
 def _normalise_round(item: dict[str, Any]) -> dict[str, Any]:

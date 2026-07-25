@@ -13,6 +13,13 @@ Run it through the existing CLI and select a season explicitly when required:
 python cli.py --collect-afl-metadata --afl-season 2026 --print-json
 ```
 
+`--print-json` emits the full normalised hierarchy to standard output. Save it
+with ordinary shell redirection when a file is wanted:
+
+```bash
+python cli.py --collect-afl-metadata --afl-season 2026 --print-json > metadata-2026.json
+```
+
 The Premiership defaults to the stable `AFL` competition code and `CD_C014`
 provider ID. These can be changed with `--afl-competition-code` and
 `--afl-competition-provider-id`. If no season is supplied, the collector uses
@@ -30,7 +37,9 @@ python cli.py --collect-afl-metadata --afl-season 2026 \
 Captures are JSON files grouped by endpoint, with deterministic filenames that
 include relevant scope IDs and the response page. They are separate from the
 normalised result printed by `--print-json`; request headers and credentials are
-never included.
+never included. In other words, `--afl-raw-directory PATH` stores the original
+per-endpoint/per-page API responses under `PATH`; it is not a destination for
+the normalised output. There is currently no `--afl-json-output` option.
 
 The public response shapes can gain new fields. Normalised records therefore
 include a `source` copy of each record in addition to the currently understood

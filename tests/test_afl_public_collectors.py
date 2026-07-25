@@ -96,10 +96,41 @@ def test_competition_resolver_supports_one_configured_selector(code, provider_id
 
 def test_current_season_is_not_selected_by_highest_numeric_id():
     seasons = PublicAflCollector(hierarchy_client()).competition_seasons(1)
-    assert select_season(seasons)["afl_id"] == 85
+    with_dates = [
+        {**seasons[0], "start_time": "2026-02-01T00:00:00Z", "end_time": "2026-09-30T00:00:00Z"},
+        {**seasons[1], "start_time": "2025-02-01T00:00:00Z", "end_time": "2025-09-30T00:00:00Z"},
+    ]
+    assert select_season(with_dates, relevant_date=date(2026, 7, 1))["afl_id"] == 85
     assert select_season(seasons, selector="CD_S2026014")["year"] == 2026
-    without_flags = [{**item, "current": None} for item in seasons]
-    assert select_season(without_flags, relevant_date=date(2026, 7, 1))["year"] == 2026
+    assert select_season(seasons, selector=85)["year"] == 2026
+
+
+def test_live_season_shape_extracts_exact_year_from_name_without_parsing_provider_id():
+    seasons = PublicAflCollector(hierarchy_client()).competition_seasons(1)
+
+    selected = select_season(seasons, selector=2026)
+
+    assert selected["name"] == "2026 Toyota AFL Premiership"
+    assert selected["provider_id"] == "CD_S2026014"
+
+
+@pytest.mark.parametrize("names", [
+    ["Toyota AFL Premiership"],
+    ["2026 1999 Anniversary AFL Premiership"],
+    ["20260 Toyota AFL Premiership"],
+])
+def test_absent_ambiguous_or_embedded_season_year_fails_clearly(names):
+    payload = {
+        "compSeasons": [
+            {"id": index + 1, "providerId": f"CD_S_YEAR_CASE_{index}",
+             "name": name, "shortName": "Premiership"}
+            for index, name in enumerate(names)
+        ]
+    }
+    seasons = PublicAflCollector(FixtureClient({"competition_seasons": payload})).competition_seasons(1)
+
+    with pytest.raises(CollectionError, match="No competition season matched.*--afl-season"):
+        select_season(seasons, selector=2026)
 
 
 def test_missing_and_ambiguous_season_selection_are_actionable():

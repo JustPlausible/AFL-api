@@ -95,7 +95,8 @@ def handle_args():
     # 🔹 Match + fixture scraping
     match_group = parser.add_argument_group("Match + Player Stat Tools")
     match_group.add_argument("--scrape-injuries", action="store_true", help="Scrape AFL injury list")
-    match_group.add_argument("--print-json", action="store_true", help="Print scraped JSON to stdout")
+    match_group.add_argument("--print-json", action="store_true",
+                             help="Print full scraped or normalised JSON to stdout (redirect to save it)")
     match_group.add_argument("--scrape-lineups", type=int, metavar="ROUND", help="Scrape team lineups for a round")
     match_group.add_argument("--scrape-round", type=int, metavar="ROUND_ID", help="Scrape AFL matches for a specific round_id (e.g. 1156)")
     match_group.add_argument("--scrape-all-rounds", action="store_true", help="Scrape AFL matches for all rounds in DB")
@@ -109,7 +110,7 @@ def handle_args():
     metadata_group.add_argument("--afl-competition-provider-id", default="CD_C014",
                                 help="Stable Premiership provider ID")
     metadata_group.add_argument("--afl-raw-directory", type=Path,
-                                help="Opt in to raw JSON capture below this dedicated directory")
+                                help="Store original per-endpoint/page API JSON below this directory")
 
     # 🔹 Backup and restore
     db_group = parser.add_argument_group("Data Backup / Restore")
