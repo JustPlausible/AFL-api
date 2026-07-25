@@ -1,0 +1,23 @@
+{
+  "publicationState": "PUBLISHED",
+  "updatedAt": "2026-07-24T06:30:00Z",
+  "version": 4,
+  "matchRosters": [
+    {
+      "matchId": "CD_M100", "aflMatchId": 100, "published": true, "weatherNote": "provider-only",
+      "teams": [
+        {"teamId": "CD_T1", "aflTeamId": 1, "teamName": "Cats", "teamAbbr": "CAT", "side": "home", "coachCode": "C1",
+         "namedPlayers": [
+           {"playerId": "CD_I1", "aflPlayerId": 101, "playerName": "Ada Able", "jumperNumber": 7, "named": true, "selectionState": "FIELD", "providerRank": 1},
+           {"playerId": "CD_I2", "aflPlayerId": 102, "playerName": "Bea Baker", "jumperNumber": 8, "named": true, "selectionState": "INTERCHANGE"}
+         ],
+         "emergencies": [{"playerId": "CD_I3", "aflPlayerId": 103, "playerName": "Cam Cook", "jumperNumber": 9, "providerRole": "T"}]},
+        {"teamId": "CD_T2", "aflTeamId": 2, "teamName": "Dogs", "teamAbbr": "DOG", "side": "away",
+         "squad": [{"playerId": "CD_I4", "aflPlayerId": 104, "playerName": "Dee Dove", "named": true, "selectionState": "SQUAD"}]}
+      ]
+    },
+    {"matchId": "CD_M101", "aflMatchId": 101, "published": true,
+     "teams": [{"teamId": "CD_T3", "aflTeamId": 3, "teamName": "Lions", "teamAbbr": "LIO",
+                "players": [{"playerId": "CD_I5", "aflPlayerId": 105, "playerName": "Eve Elm", "selectionState": "SELECTED"}]}]}
+  ]
+}

@@ -12,7 +12,7 @@ from merge.helpers import resolve_players_for_club
 from utils.club_lookup import load_clubs, get_club
 from db.import_to_db import import_players, save_lineups_to_db, save_clubs_to_db
 from db.connection import get_db_connection
-from afl_json import AflJsonClient, PublicAflCollector
+from afl_json import AflJsonClient, MatchRosterCollector, PublicAflCollector
 
 def import_clubs_to_db():
     """Load clubs from JSON and import using shared connection."""
@@ -111,6 +111,8 @@ def handle_args():
                                 help="Stable Premiership provider ID")
     metadata_group.add_argument("--afl-raw-directory", type=Path,
                                 help="Store original per-endpoint/page API JSON below this directory")
+    metadata_group.add_argument("--collect-match-rosters", metavar="ROUND_PROVIDER_ID",
+                                help="Collect CFS team selections for a Champion Data round ID")
 
     # 🔹 Backup and restore
     db_group = parser.add_argument_group("Data Backup / Restore")
@@ -174,6 +176,27 @@ def main():
         # commands, including --help and public metadata collection.
         from scraper import scrape_afl_player_stats
         scrape_afl_player_stats.run_scraper(match_id=args.scrape_match, once=True)
+
+    elif args.collect_match_rosters:
+        with AflJsonClient() as client:
+            result = MatchRosterCollector(
+                client, raw_directory=args.afl_raw_directory
+            ).collect(args.collect_match_rosters)
+        output = {
+            "round_provider_id": result.round_provider_id,
+            "status": result.status.value,
+            "publication_state": result.publication_state,
+            "provider_timestamp": result.provider_timestamp,
+            "provider_version": result.provider_version,
+            "rosters": result.rosters,
+            "selections": result.selections,
+        }
+        if args.print_json:
+            print(json.dumps(output, indent=2))
+        else:
+            print(json.dumps({"round_provider_id": result.round_provider_id,
+                              "status": result.status.value,
+                              "selections": len(result.selections)}))
 
     elif args.collect_afl_metadata:
         with AflJsonClient() as client:
