@@ -1,0 +1,266 @@
+version: 1
+name: afl-json-collection
+purpose: Collect, validate and normalise AFL public API and protected CFS JSON without coupling collection to database persistence.
+
+authentication:
+  cfs:
+    token_endpoint: https://api.afl.com.au/cfs/afl/WMCTok
+    method: POST
+    token_response_path: token
+    request_header: x-media-mis-token
+    cache: memory
+    refresh_policy: on_401
+    retry_after_refresh: 1
+    never_log_token: true
+
+http:
+  connect_timeout_seconds: 10
+  read_timeout_seconds: 30
+  max_attempts: 3
+  retry_statuses: [429, 500, 502, 503, 504]
+  backoff: exponential_with_jitter
+  max_concurrency: 4
+  user_agent: afl-api-collector/defined-by-application-version
+  treat_as_not_published:
+    http_status: 404
+    cfs_error_code: CFSSDS001
+
+collection_order:
+  bootstrap:
+    - competitions
+    - competition_seasons
+    - rounds
+    - teams
+    - matches
+    - player_id_map
+    - season_players
+  round_preparation:
+    - rounds
+    - matches
+    - teams
+    - season_players
+    - round_match_rosters
+  match_live:
+    - matches
+    - match_player_stats
+  match_finalisation:
+    - matches
+    - match_player_stats
+    - round_match_rosters
+  reconciliation:
+    - matches
+    - match_player_stats
+    - player_id_map
+    - season_players
+
+jobs:
+  competitions:
+    endpoint: competitions
+    schedule: yearly
+    pagination: response_driven
+    expected_minimum_records: 1
+    raw_payload: retain
+
+  competition_seasons:
+    endpoint: competition_seasons
+    schedule: daily_in_season
+    dependencies: [competitions]
+    pagination: response_driven
+    raw_payload: retain
+
+  rounds:
+    endpoint: rounds
+    schedule: daily
+    dependencies: [competition_seasons]
+    pagination: response_driven
+    raw_payload: retain
+
+  teams:
+    endpoint: teams
+    schedule: weekly
+    dependencies: [competition_seasons]
+    pagination: response_driven
+    preserve_observed_display_names: true
+    raw_payload: retain
+
+  matches:
+    endpoint: matches
+    schedule:
+      future: daily
+      current_round: hourly
+      live_window: every_2_minutes
+      concluded: final_plus_reconciliation
+    dependencies: [competition_seasons, rounds, teams]
+    pagination: response_driven
+    preserve_unknown_status: true
+    raw_payload: retain
+
+  player_id_map:
+    endpoint: player_id_map
+    schedule: weekly
+    dependencies: []
+    pagination: none_observed
+    allow_unmapped_players: true
+    raw_payload: retain
+
+  season_players:
+    endpoint: season_players
+    schedule:
+      list_management_period: daily
+      normal: weekly
+    dependencies: [competition_seasons, teams]
+    completeness_check: returned_collection_count_equals_totalResults
+    pagination_fallback: response_driven
+    natural_key: [season_provider_id, playerId]
+    raw_payload: retain
+
+  round_match_rosters:
+    endpoint: round_match_rosters
+    schedule:
+      before_team_announcement: hourly
+      after_team_announcement: every_15_minutes
+      match_day: every_5_minutes_until_start
+      final: once_after_match
+    dependencies: [rounds, matches, season_players]
+    enabled: false
+    blocked_by: document_response_schema_and_natural_key
+    raw_payload: retain
+
+  match_player_stats:
+    endpoint: match_player_stats
+    schedule:
+      pre_match: once_when_available
+      live: every_2_minutes
+      concluded: immediate
+      reconciliation: after_6_hours_and_after_round
+    dependencies: [matches, season_players, player_id_map]
+    flatten_collections: [homeTeamPlayerStats, awayTeamPlayerStats]
+    natural_key: [match_provider_id, champion_data_player_id]
+    missing_numeric_value: null
+    never_default_missing_stat_to_zero: true
+    raw_payload: retain
+
+  stats_centre_players:
+    endpoint: stats_centre_players
+    schedule: on_demand
+    enabled: false
+    blocked_by: establish_unique_use_case
+    raw_payload: optional
+
+validation:
+  identifiers:
+    treat_provider_ids_as_opaque: true
+    expected_prefixes:
+      competition: CD_C
+      competition_season: CD_S
+      round: CD_R
+      match: CD_M
+      team: CD_T
+      club: CD_O
+      venue: CD_V
+      player: CD_I
+  counts:
+    compare_page_collection_to_total_results: true
+  numeric_counts:
+    accept_integral_json_float: true
+    reject_non_integral_count: true
+    preserve_null: true
+  timestamps:
+    normalise_to_utc: true
+    preserve_original_value_in_raw_payload: true
+  schema_drift:
+    fixture_tests: true
+    alert_on_missing_required_path: true
+    preserve_unknown_fields: true
+
+normalisation:
+  source_priority:
+    competition_season_round_team_match: public_api
+    season_player: cfs_season_players
+    player_crosswalk: public_id_map
+    selection_roster: cfs_match_rosters
+    match_statistics: cfs_match_player_stats
+    fallback: html_scraper
+  player_name:
+    canonical_fields: [given_name, surname]
+    legacy_full_name: trim_and_join
+  team_identity:
+    canonical_key: provider_id
+    do_not_use_display_name_as_key: true
+  match_status:
+    preserve_source_status: true
+    map_to_legacy_status_separately: true
+
+persistence:
+  mode: adapter
+  collector_must_work_without_database: true
+  dry_run_output_directory: data/collection-dry-run
+  ingestion_envelope:
+    - endpoint_key
+    - source_system
+    - requested_at_utc
+    - resolved_scope_ids
+    - http_status
+    - response_bytes
+    - payload_sha256
+    - parser_version
+    - retry_count
+    - result_count
+    - provider_error_code
+    - provider_error_message
+  credentials_in_metadata: forbidden
+
+raw_payload_retention:
+  enabled: configurable
+  compression: gzip
+  suggested_days: 30
+  always_retain_hash: true
+
+implementation_phases:
+  - id: phase_1_transport
+    deliverables:
+      - cfs_token_provider
+      - shared_http_client
+      - structured_provider_errors
+      - endpoint_registry
+      - generic_paginator
+  - id: phase_2_foundation_collectors
+    deliverables:
+      - competitions_collector
+      - competition_seasons_collector
+      - rounds_collector
+      - teams_collector
+      - matches_collector
+      - player_id_map_collector
+      - season_players_collector
+  - id: phase_3_match_stats
+    deliverables:
+      - match_player_stats_collector
+      - normalised_player_match_stat_model
+      - live_and_final_reconciliation
+  - id: phase_4_rosters_and_extensions
+    blocked_by:
+      - match_roster_schema_fixture
+      - interchange_endpoint_contract
+      - commentary_endpoint_contract
+  - id: phase_5_persistence_migration
+    deliverables:
+      - persistence_adapter
+      - database_migration_plan
+      - html_fallback_monitoring
+
+tests:
+  required:
+    - token_reuse
+    - refresh_on_401_and_retry_once
+    - no_retry_loop_after_second_401
+    - cfs_404_not_published_classification
+    - public_endpoint_pagination
+    - season_players_completeness
+    - id_map_object_to_records
+    - home_and_away_stats_flattening
+    - integral_float_to_int
+    - null_not_zero
+    - unknown_match_status_preserved
+    - themed_team_name_does_not_change_identity
+    - schema_drift_missing_required_field
