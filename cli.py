@@ -12,6 +12,7 @@ from merge.helpers import resolve_players_for_club
 from utils.club_lookup import load_clubs, get_club
 from db.import_to_db import import_players, save_lineups_to_db, save_clubs_to_db
 from db.connection import get_db_connection
+from afl_json import AflJsonClient, PublicAflCollector
 
 def import_clubs_to_db():
     """Load clubs from JSON and import using shared connection."""
@@ -100,6 +101,16 @@ def handle_args():
     match_group.add_argument("--scrape-all-rounds", action="store_true", help="Scrape AFL matches for all rounds in DB")
     match_group.add_argument("--scrape-match", type=int, metavar="MATCH_ID", help="Scrape player stats for a specific match_id")
 
+    metadata_group = parser.add_argument_group("Public AFL Metadata")
+    metadata_group.add_argument("--collect-afl-metadata", action="store_true",
+                                help="Collect competition, season, rounds, teams and matches without database writes")
+    metadata_group.add_argument("--afl-season", help="Select a season by year, AFL ID, provider ID or exact name")
+    metadata_group.add_argument("--afl-competition-code", default="AFL", help="Stable Premiership competition code")
+    metadata_group.add_argument("--afl-competition-provider-id", default="CD_C014",
+                                help="Stable Premiership provider ID")
+    metadata_group.add_argument("--afl-raw-directory", type=Path,
+                                help="Opt in to raw JSON capture below this dedicated directory")
+
     # 🔹 Backup and restore
     db_group = parser.add_argument_group("Data Backup / Restore")
     db_group.add_argument("--import-clubs", action="store_true", help="Import clubs from JSON file into DB")
@@ -158,6 +169,28 @@ def main():
     elif args.scrape_match:
         log(f"📊 Scraping player stats for match_id {args.scrape_match}", "INFO")
         scrape_afl_player_stats.run_scraper(match_id=args.scrape_match, once=True)
+
+    elif args.collect_afl_metadata:
+        with AflJsonClient() as client:
+            collector = PublicAflCollector(client, raw_directory=args.afl_raw_directory)
+            result = collector.collect(
+                competition_code=args.afl_competition_code,
+                competition_provider_id=args.afl_competition_provider_id,
+                season=args.afl_season,
+            )
+        output = {
+            "competition": result.competition,
+            "season": result.season,
+            "rounds": result.rounds,
+            "teams": result.teams,
+            "matches": result.matches,
+        }
+        if args.print_json:
+            print(json.dumps(output, indent=2))
+        else:
+            print(json.dumps({"competition": result.competition["name"],
+                              "season": result.season["name"], "rounds": len(result.rounds),
+                              "teams": len(result.teams), "matches": len(result.matches)}))
 
     else:
         log("❓ No valid argument supplied. Use --help for options.", "WARN")

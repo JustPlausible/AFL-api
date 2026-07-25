@@ -10,6 +10,7 @@ This directory contains active project documentation for operating, developing, 
 - [SQLite database migrations](database_migrations.md)
 - [Scheduler registry and restart recovery](scheduler_registry.md)
 - [Scrape run audit records](scrape_run_audit.md)
+- [Public AFL metadata collection](public_afl_metadata.md)
 
 ## Reviews and planning
 

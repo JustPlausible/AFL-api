@@ -23,6 +23,15 @@ from .client import (
     HttpPolicy,
     WMCTokenProvider,
 )
+from .collectors import (
+    CollectionError,
+    CollectionResult,
+    PaginationError,
+    PublicAflCollector,
+    RawResponseWriter,
+    resolve_competition,
+    select_season,
+)
 
 __all__ = [
     "CFS_ERROR_AUTH",
@@ -44,4 +53,11 @@ __all__ = [
     "AflJsonTransportError",
     "HttpPolicy",
     "WMCTokenProvider",
+    "CollectionError",
+    "CollectionResult",
+    "PaginationError",
+    "PublicAflCollector",
+    "RawResponseWriter",
+    "resolve_competition",
+    "select_season",
 ]
