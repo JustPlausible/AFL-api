@@ -11,6 +11,12 @@ This document converts the current AFL website investigation into an implementat
 
 The collector should retain raw source identifiers and raw payload metadata even where the existing database uses different names.
 
+The maintained, machine-readable source of truth is `afl_json/contracts.py`.
+Collectors must import that registry instead of copying URLs or request rules. This
+document provides rationale and investigation detail; where it differs from the
+registry, the registry is authoritative. Fields still awaiting verification are
+listed both in section 9 and in each endpoint's `unverified_fields` value.
+
 ## 2. Authentication contract
 
 ### 2.1 WMCTok
