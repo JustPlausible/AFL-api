@@ -1,9 +1,4 @@
-"""Collection and conservative normalisation of CFS match rosters.
-
-The nested provider schema is only partly verified.  Known identity and
-selection fields are promoted while unknown fields stay on the narrowest
-match, team, or player object in ``provider_fields``.
-"""
+"""Collection and conservative normalisation of verified CFS match rosters."""
 
 from __future__ import annotations
 
@@ -63,205 +58,276 @@ class MatchRosterCollector:
             )
         except AflJsonResourceUnavailable:
             return RosterCollectionResult(round_provider_id, RosterStatus.UNAVAILABLE, [], [])
-
-        payload = response.data
         if self.raw_writer:
+            # Preserve the provider value exactly: available responses remain
+            # lists and a future/unpublished response remains JSON null.
             self.raw_writer.write(
-                "match_rosters", payload, scope={"roundProviderId": round_provider_id}, page=1
+                "match_rosters", response.data,
+                scope={"roundProviderId": round_provider_id}, page=1,
             )
-        return _normalise_rosters(payload, round_provider_id)
+        return _normalise_rosters(response.data, round_provider_id)
 
 
 def compare_rosters(previous: RosterCollectionResult,
                     current: RosterCollectionResult) -> RosterChanges:
-    """Compare deterministic selection snapshots without treating absence as deletion."""
-    replacement_safe = current.status in {RosterStatus.PUBLISHED, RosterStatus.EMPTY}
+    """Compare snapshots; unavailable and ambiguous empty lists cannot replace data."""
+    replacement_safe = current.status is RosterStatus.PUBLISHED
     if not replacement_safe:
         return RosterChanges([], [], [], [], False)
     before = {_selection_key(item): item for item in previous.selections}
     after = {_selection_key(item): item for item in current.selections}
     added = [after[key] for key in sorted(after.keys() - before.keys())]
     removed = [before[key] for key in sorted(before.keys() - after.keys())]
-    changed, unchanged = [], []
+    changed: list[dict[str, Any]] = []
+    unchanged: list[dict[str, Any]] = []
     for key in sorted(before.keys() & after.keys()):
-        (unchanged if before[key] == after[key] else changed).append(
-            after[key] if before[key] == after[key] else {"before": before[key], "after": after[key]}
-        )
+        if before[key] == after[key]:
+            unchanged.append(after[key])
+        else:
+            changed.append({"before": before[key], "after": after[key]})
     return RosterChanges(added, removed, changed, unchanged, True)
 
 
 def _normalise_rosters(payload: Any, round_provider_id: str) -> RosterCollectionResult:
-    if not isinstance(payload, dict):
-        raise AflJsonInvalidResponse("Match-roster response is not an object", endpoint="match_rosters")
-    collection = payload.get("matchRosters", payload.get("matches"))
-    if collection is None:
-        # Explicit provider publication signals are valid even before a collection exists.
-        if _is_unavailable(payload):
-            return _result(round_provider_id, RosterStatus.UNAVAILABLE, [], [], payload)
+    if payload is None:
+        return RosterCollectionResult(round_provider_id, RosterStatus.UNAVAILABLE, [], [])
+    if not isinstance(payload, list):
         raise AflJsonInvalidResponse(
-            "Match-roster response has no matchRosters or matches collection",
-            endpoint="match_rosters",
+            "Match-roster response is not a list or null", endpoint="match_rosters"
         )
-    if not isinstance(collection, list):
-        raise AflJsonInvalidResponse(
-            "Match-roster collection is not a list", endpoint="match_rosters"
-        )
+    if not payload:
+        # Live semantics for [] have not been verified. Keep it distinct but
+        # non-destructive in compare_rosters until a provider meaning is known.
+        return RosterCollectionResult(round_provider_id, RosterStatus.EMPTY, [], [])
 
-    selections: list[dict[str, Any]] = []
     rosters: list[dict[str, Any]] = []
+    selections: list[dict[str, Any]] = []
     seen: set[tuple[str, ...]] = set()
-    for match_index, match in enumerate(collection):
-        if not isinstance(match, dict):
-            raise AflJsonInvalidResponse(
-                "Match-roster collection contains a non-object match", endpoint="match_rosters"
-            )
-        teams = match.get("teams", match.get("teamRosters"))
-        if not isinstance(teams, list):
-            raise AflJsonInvalidResponse(
-                "Match-roster match has no teams collection", endpoint="match_rosters"
-            )
-        match_fields = _unknown(match, {
-            "matchId", "providerId", "aflMatchId", "id", "teams", "teamRosters",
-            "published", "publicationState", "updatedAt", "timestamp", "version",
-        })
+    for match_order, wrapper in enumerate(payload):
+        if not isinstance(wrapper, dict):
+            raise _invalid("Match-roster list contains a non-object wrapper")
+        match = _required_object(wrapper, "match")
+        match_roster = _required_object(wrapper, "matchRoster")
+        venue = _optional_object(wrapper, "venue")
+        for key in ("homeTeam", "awayTeam"):
+            if not isinstance(match_roster.get(key), dict):
+                raise _invalid(f"matchRoster.{key} is not an object")
+
+        match_provider_id = _first(match_roster, "matchId") or _first(
+            match, "providerId", "matchId"
+        )
+        afl_match_id = _first(match, "id", "aflMatchId")
         roster = {
             "round_provider_id": round_provider_id,
-            "match_provider_id": _first(match, "matchId", "providerId"),
-            "afl_match_id": _first(match, "aflMatchId", "id"),
-            "published": match.get("published"),
-            "publication_state": match.get("publicationState"),
-            "provider_timestamp": _first(match, "updatedAt", "timestamp"),
-            "provider_version": match.get("version"),
-            "source_order": match_index,
-            "provider_fields": match_fields,
+            "round_number": match_roster.get("roundNumber"),
+            "match_provider_id": match_provider_id,
+            "afl_match_id": afl_match_id,
+            "competition_provider_id": match_roster.get("competitionId"),
+            "match_status": match_roster.get("status"),
+            "provider_timestamp": match_roster.get("lastUpdated"),
+            "source_order": match_order,
+            "match": deepcopy(match),
             "teams": [],
+            "provider_fields": {
+                "venue": deepcopy(venue),
+                "weather": deepcopy(match_roster.get("weather")),
+                "umpires": deepcopy(match_roster.get("umpires")),
+                "operationHeader": deepcopy(match_roster.get("operationHeader")),
+                "recentMatches": deepcopy(match_roster.get("recentMatches")),
+                "recentMatchScores": deepcopy(wrapper.get("recentMatchScores")),
+                # Kept once per wrapper while its relationship to positions is unresolved.
+                "teamPlayers": deepcopy(wrapper.get("teamPlayers")),
+                **_unknown(wrapper, {
+                    "match", "matchRoster", "venue", "recentMatchScores", "teamPlayers"
+                }),
+                **_unknown(match_roster, {
+                    "homeTeam", "awayTeam", "competitionId", "lastUpdated", "matchId",
+                    "operationHeader", "recentMatches", "roundNumber", "status", "umpires",
+                    "weather",
+                }),
+            },
         }
         rosters.append(roster)
-        for team_index, team in enumerate(teams):
-            if not isinstance(team, dict):
-                raise AflJsonInvalidResponse(
-                    "Match-roster teams collection contains a non-object", endpoint="match_rosters"
-                )
-            groups = _player_groups(team)
-            team_fields = _unknown(team, {
-                "teamId", "providerId", "aflTeamId", "id", "teamName", "name",
-                "teamAbbr", "abbreviation", "side", *groups.keys(),
-            })
-            roster["teams"].append({
-                "team_provider_id": _first(team, "teamId", "providerId"),
-                "afl_team_id": _first(team, "aflTeamId", "id"),
-                "team_name": _text(_first(team, "teamName", "name")),
-                "team_abbreviation": _text(_first(team, "teamAbbr", "abbreviation")),
-                "team_side": team.get("side"),
-                "source_order": team_index,
-                "provider_fields": deepcopy(team_fields),
-            })
-            for group_name, players in groups.items():
-                for player_index, player in enumerate(players):
-                    if not isinstance(player, dict):
-                        raise AflJsonInvalidResponse(
-                            "Match-roster player collection contains a non-object",
-                            endpoint="match_rosters",
-                        )
-                    selection = _normalise_selection(
-                        round_provider_id, match, team, player, match_index, team_index,
-                        player_index, group_name,
-                    )
-                    key = _selection_key(selection)
-                    if key not in seen:
-                        seen.add(key)
-                        selections.append(selection)
+        for team_order, (side, key) in enumerate((("home", "homeTeam"), ("away", "awayTeam"))):
+            team = match_roster[key]
+            team_record = _normalise_team(team, side, team_order)
+            roster["teams"].append(team_record)
+            for record in _team_records(
+                team, side=side, team_order=team_order, match_order=match_order,
+                round_provider_id=round_provider_id, round_number=match_roster.get("roundNumber"),
+                match_provider_id=match_provider_id, afl_match_id=afl_match_id,
+            ):
+                identity = _selection_key(record)
+                if identity not in seen:
+                    seen.add(identity)
+                    selections.append(record)
     selections.sort(key=_selection_key)
-    unavailable = _is_unavailable(payload) or (rosters and all(
-        item["published"] is False for item in rosters
-    ))
-    status = (RosterStatus.UNAVAILABLE if unavailable else
-              RosterStatus.PUBLISHED if selections else RosterStatus.EMPTY)
-    return _result(round_provider_id, status, selections, rosters, payload)
-
-
-def _result(round_id: str, status: RosterStatus, selections: list[dict[str, Any]],
-            rosters: list[dict[str, Any]], payload: Mapping[str, Any]) -> RosterCollectionResult:
+    states = {str(roster["match_status"]).casefold() for roster in rosters}
+    unavailable = bool(states & {"unavailable", "unpublished", "not_published"})
+    status = RosterStatus.UNAVAILABLE if unavailable else RosterStatus.PUBLISHED
     return RosterCollectionResult(
-        round_id, status, selections, rosters,
-        _text(_first(payload, "publicationState", "status")),
-        _text(_first(payload, "updatedAt", "timestamp")),
-        _first(payload, "version", "revision"),
+        round_provider_id, status, selections, rosters,
+        next((str(item["match_status"]) for item in rosters if item["match_status"] is not None), None),
+        next((item["provider_timestamp"] for item in rosters
+              if isinstance(item["provider_timestamp"], str)), None),
     )
 
 
-def _player_groups(team: Mapping[str, Any]) -> dict[str, list[Any]]:
-    groups = {}
-    for name in ("players", "namedPlayers", "squad", "interchange", "emergencies"):
-        if name in team:
-            if not isinstance(team[name], list):
-                raise AflJsonInvalidResponse(
-                    f"Match-roster {name} collection is not a list", endpoint="match_rosters"
-                )
-            groups[name] = team[name]
-    return groups
-
-
-def _normalise_selection(round_id: str, match: Mapping[str, Any], team: Mapping[str, Any],
-                         player: Mapping[str, Any], match_order: int, team_order: int,
-                         player_order: int, group: str) -> dict[str, Any]:
-    known = {
-        "playerId", "championDataPlayerId", "aflPlayerId", "aflId", "playerName", "name",
-        "jumperNumber", "named", "isNamed", "emergency", "isEmergency", "selectionState",
-        "position", "side", "group", "updatedAt", "timestamp", "version",
-    }
-    emergency = _first(player, "emergency", "isEmergency")
-    named = _first(player, "named", "isNamed")
+def _normalise_team(team: Mapping[str, Any], side: str, source_order: int) -> dict[str, Any]:
     return {
-        "round_provider_id": round_id,
-        "match_provider_id": _first(match, "matchId", "providerId"),
-        "afl_match_id": _first(match, "aflMatchId", "id"),
-        "team_provider_id": _first(team, "teamId", "providerId"),
-        "afl_team_id": _first(team, "aflTeamId", "id"),
-        "champion_data_player_id": _first(player, "playerId", "championDataPlayerId"),
-        "afl_player_id": _first(player, "aflPlayerId", "aflId"),
-        "player_name": _text(_first(player, "playerName", "name")),
-        "team_name": _text(_first(team, "teamName", "name")),
-        "team_abbreviation": _text(_first(team, "teamAbbr", "abbreviation")),
-        "jumper_number": player.get("jumperNumber"),
-        "named": named,
-        "emergency": True if group == "emergencies" and emergency is None else emergency,
-        "selection_state": _first(player, "selectionState", "position", "side"),
-        "selection_group": group,
-        "team_side": team.get("side"),
-        "source_order": {"match": match_order, "team": team_order, "player": player_order},
-        "provider_timestamp": _first(player, "updatedAt", "timestamp"),
-        "provider_version": player.get("version"),
-        "provider_fields": deepcopy(_unknown(player, known)),
+        "team_provider_id": team.get("teamId"),
+        "match_provider_id": team.get("matchId"),
+        "team_name": _player_name(team.get("teamName")),
+        "team_status": team.get("teamStatus"),
+        "side": side,
+        "source_order": source_order,
+        "provider_fields": {
+            # Retain all verified context/change collections at team scope as
+            # their non-player fields are not yet exhaustively understood.
+            "clubDebuts": deepcopy(team.get("clubDebuts")),
+            "ins": deepcopy(team.get("ins")),
+            "lateChanges": deepcopy(team.get("lateChanges")),
+            "milestones": deepcopy(team.get("milestones")),
+            "outs": deepcopy(team.get("outs")),
+            "positions": deepcopy(team.get("positions")),
+            **_unknown(team, {
+            "clubDebuts", "ins", "lateChanges", "matchId", "milestones", "outs",
+            "positions", "teamId", "teamName", "teamStatus",
+            }),
+        },
+    }
+
+
+def _team_records(team: Mapping[str, Any], **context: Any) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    positions = team.get("positions")
+    if not isinstance(positions, list):
+        raise _invalid("Team roster positions is not a list")
+    for group_order, group in enumerate(positions):
+        if not isinstance(group, dict):
+            raise _invalid("Team roster positions contains a non-object group")
+        group_name = _first(group, "position", "positionName", "name", "type")
+        players = group.get("players")
+        if players is None and "player" in group:
+            players = [group["player"]]
+        if not isinstance(players, list):
+            raise _invalid("Team roster position has no players list")
+        for player_order, player_value in enumerate(players):
+            player, record_fields = _unwrap_player(player_value)
+            records.append(_normalise_player_record(
+                player, record_kind="selection", source_collection="positions",
+                selection_state=group_name, reason=None,
+                source_order={"match": context["match_order"], "team": context["team_order"],
+                              "group": group_order, "player": player_order},
+                record_fields={**_unknown(group, {
+                    "position", "positionName", "name", "type", "players", "player"
+                }), **record_fields},
+                team=team, **{key: value for key, value in context.items()
+                              if key not in {"match_order", "team_order"}},
+            ))
+    for collection in ("ins", "outs", "lateChanges", "clubDebuts", "milestones"):
+        values = team.get(collection)
+        if not isinstance(values, list):
+            raise _invalid(f"Team roster {collection} is not a list")
+        for record_order, value in enumerate(values):
+            player, record_fields = _unwrap_player(value)
+            reason = value.get("reason") if isinstance(value, dict) else None
+            records.append(_normalise_player_record(
+                player, record_kind="change", source_collection=collection,
+                selection_state=None, reason=reason,
+                source_order={"match": context["match_order"], "team": context["team_order"],
+                              "record": record_order},
+                record_fields=record_fields, team=team,
+                **{key: item for key, item in context.items()
+                   if key not in {"match_order", "team_order"}},
+            ))
+    return records
+
+
+def _unwrap_player(value: Any) -> tuple[Mapping[str, Any], dict[str, Any]]:
+    if not isinstance(value, dict):
+        raise _invalid("Team roster player record is not an object")
+    player = value.get("player", value)
+    if not isinstance(player, dict):
+        raise _invalid("Team roster player is not an object")
+    return player, _unknown(value, {"player", "reason"}) if player is not value else {}
+
+
+def _normalise_player_record(player: Mapping[str, Any], *, team: Mapping[str, Any],
+                             record_kind: str, source_collection: str,
+                             selection_state: Any, reason: Any,
+                             source_order: Mapping[str, int], record_fields: Mapping[str, Any],
+                             **context: Any) -> dict[str, Any]:
+    return {
+        "round_provider_id": context["round_provider_id"],
+        "round_number": context["round_number"],
+        "match_provider_id": context["match_provider_id"],
+        "afl_match_id": context["afl_match_id"],
+        "team_provider_id": team.get("teamId"),
+        "team_name": _player_name(team.get("teamName")),
+        "team_side": context["side"],
+        "champion_data_player_id": player.get("playerId"),
+        "player_name": _player_name(player.get("playerName")),
+        "jumper_number": player.get("playerJumperNumber"),
+        "captain": player.get("captain"),
+        "record_kind": record_kind,
+        "source_collection": source_collection,
+        "selection_state": selection_state,
+        "reason": reason,
+        "source_order": dict(source_order),
+        "provider_fields": {
+            **_unknown(player, {
+                "playerId", "playerName", "captain", "playerJumperNumber"
+            }),
+            **deepcopy(dict(record_fields)),
+        },
     }
 
 
 def _selection_key(item: Mapping[str, Any]) -> tuple[str, ...]:
-    # IDs are preferred.  Name and source position are deterministic fallbacks
-    # for investigative fixtures where provider identifiers are absent.
-    player = item.get("champion_data_player_id") or item.get("afl_player_id") or item.get("player_name")
-    position = item.get("source_order") if player is None else None
+    player = item.get("champion_data_player_id") or item.get("player_name")
+    fallback_order = item.get("source_order") if player is None else None
+    # A position name is mutable state rather than identity, so moves compare as changes.
+    collection_identity = (item.get("source_collection")
+                           if item.get("record_kind") == "change" else item.get("record_kind"))
     return tuple(str(value) for value in (
         item.get("match_provider_id") or item.get("afl_match_id"),
-        item.get("team_provider_id") or item.get("afl_team_id"), player,
-        item.get("selection_group"), json.dumps(position, sort_keys=True),
+        item.get("team_provider_id"), player, collection_identity,
+        json.dumps(fallback_order, sort_keys=True),
     ))
 
 
-def _is_unavailable(payload: Mapping[str, Any]) -> bool:
-    if payload.get("published") is False or payload.get("available") is False:
-        return True
-    state = _text(_first(payload, "publicationState", "status"))
-    return state is not None and state.casefold() in {"unavailable", "unpublished", "not_published"}
+def _required_object(value: Mapping[str, Any], key: str) -> Mapping[str, Any]:
+    item = value.get(key)
+    if not isinstance(item, dict):
+        raise _invalid(f"Match-roster wrapper {key} is not an object")
+    return item
+
+
+def _optional_object(value: Mapping[str, Any], key: str) -> Mapping[str, Any] | None:
+    item = value.get(key)
+    if item is not None and not isinstance(item, dict):
+        raise _invalid(f"Match-roster wrapper {key} is not an object or null")
+    return item
+
+
+def _player_name(value: Any) -> str | None:
+    if isinstance(value, str):
+        return value.strip() or None
+    if isinstance(value, dict):
+        parts = (value.get("givenName"), value.get("surname"))
+        text = " ".join(part.strip() for part in parts if isinstance(part, str) and part.strip())
+        return text or None
+    return None
 
 
 def _first(values: Mapping[str, Any], *keys: str) -> Any:
     return next((values[key] for key in keys if key in values and values[key] is not None), None)
 
 
-def _text(value: Any) -> str | None:
-    return value.strip() or None if isinstance(value, str) else None
-
-
 def _unknown(values: Mapping[str, Any], known: set[str]) -> dict[str, Any]:
     return {key: deepcopy(value) for key, value in values.items() if key not in known}
+
+
+def _invalid(message: str) -> AflJsonInvalidResponse:
+    return AflJsonInvalidResponse(message, endpoint="match_rosters")

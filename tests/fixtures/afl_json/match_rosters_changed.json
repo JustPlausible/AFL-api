@@ -1,1 +1,196 @@
-{"publicationState":"PUBLISHED","version":5,"matchRosters":[{"matchId":"CD_M100","aflMatchId":100,"published":true,"teams":[{"teamId":"CD_T1","aflTeamId":1,"teamName":"Cats","teamAbbr":"CAT","side":"home","namedPlayers":[{"playerId":"CD_I1","aflPlayerId":101,"playerName":"Ada Able","jumperNumber":7,"named":true,"selectionState":"INTERCHANGE"},{"playerId":"CD_I6","aflPlayerId":106,"playerName":"Finn Fir","jumperNumber":10,"named":true,"selectionState":"FIELD"}],"emergencies":[{"playerId":"CD_I3","aflPlayerId":103,"playerName":"Cam Cook","jumperNumber":9,"providerRole":"T"}],"coachCode":"C1"}]}]}
+[
+  {
+    "match": {
+      "id": 100,
+      "providerId": "CD_M100",
+      "round": 18,
+      "name": "Match 100"
+    },
+    "matchRoster": {
+      "awayTeam": {
+        "clubDebuts": [],
+        "ins": [],
+        "lateChanges": [],
+        "matchId": "CD_M100",
+        "milestones": [],
+        "outs": [],
+        "positions": [
+          {
+            "position": "FORWARDS",
+            "players": [
+              {
+                "playerId": "CD_I3",
+                "playerName": {
+                  "givenName": "Cam",
+                  "surname": "Cook"
+                },
+                "captain": false,
+                "playerJumperNumber": 9
+              }
+            ]
+          },
+          {
+            "position": "INTERCHANGE",
+            "players": []
+          },
+          {
+            "position": "EMERGENCIES",
+            "players": [
+              {
+                "playerId": "CD_I4",
+                "playerName": {
+                  "givenName": "Dee",
+                  "surname": "Dove"
+                },
+                "captain": false,
+                "playerJumperNumber": 10
+              }
+            ]
+          }
+        ],
+        "teamId": "CD_T2",
+        "teamName": "Dogs",
+        "teamStatus": "CONFIRMED"
+      },
+      "competitionId": "CD_C014",
+      "homeTeam": {
+        "clubDebuts": [],
+        "ins": [
+          {
+            "player": {
+              "playerId": "CD_I6",
+              "playerName": {
+                "givenName": "Finn",
+                "surname": "Fir"
+              },
+              "captain": false,
+              "playerJumperNumber": 12
+            },
+            "reason": "Late inclusion"
+          }
+        ],
+        "lateChanges": [
+          {
+            "player": {
+              "playerId": "CD_I6",
+              "playerName": {
+                "givenName": "Finn",
+                "surname": "Fir"
+              },
+              "captain": false,
+              "playerJumperNumber": 12
+            },
+            "reason": "Warm-up change"
+          }
+        ],
+        "matchId": "CD_M100",
+        "milestones": [],
+        "outs": [
+          {
+            "player": {
+              "playerId": "CD_I2",
+              "playerName": {
+                "givenName": "Bea",
+                "surname": "Baker"
+              },
+              "captain": false,
+              "playerJumperNumber": 8
+            },
+            "reason": "Illness"
+          }
+        ],
+        "positions": [
+          {
+            "position": "FORWARDS",
+            "players": [
+              {
+                "playerId": "CD_I6",
+                "playerName": {
+                  "givenName": "Finn",
+                  "surname": "Fir"
+                },
+                "captain": false,
+                "playerJumperNumber": 12
+              }
+            ]
+          },
+          {
+            "position": "INTERCHANGE",
+            "players": [
+              {
+                "playerId": "CD_I1",
+                "playerName": {
+                  "givenName": "Ada",
+                  "surname": "Able"
+                },
+                "captain": true,
+                "playerJumperNumber": 7
+              }
+            ]
+          },
+          {
+            "position": "EMERGENCIES",
+            "players": []
+          }
+        ],
+        "teamId": "CD_T1",
+        "teamName": "Cats",
+        "teamStatus": "CONFIRMED"
+      },
+      "lastUpdated": "2026-07-25T09:00:00Z",
+      "matchId": "CD_M100",
+      "operationHeader": {
+        "operation": "publish"
+      },
+      "recentMatches": [],
+      "roundNumber": 18,
+      "status": "PUBLISHED",
+      "umpires": [
+        {
+          "name": "Official"
+        }
+      ],
+      "weather": {
+        "description": "Fine"
+      }
+    },
+    "recentMatchScores": {
+      "home": 80,
+      "away": 70
+    },
+    "teamPlayers": [
+      {
+        "teamId": "CD_T1",
+        "players": [
+          {
+            "playerId": "CD_I1",
+            "playerName": {
+              "givenName": "Ada",
+              "surname": "Able"
+            },
+            "captain": true,
+            "playerJumperNumber": 7
+          }
+        ]
+      },
+      {
+        "teamId": "CD_T2",
+        "players": [
+          {
+            "playerId": "CD_I3",
+            "playerName": {
+              "givenName": "Cam",
+              "surname": "Cook"
+            },
+            "captain": false,
+            "playerJumperNumber": 9
+          }
+        ]
+      }
+    ],
+    "venue": {
+      "providerId": "CD_V1",
+      "name": "Example Oval"
+    }
+  }
+]
