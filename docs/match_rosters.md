@@ -37,9 +37,9 @@ The verified `positions` fixture shape is an ordered list of positional-group
 objects, each naming a position and containing a `players` list. Player entries
 may be a player object or a wrapper with `player`. The collector retains the
 position name as supplied rather than translating it into a speculative enum.
-It treats position records as selections. It treats `ins`, `outs`,
-`lateChanges`, `clubDebuts`, and `milestones` as distinct change/context records,
-not as the selected lineup. Verified `ins[].player` and `outs[].player` fields
+It treats position records as selections. Where they are lists, it treats
+`ins`, `outs`, `lateChanges`, `clubDebuts`, and `milestones` as distinct
+change/context records, not as the selected lineup. Verified `ins[].player` and `outs[].player` fields
 include a Champion Data `playerId`, nested given name/surname,
 `playerJumperNumber`, and `captain`; their enclosing record may supply `reason`.
 
@@ -50,6 +50,15 @@ safe to use as a destructive replacement. A top-level empty list maps to
 meaning has not yet been distinguished from `null`. Genuine HTTP 401 or
 `CFSAPI001` responses continue through the shared one-refresh authentication
 policy.
+
+Live current-round verification also found `lateChanges` represented by an
+empty object rather than a list. Its object semantics remain unresolved, so it
+is retained unchanged at team scope and does not create player/change records.
+All six optional team fields (`positions`, `ins`, `outs`, `lateChanges`,
+`clubDebuts`, and `milestones`) follow the same defensive rule: lists are
+normalised using the supported record shapes, `null` is absent, and objects or
+other unresolved values are preserved at team scope without invalidating the
+otherwise usable roster.
 
 ## Normalised and retained data
 

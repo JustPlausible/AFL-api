@@ -1,4 +1,5 @@
 import json
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -54,6 +55,26 @@ def test_verified_top_level_list_and_home_away_rosters_are_normalised():
     ]
     assert result.rosters[0]["provider_fields"]["venue"]["providerId"] == "CD_V1"
     assert result.rosters[0]["provider_fields"]["teamPlayers"][0]["teamId"] == "CD_T1"
+    # Live current-round payloads use an empty object for this optional field.
+    assert result.rosters[0]["teams"][0]["provider_fields"]["lateChanges"] == {}
+
+
+def test_optional_team_fields_only_parse_lists_and_preserve_unresolved_shapes():
+    source = fixture("match_rosters_available.json")
+    optional_fields = ("positions", "ins", "outs", "lateChanges", "clubDebuts", "milestones")
+
+    for field in optional_fields:
+        object_payload = deepcopy(source)
+        object_payload[0]["matchRoster"]["homeTeam"][field] = {"unresolved": field}
+        result = MatchRosterCollector(FixtureClient(object_payload)).collect("CD_R1")
+        assert result.rosters[0]["teams"][0]["provider_fields"][field] == {
+            "unresolved": field
+        }
+
+        null_payload = deepcopy(source)
+        null_payload[0]["matchRoster"]["homeTeam"][field] = None
+        result = MatchRosterCollector(FixtureClient(null_payload)).collect("CD_R1")
+        assert field not in result.rosters[0]["teams"][0]["provider_fields"]
 
 
 def test_positions_and_nested_change_players_preserve_verified_meaning():

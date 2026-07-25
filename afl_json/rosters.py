@@ -174,6 +174,9 @@ def _normalise_rosters(payload: Any, round_provider_id: str) -> RosterCollection
 
 
 def _normalise_team(team: Mapping[str, Any], side: str, source_order: int) -> dict[str, Any]:
+    optional_fields = (
+        "clubDebuts", "ins", "lateChanges", "milestones", "outs", "positions"
+    )
     return {
         "team_provider_id": team.get("teamId"),
         "match_provider_id": team.get("matchId"),
@@ -184,15 +187,11 @@ def _normalise_team(team: Mapping[str, Any], side: str, source_order: int) -> di
         "provider_fields": {
             # Retain all verified context/change collections at team scope as
             # their non-player fields are not yet exhaustively understood.
-            "clubDebuts": deepcopy(team.get("clubDebuts")),
-            "ins": deepcopy(team.get("ins")),
-            "lateChanges": deepcopy(team.get("lateChanges")),
-            "milestones": deepcopy(team.get("milestones")),
-            "outs": deepcopy(team.get("outs")),
-            "positions": deepcopy(team.get("positions")),
+            **{key: deepcopy(team[key]) for key in optional_fields
+               if team.get(key) is not None},
             **_unknown(team, {
-            "clubDebuts", "ins", "lateChanges", "matchId", "milestones", "outs",
-            "positions", "teamId", "teamName", "teamStatus",
+                "clubDebuts", "ins", "lateChanges", "matchId", "milestones", "outs",
+                "positions", "teamId", "teamName", "teamStatus",
             }),
         },
     }
@@ -201,9 +200,11 @@ def _normalise_team(team: Mapping[str, Any], side: str, source_order: int) -> di
 def _team_records(team: Mapping[str, Any], **context: Any) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     positions = team.get("positions")
-    if not isinstance(positions, list):
-        raise _invalid("Team roster positions is not a list")
-    for group_order, group in enumerate(positions):
+    # These provider fields are optional and only lists have verified record
+    # semantics. Null is absent; objects and other shapes remain intact in the
+    # team-scoped provider_fields assembled by _normalise_team.
+    position_records = positions if isinstance(positions, list) else []
+    for group_order, group in enumerate(position_records):
         if not isinstance(group, dict):
             raise _invalid("Team roster positions contains a non-object group")
         group_name = _first(group, "position", "positionName", "name", "type")
@@ -227,9 +228,8 @@ def _team_records(team: Mapping[str, Any], **context: Any) -> list[dict[str, Any
             ))
     for collection in ("ins", "outs", "lateChanges", "clubDebuts", "milestones"):
         values = team.get(collection)
-        if not isinstance(values, list):
-            raise _invalid(f"Team roster {collection} is not a list")
-        for record_order, value in enumerate(values):
+        supported_records = values if isinstance(values, list) else []
+        for record_order, value in enumerate(supported_records):
             player, record_fields = _unwrap_player(value)
             reason = value.get("reason") if isinstance(value, dict) else None
             records.append(_normalise_player_record(
