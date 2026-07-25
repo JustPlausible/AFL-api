@@ -11,6 +11,18 @@ from .contracts import (
     EndpointDefinition,
     get_endpoint,
 )
+from .client import (
+    AflJsonAuthenticationError,
+    AflJsonClient,
+    AflJsonError,
+    AflJsonHttpError,
+    AflJsonInvalidResponse,
+    AflJsonResourceUnavailable,
+    AflJsonResponse,
+    AflJsonTransportError,
+    HttpPolicy,
+    WMCTokenProvider,
+)
 
 __all__ = [
     "CFS_ERROR_AUTH",
@@ -22,4 +34,14 @@ __all__ = [
     "SUCCESS_HTTP_STATUSES",
     "EndpointDefinition",
     "get_endpoint",
+    "AflJsonAuthenticationError",
+    "AflJsonClient",
+    "AflJsonError",
+    "AflJsonHttpError",
+    "AflJsonInvalidResponse",
+    "AflJsonResourceUnavailable",
+    "AflJsonResponse",
+    "AflJsonTransportError",
+    "HttpPolicy",
+    "WMCTokenProvider",
 ]
