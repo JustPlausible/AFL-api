@@ -6,12 +6,13 @@ from utils.log import log
 from scraper.scrape_afl_clubs import save_club_players_to_json
 from scraper.scrape_afl_injuries import scrape_injury_list, save_injuries_to_db
 from scraper.scrape_afl_lineups import scrape_team_lineups
-from scraper import scrape_afl_matches, scrape_afl_player_stats
+from scraper import scrape_afl_matches
 from db.scrape_runs import audited_scrape_run
 from merge.helpers import resolve_players_for_club
 from utils.club_lookup import load_clubs, get_club
 from db.import_to_db import import_players, save_lineups_to_db, save_clubs_to_db
 from db.connection import get_db_connection
+from afl_json import AflJsonClient, PublicAflCollector
 
 def import_clubs_to_db():
     """Load clubs from JSON and import using shared connection."""
@@ -94,11 +95,22 @@ def handle_args():
     # 🔹 Match + fixture scraping
     match_group = parser.add_argument_group("Match + Player Stat Tools")
     match_group.add_argument("--scrape-injuries", action="store_true", help="Scrape AFL injury list")
-    match_group.add_argument("--print-json", action="store_true", help="Print scraped JSON to stdout")
+    match_group.add_argument("--print-json", action="store_true",
+                             help="Print full scraped or normalised JSON to stdout (redirect to save it)")
     match_group.add_argument("--scrape-lineups", type=int, metavar="ROUND", help="Scrape team lineups for a round")
     match_group.add_argument("--scrape-round", type=int, metavar="ROUND_ID", help="Scrape AFL matches for a specific round_id (e.g. 1156)")
     match_group.add_argument("--scrape-all-rounds", action="store_true", help="Scrape AFL matches for all rounds in DB")
     match_group.add_argument("--scrape-match", type=int, metavar="MATCH_ID", help="Scrape player stats for a specific match_id")
+
+    metadata_group = parser.add_argument_group("Public AFL Metadata")
+    metadata_group.add_argument("--collect-afl-metadata", action="store_true",
+                                help="Collect competition, season, rounds, teams and matches without database writes")
+    metadata_group.add_argument("--afl-season", help="Select a season by year, AFL ID, provider ID or exact name")
+    metadata_group.add_argument("--afl-competition-code", default="AFL", help="Stable Premiership competition code")
+    metadata_group.add_argument("--afl-competition-provider-id", default="CD_C014",
+                                help="Stable Premiership provider ID")
+    metadata_group.add_argument("--afl-raw-directory", type=Path,
+                                help="Store original per-endpoint/page API JSON below this directory")
 
     # 🔹 Backup and restore
     db_group = parser.add_argument_group("Data Backup / Restore")
@@ -157,7 +169,33 @@ def main():
 
     elif args.scrape_match:
         log(f"📊 Scraping player stats for match_id {args.scrape_match}", "INFO")
+        # This legacy scraper loads club aliases during import. Keep that
+        # runtime-data dependency out of argument parsing and unrelated CLI
+        # commands, including --help and public metadata collection.
+        from scraper import scrape_afl_player_stats
         scrape_afl_player_stats.run_scraper(match_id=args.scrape_match, once=True)
+
+    elif args.collect_afl_metadata:
+        with AflJsonClient() as client:
+            collector = PublicAflCollector(client, raw_directory=args.afl_raw_directory)
+            result = collector.collect(
+                competition_code=args.afl_competition_code,
+                competition_provider_id=args.afl_competition_provider_id,
+                season=args.afl_season,
+            )
+        output = {
+            "competition": result.competition,
+            "season": result.season,
+            "rounds": result.rounds,
+            "teams": result.teams,
+            "matches": result.matches,
+        }
+        if args.print_json:
+            print(json.dumps(output, indent=2))
+        else:
+            print(json.dumps({"competition": result.competition["name"],
+                              "season": result.season["name"], "rounds": len(result.rounds),
+                              "teams": len(result.teams), "matches": len(result.matches)}))
 
     else:
         log("❓ No valid argument supplied. Use --help for options.", "WARN")
