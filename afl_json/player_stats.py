@@ -51,7 +51,8 @@ class CanonicalPlayerStat:
     side: str
     collected_at: str
     source_endpoint: str
-    source_status: str | None
+    endpoint_source_status: str | None
+    resolved_match_status: str | None
     afl_match_id: int | str | None
     team_provider_id: str | None
     goals: int | Decimal | None
@@ -78,8 +79,14 @@ class PlayerStatsCollectionResult:
     diagnostics: list[PlayerStatDiagnostic]
     collected_at: str
     source_endpoint: str = SOURCE_ENDPOINT
-    source_status: str | None = None
+    endpoint_source_status: str | None = None
+    resolved_match_status: str | None = None
     rejected_records: int = 0
+
+    @property
+    def source_status(self) -> str | None:
+        """Compatibility alias; this value always came from the endpoint."""
+        return self.endpoint_source_status
 
 
 class MatchPlayerStatsCollector:
@@ -90,10 +97,19 @@ class MatchPlayerStatsCollector:
         self.clock = clock or (lambda: datetime.now(timezone.utc))
 
     def collect(self, match_provider_id: str, *, afl_match_id: int | str | None = None,
+                canonical_match_status: str | None = None,
                 source_status: str | None = None) -> PlayerStatsCollectionResult:
+        """Collect stats, using canonical match metadata only when the endpoint is silent.
+
+        ``source_status`` is retained as a compatibility spelling for callers
+        that previously supplied match metadata under that ambiguous name.
+        """
         if not isinstance(match_provider_id, str) or not match_provider_id.strip():
             raise ValueError("match_provider_id is required")
         match_provider_id = match_provider_id.strip()
+        if canonical_match_status is not None and source_status is not None:
+            raise ValueError("supply canonical_match_status or source_status, not both")
+        resolved_match_status = canonical_match_status or source_status
         collected_at = self.clock().astimezone(timezone.utc).isoformat()
         try:
             response = self.client.get(
@@ -108,15 +124,20 @@ class MatchPlayerStatsCollector:
         return normalise_player_stats(response.data, match_provider_id,
                                       collected_at=collected_at,
                                       afl_match_id=afl_match_id,
-                                      source_status=source_status)
+                                      canonical_match_status=resolved_match_status)
 
 
 def normalise_player_stats(payload: Any, match_provider_id: str, *, collected_at: str,
                            afl_match_id: int | str | None = None,
+                           canonical_match_status: str | None = None,
                            source_status: str | None = None) -> PlayerStatsCollectionResult:
+    if canonical_match_status is not None and source_status is not None:
+        raise ValueError("supply canonical_match_status or source_status, not both")
+    resolved_match_status = _text(canonical_match_status or source_status)
     if payload is None:
         return PlayerStatsCollectionResult(match_provider_id, PlayerStatsStatus.UNAVAILABLE,
-                                            [], [], collected_at, source_status=source_status)
+                                            [], [], collected_at,
+                                            resolved_match_status=resolved_match_status)
     if not isinstance(payload, dict):
         raise _invalid("Player-stat response is not an object or null")
     array_keys = ("homeTeamPlayerStats", "awayTeamPlayerStats")
@@ -128,7 +149,8 @@ def normalise_player_stats(payload: Any, match_provider_id: str, *, collected_at
         if _is_unavailable(publication):
             return PlayerStatsCollectionResult(match_provider_id, PlayerStatsStatus.UNAVAILABLE,
                                                 [], [], collected_at,
-                                                source_status=_text(publication) or source_status)
+                                                endpoint_source_status=_text(publication),
+                                                resolved_match_status=resolved_match_status)
         raise _invalid("Player-stat response has no recognised team arrays")
     diagnostics: list[PlayerStatDiagnostic] = []
     if len(present) == 1:
@@ -140,8 +162,15 @@ def normalise_player_stats(payload: Any, match_provider_id: str, *, collected_at
         if payload[key] is not None and not isinstance(payload[key], list):
             raise _invalid(f"{key} is not a list or null")
 
-    explicit_status = (_text(_first(payload, "status", "matchStatus", "matchPhase"))
-                       or source_status)
+    endpoint_source_status = _text(_first(payload, "status", "matchStatus", "matchPhase"))
+    if (endpoint_source_status and resolved_match_status
+            and _status_class(endpoint_source_status) != _status_class(resolved_match_status)):
+        diagnostics.append(PlayerStatDiagnostic(
+            "warning", "conflicting_match_status",
+            f"Endpoint status {endpoint_source_status!r} overrides canonical match status "
+            f"{resolved_match_status!r} for match {match_provider_id}",
+        ))
+    effective_status = endpoint_source_status or resolved_match_status
     records: list[CanonicalPlayerStat] = []
     rejected = 0
     seen: dict[str, str] = {}
@@ -163,7 +192,8 @@ def normalise_player_stats(payload: Any, match_provider_id: str, *, collected_at
             record, record_diagnostics = _normalise_entry(
                 entry, side=side, match_provider_id=match_provider_id,
                 collected_at=collected_at, afl_match_id=afl_match_id,
-                source_status=explicit_status,
+                endpoint_source_status=endpoint_source_status,
+                resolved_match_status=resolved_match_status,
             )
             diagnostics.extend(record_diagnostics)
             if record is None:
@@ -183,15 +213,18 @@ def normalise_player_stats(payload: Any, match_provider_id: str, *, collected_at
             seen[record.champion_data_player_id] = side
             records.append(record)
 
-    status = _result_status(explicit_status, records, len(present) == 1)
+    status = _result_status(effective_status, records, len(present) == 1)
     return PlayerStatsCollectionResult(match_provider_id, status, records, diagnostics,
-                                       collected_at, source_status=explicit_status,
+                                       collected_at,
+                                       endpoint_source_status=endpoint_source_status,
+                                       resolved_match_status=resolved_match_status,
                                        rejected_records=rejected)
 
 
 def _normalise_entry(entry: Mapping[str, Any], *, side: str, match_provider_id: str,
                      collected_at: str, afl_match_id: int | str | None,
-                     source_status: str | None):
+                     endpoint_source_status: str | None,
+                     resolved_match_status: str | None):
     diagnostics: list[PlayerStatDiagnostic] = []
     player_stats = entry.get("playerStats")
     stats = player_stats.get("stats") if isinstance(player_stats, dict) else None
@@ -225,7 +258,8 @@ def _normalise_entry(entry: Mapping[str, Any], *, side: str, match_provider_id: 
     return CanonicalPlayerStat(
         match_provider_id=match_provider_id, champion_data_player_id=player_id,
         side=side, collected_at=collected_at, source_endpoint=SOURCE_ENDPOINT,
-        source_status=source_status, afl_match_id=afl_match_id,
+        endpoint_source_status=endpoint_source_status,
+        resolved_match_status=resolved_match_status, afl_match_id=afl_match_id,
         team_provider_id=_text(team_id), extra_stats=extra,
         raw_player=deepcopy(dict(entry)), **mapped,
     ), diagnostics
@@ -257,13 +291,16 @@ def upsert_player_stats(conn: sqlite3.Connection, result: PlayerStatsCollectionR
         cursor = conn.execute(f"""
             INSERT INTO cfs_player_stats (
                 match_provider_id, champion_data_player_id, afl_match_id, team_provider_id,
-                side, collected_at, source_endpoint, source_status, snapshot_authority,
+                side, collected_at, source_endpoint, endpoint_source_status,
+                resolved_match_status, snapshot_authority,
                 {', '.join(CANONICAL_STAT_FIELDS)}, extra_stats_json, raw_player_json
-            ) VALUES ({', '.join('?' for _ in range(19))})
+            ) VALUES ({', '.join('?' for _ in range(20))})
             ON CONFLICT(match_provider_id, champion_data_player_id) DO UPDATE SET
                 afl_match_id=excluded.afl_match_id, team_provider_id=excluded.team_provider_id,
                 side=excluded.side, collected_at=excluded.collected_at,
-                source_endpoint=excluded.source_endpoint, source_status=excluded.source_status,
+                source_endpoint=excluded.source_endpoint,
+                endpoint_source_status=excluded.endpoint_source_status,
+                resolved_match_status=excluded.resolved_match_status,
                 snapshot_authority=excluded.snapshot_authority,
                 {', '.join(f'{name}=excluded.{name}' for name in CANONICAL_STAT_FIELDS)},
                 extra_stats_json=excluded.extra_stats_json, raw_player_json=excluded.raw_player_json
@@ -273,11 +310,39 @@ def upsert_player_stats(conn: sqlite3.Connection, result: PlayerStatsCollectionR
         """, (record.match_provider_id, record.champion_data_player_id,
               None if record.afl_match_id is None else str(record.afl_match_id),
               record.team_provider_id, record.side, record.collected_at,
-              record.source_endpoint, record.source_status, authority, *numeric,
+              record.source_endpoint, record.endpoint_source_status,
+              record.resolved_match_status, authority, *numeric,
               json.dumps(record.extra_stats, separators=(",", ":"), sort_keys=True),
               json.dumps(record.raw_player, separators=(",", ":"), sort_keys=True)))
         written += cursor.rowcount
     return written
+
+
+def resolve_canonical_match_status(conn: sqlite3.Connection, *,
+                                   match_provider_id: str | None = None,
+                                   afl_match_id: int | str | None = None) -> str | None:
+    """Resolve canonical match status by either stable match identifier."""
+    if not match_provider_id and afl_match_id is None:
+        raise ValueError("match_provider_id or afl_match_id is required")
+    clauses: list[str] = []
+    parameters: list[Any] = []
+    if match_provider_id:
+        clauses.append("match_provider_id = ?")
+        parameters.append(match_provider_id)
+    if afl_match_id is not None:
+        clauses.append("match_id = ?")
+        parameters.append(afl_match_id)
+    try:
+        row = conn.execute(
+            f"SELECT status FROM matches WHERE {' OR '.join(clauses)} "
+            "ORDER BY CASE WHEN match_provider_id = ? THEN 0 ELSE 1 END LIMIT 1",
+            (*parameters, match_provider_id),
+        ).fetchone()
+    except sqlite3.OperationalError as exc:
+        if "no such table" in str(exc).casefold():
+            return None
+        raise
+    return _text(row[0]) if row else None
 
 
 def _sqlite_number(value: Any) -> int | str | None:
@@ -330,6 +395,11 @@ def _result_status(source_status: str | None, records: list[Any], one_team: bool
     if one_team or folded in {"live", "in_progress", "playing", "partial"}:
         return PlayerStatsStatus.LIVE_PARTIAL
     return PlayerStatsStatus.UNKNOWN
+
+
+def _status_class(value: str) -> PlayerStatsStatus:
+    """Classify status text without using record presence as evidence."""
+    return _result_status(value, [object()], False)
 
 
 def _invalid(message: str) -> AflJsonInvalidResponse:

@@ -14,7 +14,9 @@ from db.import_to_db import import_players, save_lineups_to_db, save_clubs_to_db
 from db.connection import get_db_connection
 from afl_json import (
     AflJsonClient, MatchPlayerStatsCollector, MatchRosterCollector, PublicAflCollector,
+    resolve_canonical_match_status,
 )
+from config import DB_PATH
 
 
 def _json_default(value):
@@ -128,6 +130,10 @@ def handle_args():
                                 help="Collect CFS team selections for a Champion Data round ID")
     metadata_group.add_argument("--collect-match-player-stats", metavar="MATCH_PROVIDER_ID",
                                 help="Collect canonical CFS player statistics for a Champion Data match ID")
+    metadata_group.add_argument("--source-status",
+                                help="Canonical match status fallback for player-stat diagnostics")
+    metadata_group.add_argument("--afl-match-id", type=int,
+                                help="AFL match ID used to resolve canonical match metadata")
 
     # 🔹 Backup and restore
     db_group = parser.add_argument_group("Data Backup / Restore")
@@ -193,14 +199,27 @@ def main():
         scrape_afl_player_stats.run_scraper(match_id=args.scrape_match, once=True)
 
     elif args.collect_match_player_stats:
+        resolved_status = args.source_status
+        status_resolution = "explicit" if resolved_status else None
+        if resolved_status is None and Path(DB_PATH).is_file():
+            with sqlite3.connect(DB_PATH) as metadata_conn:
+                resolved_status = resolve_canonical_match_status(
+                    metadata_conn, match_provider_id=args.collect_match_player_stats,
+                    afl_match_id=args.afl_match_id,
+                )
+            if resolved_status:
+                status_resolution = "canonical_match_database"
         with AflJsonClient() as client:
             result = MatchPlayerStatsCollector(
                 client, raw_directory=args.afl_raw_directory
-            ).collect(args.collect_match_player_stats)
+            ).collect(args.collect_match_player_stats, afl_match_id=args.afl_match_id,
+                      canonical_match_status=resolved_status)
         output = {
             "match_provider_id": result.match_provider_id,
             "status": result.status.value,
-            "source_status": result.source_status,
+            "endpoint_source_status": result.endpoint_source_status,
+            "resolved_match_status": result.resolved_match_status,
+            "status_resolution": status_resolution,
             "collected_at": result.collected_at,
             "source_endpoint": result.source_endpoint,
             "rejected_records": result.rejected_records,

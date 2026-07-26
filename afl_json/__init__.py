@@ -49,6 +49,7 @@ from .player_stats import (
     PlayerStatsCollectionResult,
     PlayerStatsStatus,
     normalise_player_stats,
+    resolve_canonical_match_status,
     upsert_player_stats,
 )
 
@@ -93,5 +94,6 @@ __all__ = [
     "PlayerStatsCollectionResult",
     "PlayerStatsStatus",
     "normalise_player_stats",
+    "resolve_canonical_match_status",
     "upsert_player_stats",
 ]

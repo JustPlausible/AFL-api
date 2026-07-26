@@ -10,7 +10,7 @@ import pytest
 from afl_json.client import AflJsonInvalidResponse, AflJsonResourceUnavailable
 from afl_json.player_stats import (
     CanonicalPlayerStat, MatchPlayerStatsCollector, PlayerStatsStatus,
-    normalise_player_stats, upsert_player_stats,
+    normalise_player_stats, resolve_canonical_match_status, upsert_player_stats,
 )
 FIXTURES = Path(__file__).parent / "fixtures" / "afl_json"
 
@@ -83,6 +83,47 @@ def test_concluded_maps_both_arrays_and_all_eight_fields():
     assert home.extra_stats == {"ratingPoints": 7.25}
 
 
+def test_endpoint_status_is_retained_and_takes_precedence_over_conflicting_metadata():
+    payload = fixture("match_player_stats_concluded.json")
+    result = normalise_player_stats(
+        payload, "CD_M1", collected_at="now", canonical_match_status="LIVE"
+    )
+    assert result.status is PlayerStatsStatus.CONCLUDED
+    assert result.endpoint_source_status == "CONCLUDED"
+    assert result.resolved_match_status == "LIVE"
+    assert result.source_status == "CONCLUDED"
+    assert "conflicting_match_status" in {item.code for item in result.diagnostics}
+    assert all(record.endpoint_source_status == "CONCLUDED" for record in result.records)
+    assert all(record.resolved_match_status == "LIVE" for record in result.records)
+
+
+@pytest.mark.parametrize("metadata_status, expected", [
+    ("CONCLUDED", PlayerStatsStatus.CONCLUDED),
+    ("COMPLETED", PlayerStatsStatus.CONCLUDED),
+    ("LIVE", PlayerStatsStatus.LIVE_PARTIAL),
+    (None, PlayerStatsStatus.UNKNOWN),
+])
+def test_canonical_match_metadata_fallback_when_endpoint_status_is_absent(metadata_status, expected):
+    payload = fixture("match_player_stats_concluded.json")
+    del payload["status"]
+    result = normalise_player_stats(
+        payload, "CD_M1", collected_at="now", canonical_match_status=metadata_status
+    )
+    assert result.status is expected
+    assert result.endpoint_source_status is None
+    assert result.resolved_match_status == metadata_status
+    assert all(record.endpoint_source_status is None for record in result.records)
+
+
+def test_match_status_resolves_from_canonical_database_by_provider_or_afl_id():
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE matches (match_id INTEGER, match_provider_id TEXT, status TEXT)")
+    conn.execute("INSERT INTO matches VALUES (101, 'CD_M1', 'CONCLUDED')")
+    assert resolve_canonical_match_status(conn, match_provider_id="CD_M1") == "CONCLUDED"
+    assert resolve_canonical_match_status(conn, afl_match_id=101) == "CONCLUDED"
+    assert resolve_canonical_match_status(conn, match_provider_id="CD_MISSING") is None
+
+
 def test_malformed_entries_are_rejected_or_diagnosed_without_losing_good_record():
     result = collect("match_player_stats_malformed.json")
     codes = [item.code for item in result.diagnostics]
@@ -120,8 +161,22 @@ def test_final_supersedes_live_is_idempotent_and_cannot_be_downgraded():
     assert upsert_player_stats(conn, final) == 2
     assert upsert_player_stats(conn, final) == 2
     assert upsert_player_stats(conn, stale_live) == 0
-    row = conn.execute("SELECT goals, source_status, snapshot_authority FROM cfs_player_stats WHERE champion_data_player_id='CD_I1'").fetchone()
+    row = conn.execute("SELECT goals, endpoint_source_status, snapshot_authority FROM cfs_player_stats WHERE champion_data_player_id='CD_I1'").fetchone()
     assert row == (2, "CONCLUDED", 2)
+
+
+def test_metadata_conclusion_receives_final_snapshot_authority():
+    conn = sqlite3.connect(":memory:")
+    _schema(conn)
+    payload = fixture("match_player_stats_concluded.json")
+    del payload["status"]
+    result = normalise_player_stats(
+        payload, "CD_M1", collected_at="2026-07-25T12:00:00+00:00",
+        canonical_match_status="CONCLUDED",
+    )
+    assert result.status is PlayerStatsStatus.CONCLUDED
+    assert upsert_player_stats(conn, result) == 2
+    assert conn.execute("SELECT DISTINCT snapshot_authority FROM cfs_player_stats").fetchall() == [(2,)]
 
 
 def test_raw_capture_is_sanitised_payload_only(tmp_path):
