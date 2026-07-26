@@ -41,6 +41,20 @@ from .rosters import (
     RosterStatus,
     compare_rosters,
 )
+from .player_stats import (
+    CANONICAL_STAT_FIELDS,
+    CanonicalPlayerStat,
+    MatchPlayerStatsCollector,
+    MatchStatusResolution,
+    PlayerStatDiagnostic,
+    PlayerStatsCollectionResult,
+    PlayerStatsStatus,
+    normalise_player_stats,
+    resolve_canonical_match_status,
+    resolve_authoritative_match_status,
+    upsert_player_stats,
+)
+from .bootstrap import BootstrapSummary, persist_afl_metadata
 
 __all__ = [
     "CFS_ERROR_AUTH",
@@ -76,4 +90,17 @@ __all__ = [
     "RosterCollectionResult",
     "RosterStatus",
     "compare_rosters",
+    "CANONICAL_STAT_FIELDS",
+    "CanonicalPlayerStat",
+    "MatchPlayerStatsCollector",
+    "MatchStatusResolution",
+    "PlayerStatDiagnostic",
+    "PlayerStatsCollectionResult",
+    "PlayerStatsStatus",
+    "normalise_player_stats",
+    "resolve_canonical_match_status",
+    "resolve_authoritative_match_status",
+    "upsert_player_stats",
+    "BootstrapSummary",
+    "persist_afl_metadata",
 ]

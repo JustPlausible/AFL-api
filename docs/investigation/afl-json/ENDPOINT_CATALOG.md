@@ -161,6 +161,11 @@ Do not derive relationships by parsing the characters inside `CD_*` identifiers.
   - near/live matches: 1-5 minutes as appropriate
   - concluded matches: one final confirmation, then immutable unless reconciliation detects change
 - Status policy: preserve the source status string and map separately to any legacy internal enum.
+- Direct detail variant: `GET https://aflapi.afl.com.au/afl/v2/matches/{afl_match_id}`
+  returns the same `matches[]` wrapper for one match. During match 8207, the
+  round/list response was observed still reporting `LIVE` while direct detail
+  reported `CONCLUDED`; a later repeat agreed at `CONCLUDED`. Use direct detail
+  to reconcile finalisation when the numeric AFL match ID is known.
 
 ### E06 - Player ID map
 

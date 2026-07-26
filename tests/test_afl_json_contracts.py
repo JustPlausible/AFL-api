@@ -18,7 +18,7 @@ from afl_json.contracts import (
 
 
 EXPECTED_NAMES = {
-    "wmc_token", "competitions", "competition_seasons", "rounds", "teams", "matches",
+    "wmc_token", "competitions", "competition_seasons", "rounds", "teams", "matches", "match_detail",
     "player_id_map", "season_players", "match_rosters", "match_player_statistics",
 }
 

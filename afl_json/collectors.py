@@ -324,7 +324,18 @@ class PublicAflCollector:
             number = round_record["round_number"]
             if number is None:
                 raise CollectionError(f"Round {round_record['afl_id']} has no roundNumber")
-            matches.extend(self.matches(competition["afl_id"], selected["afl_id"], number))
+            round_matches = self.matches(competition["afl_id"], selected["afl_id"], number)
+            for match in round_matches:
+                # Some match payloads omit their round object. Preserve the
+                # resolved collection context so persistence can always retain
+                # the stable internal round relationship.
+                if not isinstance(match.get("round"), dict):
+                    match["round"] = {
+                        "id": round_record.get("afl_id"),
+                        "providerId": round_record.get("provider_id"),
+                        "roundNumber": round_record.get("round_number"),
+                    }
+            matches.extend(round_matches)
         return CollectionResult(competition, selected, rounds, teams, matches)
 
 

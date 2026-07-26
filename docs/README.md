@@ -12,6 +12,7 @@ This directory contains active project documentation for operating, developing, 
 - [Scrape run audit records](scrape_run_audit.md)
 - [Public AFL metadata collection](public_afl_metadata.md)
 - [Match roster collection](match_rosters.md)
+- [Match player-stat collection](match_player_stats.md)
 
 ## Reviews and planning
 

@@ -1,0 +1,10 @@
+{
+  "meta": {"fixture": "sanitised lagging round list"},
+  "matches": [
+    {
+      "id": 8207,
+      "providerId": "CD_M20260142007",
+      "status": "LIVE"
+    }
+  ]
+}

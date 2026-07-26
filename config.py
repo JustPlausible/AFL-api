@@ -19,6 +19,9 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 AFL_COMPETITION_ID = int(os.getenv("AFL_COMPETITION_ID", 1))
 AFL_SEASON_ID = int(os.getenv("AFL_SEASON_ID", 73))
 AFL_SEASON_PID = os.getenv("AFL_SEASON_PID", "CD_S2025014")
+AFL_COMPETITION_CODE = os.getenv("AFL_COMPETITION_CODE", "AFL")
+AFL_COMPETITION_PROVIDER_ID = os.getenv("AFL_COMPETITION_PROVIDER_ID", "CD_C014")
+AFL_SEASON_YEAR = os.getenv("AFL_SEASON_YEAR")
 AFL_BASE_URL = os.getenv("AFL_BASE_URL", "https://www.afl.com.au")
 
 # Scraper Behaviour
