@@ -19,7 +19,7 @@ from afl_json.contracts import (
 
 EXPECTED_NAMES = {
     "wmc_token", "competitions", "competition_seasons", "rounds", "teams", "matches",
-    "player_id_map", "season_players", "match_rosters", "match_player_statistics",
+    "match_detail", "player_id_map", "season_players", "match_rosters", "match_player_statistics",
 }
 
 
@@ -40,6 +40,8 @@ def test_required_query_parameters_and_authentication_flags():
     assert ENDPOINTS["matches"].required_query_parameters == (
         "competitionId", "compSeasonId", "roundNumber",
     )
+    assert ENDPOINTS["match_detail"].path_template == "/matches/{afl_match_id}"
+    assert ENDPOINTS["match_detail"].required_path_parameters == ("afl_match_id",)
     assert ENDPOINTS["season_players"].required_query_parameters == ("seasonId",)
     assert {item.name for item in ENDPOINTS.values() if item.requires_auth} == {
         "season_players", "match_rosters", "match_player_statistics",

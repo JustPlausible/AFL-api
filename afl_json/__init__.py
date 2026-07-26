@@ -52,6 +52,10 @@ from .player_stats import (
     resolve_canonical_match_status,
     upsert_player_stats,
 )
+from .match_status import (
+    MatchLifecycle, MatchStatusDiagnostic, MatchStatusResolution,
+    later_match_status, normalise_match_status, reconcile_match_status,
+)
 from .bootstrap import BootstrapSummary, persist_afl_metadata
 
 __all__ = [
@@ -97,6 +101,12 @@ __all__ = [
     "normalise_player_stats",
     "resolve_canonical_match_status",
     "upsert_player_stats",
+    "MatchLifecycle",
+    "MatchStatusDiagnostic",
+    "MatchStatusResolution",
+    "later_match_status",
+    "normalise_match_status",
+    "reconcile_match_status",
     "BootstrapSummary",
     "persist_afl_metadata",
 ]

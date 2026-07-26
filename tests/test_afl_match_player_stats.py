@@ -12,6 +12,7 @@ from afl_json.player_stats import (
     CanonicalPlayerStat, MatchPlayerStatsCollector, PlayerStatsStatus,
     normalise_player_stats, resolve_canonical_match_status, upsert_player_stats,
 )
+from afl_json.match_status import normalise_match_status
 FIXTURES = Path(__file__).parent / "fixtures" / "afl_json"
 
 
@@ -83,24 +84,37 @@ def test_concluded_maps_both_arrays_and_all_eight_fields():
     assert home.extra_stats == {"ratingPoints": 7.25}
 
 
-def test_endpoint_status_is_retained_and_takes_precedence_over_conflicting_metadata():
+def test_endpoint_status_is_retained_and_advances_canonical_metadata():
     payload = fixture("match_player_stats_concluded.json")
     result = normalise_player_stats(
         payload, "CD_M1", collected_at="now", canonical_match_status="LIVE"
     )
     assert result.status is PlayerStatsStatus.CONCLUDED
     assert result.endpoint_source_status == "CONCLUDED"
-    assert result.resolved_match_status == "LIVE"
+    assert result.resolved_match_status == "CONCLUDED"
     assert result.source_status == "CONCLUDED"
-    assert "conflicting_match_status" in {item.code for item in result.diagnostics}
+    assert "endpoint_status_regression" not in {item.code for item in result.diagnostics}
     assert all(record.endpoint_source_status == "CONCLUDED" for record in result.records)
-    assert all(record.resolved_match_status == "LIVE" for record in result.records)
+    assert all(record.resolved_match_status == "CONCLUDED" for record in result.records)
+
+
+def test_endpoint_live_cannot_downgrade_reconciled_concluded():
+    payload = fixture("match_player_stats_concluded.json")
+    payload["status"] = "LIVE"
+    result = normalise_player_stats(
+        payload, "CD_M1", collected_at="now", canonical_match_status="CONCLUDED"
+    )
+    assert result.status is PlayerStatsStatus.CONCLUDED
+    assert result.endpoint_source_status == "LIVE"
+    assert result.resolved_match_status == "CONCLUDED"
+    assert {item.code for item in result.diagnostics} == {"endpoint_status_regression"}
 
 
 @pytest.mark.parametrize("metadata_status, expected", [
     ("CONCLUDED", PlayerStatsStatus.CONCLUDED),
     ("COMPLETED", PlayerStatsStatus.CONCLUDED),
     ("LIVE", PlayerStatsStatus.LIVE_PARTIAL),
+    ("POSTGAME", PlayerStatsStatus.LIVE_PARTIAL),
     (None, PlayerStatsStatus.UNKNOWN),
 ])
 def test_canonical_match_metadata_fallback_when_endpoint_status_is_absent(metadata_status, expected):
@@ -111,7 +125,7 @@ def test_canonical_match_metadata_fallback_when_endpoint_status_is_absent(metada
     )
     assert result.status is expected
     assert result.endpoint_source_status is None
-    assert result.resolved_match_status == metadata_status
+    assert result.resolved_match_status == normalise_match_status(metadata_status)
     assert all(record.endpoint_source_status is None for record in result.records)
 
 
@@ -177,6 +191,28 @@ def test_metadata_conclusion_receives_final_snapshot_authority():
     assert result.status is PlayerStatsStatus.CONCLUDED
     assert upsert_player_stats(conn, result) == 2
     assert conn.execute("SELECT DISTINCT snapshot_authority FROM cfs_player_stats").fetchall() == [(2,)]
+
+
+def test_later_postgame_observation_cannot_overwrite_concluded_rows():
+    conn = sqlite3.connect(":memory:")
+    _schema(conn)
+    final_payload = fixture("match_player_stats_concluded.json")
+    final = normalise_player_stats(
+        final_payload, "CD_M1", collected_at="2026-07-25T12:00:00+00:00",
+        canonical_match_status="CONCLUDED",
+    )
+    postgame_payload = fixture("match_player_stats_concluded.json")
+    del postgame_payload["status"]
+    postgame_payload["homeTeamPlayerStats"][0]["playerStats"]["stats"]["goals"] = 99
+    postgame = normalise_player_stats(
+        postgame_payload, "CD_M1", collected_at="2026-07-25T13:00:00+00:00",
+        canonical_match_status="POSTGAME",
+    )
+    assert upsert_player_stats(conn, final) == 2
+    assert upsert_player_stats(conn, postgame) == 0
+    assert conn.execute(
+        "SELECT goals, snapshot_authority FROM cfs_player_stats WHERE champion_data_player_id='CD_I1'"
+    ).fetchone() == (2, 2)
 
 
 def test_raw_capture_is_sanitised_payload_only(tmp_path):

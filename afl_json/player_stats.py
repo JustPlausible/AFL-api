@@ -14,6 +14,7 @@ from typing import Any, Callable, Mapping
 
 from .client import AflJsonClient, AflJsonInvalidResponse, AflJsonResourceUnavailable
 from .collectors import RawResponseWriter
+from .match_status import MatchLifecycle, later_match_status, normalise_match_status
 
 ENDPOINT_NAME = "match_player_statistics"
 SOURCE_ENDPOINT = "/cfs/afl/playerStats/match/{matchProviderId}"
@@ -164,14 +165,21 @@ def normalise_player_stats(payload: Any, match_provider_id: str, *, collected_at
             raise _invalid(f"{key} is not a list or null")
 
     endpoint_source_status = _text(_first(payload, "status", "matchStatus", "matchPhase"))
-    if (endpoint_source_status and resolved_match_status
-            and _status_class(endpoint_source_status) != _status_class(resolved_match_status)):
+    endpoint_lifecycle = normalise_match_status(endpoint_source_status)
+    canonical_lifecycle = normalise_match_status(resolved_match_status)
+    if endpoint_source_status and endpoint_lifecycle is None:
         diagnostics.append(PlayerStatDiagnostic(
-            "warning", "conflicting_match_status",
-            f"Endpoint status {endpoint_source_status!r} overrides canonical match status "
-            f"{resolved_match_status!r} for match {match_provider_id}",
+            "warning", "unrecognised_endpoint_status",
+            f"Player-stat endpoint status {endpoint_source_status!r} is not recognised",
         ))
-    effective_status = endpoint_source_status or resolved_match_status
+    if (endpoint_lifecycle and canonical_lifecycle
+            and MatchLifecycle[endpoint_lifecycle] < MatchLifecycle[canonical_lifecycle]):
+        diagnostics.append(PlayerStatDiagnostic(
+            "warning", "endpoint_status_regression",
+            f"Ignored endpoint status {endpoint_source_status!r}; reconciled match status "
+            f"{resolved_match_status!r} is later for match {match_provider_id}",
+        ))
+    effective_status = later_match_status(canonical_lifecycle, endpoint_lifecycle)
     records: list[CanonicalPlayerStat] = []
     rejected = 0
     seen: dict[str, str] = {}
@@ -194,7 +202,7 @@ def normalise_player_stats(payload: Any, match_provider_id: str, *, collected_at
                 entry, side=side, match_provider_id=match_provider_id,
                 collected_at=collected_at, afl_match_id=afl_match_id,
                 endpoint_source_status=endpoint_source_status,
-                resolved_match_status=resolved_match_status,
+                resolved_match_status=effective_status,
             )
             diagnostics.extend(record_diagnostics)
             if record is None:
@@ -218,7 +226,7 @@ def normalise_player_stats(payload: Any, match_provider_id: str, *, collected_at
     return PlayerStatsCollectionResult(match_provider_id, status, records, diagnostics,
                                        collected_at,
                                        endpoint_source_status=endpoint_source_status,
-                                       resolved_match_status=resolved_match_status,
+                                       resolved_match_status=effective_status,
                                        rejected_records=rejected)
 
 
@@ -406,7 +414,7 @@ def _result_status(source_status: str | None, records: list[Any], one_team: bool
         return PlayerStatsStatus.CONCLUDED
     if not records:
         return PlayerStatsStatus.EMPTY
-    if one_team or folded in {"live", "in_progress", "playing", "partial"}:
+    if one_team or folded in {"live", "in_progress", "playing", "partial", "postgame"}:
         return PlayerStatsStatus.LIVE_PARTIAL
     return PlayerStatsStatus.UNKNOWN
 

@@ -162,6 +162,17 @@ Do not derive relationships by parsing the characters inside `CD_*` identifiers.
   - concluded matches: one final confirmation, then immutable unless reconciliation detects change
 - Status policy: preserve the source status string and map separately to any legacy internal enum.
 
+### E05a - Match detail
+
+- Method: `GET`
+- URL template: `https://aflapi.afl.com.au/afl/v2/matches/{afl_match_id}`
+- Token: no
+- Scope: one match's current public lifecycle status and identifiers
+- Collection key: `matches[].id`
+- Provider key: `matches[].providerId`
+- Reconciliation use: advance, but never downgrade, the canonical match status
+  before assigning player-stat snapshot authority
+
 ### E06 - Player ID map
 
 - Method: `GET`
