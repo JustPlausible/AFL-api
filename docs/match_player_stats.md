@@ -64,18 +64,19 @@ Published empty arrays are `empty`. Status provenance is deliberately split:
 
 * `endpoint_source_status` is populated only from `status`, `matchStatus`, or
   `matchPhase` in the player-stat response;
-* `resolved_match_status` is populated only from caller-supplied canonical
-  match metadata (the CLI labels whether that came from its database or the
-  explicit option);
+* `resolved_match_status` is the latest recognised status after reconciling
+  stored canonical metadata, direct public match detail, and endpoint status;
 * `status` is the canonical player-stat publication classification used for
   persistence authority.
 
-An endpoint status always takes precedence. When it is absent, resolved match
-metadata is used. Conflicting values retain both provenance fields and produce
-a diagnostic. A supplied single/null team array or effective live status is
-`live_partial`; an effective `CONCLUDED`, `COMPLETED`, or `FINAL` status is
-concluded. A non-empty response without either trustworthy status remains
-`unknown` rather than being guessed final.
+Lifecycle status advances monotonically as `SCHEDULED < LIVE < POSTGAME <
+CONCLUDED`; no source can downgrade a later observation. The CLI reads the AFL
+numeric ID and status from the canonical match row, consults the direct public
+match-detail endpoint unless the row is already concluded, and persists an
+accepted advance to `matches.status` and `updated_at` without changing the
+metadata scraper's `scraped_at`. A supplied single/null team array, live, or
+postgame status is `live_partial`; concluded status receives final authority.
+A non-empty response without any recognised status remains `unknown`.
 
 Migration `0006` adds a current-observation table with a unique constraint on
 match provider ID and Champion Data player ID. Idempotent upsert permits a later
@@ -107,3 +108,19 @@ For a future live check, run the command above during a match with a diagnostic
 directory, repeat it later using the same match ID/directory, compare the two
 sanitised JSON captures, and exercise persistence through `upsert_player_stats`.
 Never commit token-bearing headers or an unsanitised large response.
+
+The repository default database is `data/afl_players.db` (and may be overridden
+with `DB_PATH`). Verify the effective configured path before live reconciliation:
+
+```bash
+python -c 'import config; print(config.DB_PATH)'
+sqlite3 data/afl_players.db \
+  "SELECT match_id, match_provider_id, status, updated_at, scraped_at FROM matches WHERE match_provider_id='CD_M20260142007';"
+curl --fail --silent --show-error \
+  'https://aflapi.afl.com.au/afl/v2/matches/8207' | python -m json.tool
+python cli.py --collect-match-player-stats CD_M20260142007 --print-json
+sqlite3 data/afl_players.db \
+  "SELECT match_id, match_provider_id, status, updated_at, scraped_at FROM matches WHERE match_provider_id='CD_M20260142007';"
+sqlite3 data/afl_players.db \
+  "SELECT COUNT(*), MIN(snapshot_authority), MAX(snapshot_authority), MIN(resolved_match_status) FROM cfs_player_stats WHERE match_provider_id='CD_M20260142007';"
+```
