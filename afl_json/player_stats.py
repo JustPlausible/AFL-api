@@ -117,7 +117,8 @@ class MatchPlayerStatsCollector:
             )
         except AflJsonResourceUnavailable:
             return PlayerStatsCollectionResult(match_provider_id, PlayerStatsStatus.UNAVAILABLE,
-                                                [], [], collected_at)
+                                                [], [], collected_at,
+                                                resolved_match_status=resolved_match_status)
         if self.raw_writer:
             self.raw_writer.write(ENDPOINT_NAME, response.data,
                                   scope={"matchProviderId": match_provider_id}, page=1)
