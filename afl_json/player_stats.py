@@ -117,7 +117,8 @@ class MatchPlayerStatsCollector:
             )
         except AflJsonResourceUnavailable:
             return PlayerStatsCollectionResult(match_provider_id, PlayerStatsStatus.UNAVAILABLE,
-                                                [], [], collected_at)
+                                                [], [], collected_at,
+                                                resolved_match_status=resolved_match_status)
         if self.raw_writer:
             self.raw_writer.write(ENDPOINT_NAME, response.data,
                                   scope={"matchProviderId": match_provider_id}, page=1)
@@ -288,6 +289,18 @@ def upsert_player_stats(conn: sqlite3.Connection, result: PlayerStatsCollectionR
     for record in result.records:
         values = asdict(record)
         numeric = [_sqlite_number(values[name]) for name in CANONICAL_STAT_FIELDS]
+        # Collection time alone does not make a snapshot new information. A
+        # repeated response should therefore be a zero-write idempotent run,
+        # while a newer same-authority response with any changed source or
+        # canonical value remains eligible for update.
+        changed_columns = (
+            "afl_match_id", "team_provider_id", "side", "source_endpoint",
+            "endpoint_source_status", "resolved_match_status",
+            *CANONICAL_STAT_FIELDS, "extra_stats_json", "raw_player_json",
+        )
+        meaningful_change = " OR ".join(
+            f"excluded.{name} IS NOT cfs_player_stats.{name}" for name in changed_columns
+        )
         cursor = conn.execute(f"""
             INSERT INTO cfs_player_stats (
                 match_provider_id, champion_data_player_id, afl_match_id, team_provider_id,
@@ -306,7 +319,8 @@ def upsert_player_stats(conn: sqlite3.Connection, result: PlayerStatsCollectionR
                 extra_stats_json=excluded.extra_stats_json, raw_player_json=excluded.raw_player_json
             WHERE excluded.snapshot_authority > cfs_player_stats.snapshot_authority
                OR (excluded.snapshot_authority = cfs_player_stats.snapshot_authority
-                   AND excluded.collected_at >= cfs_player_stats.collected_at)
+                   AND excluded.collected_at >= cfs_player_stats.collected_at
+                   AND ({meaningful_change}))
         """, (record.match_provider_id, record.champion_data_player_id,
               None if record.afl_match_id is None else str(record.afl_match_id),
               record.team_provider_id, record.side, record.collected_at,

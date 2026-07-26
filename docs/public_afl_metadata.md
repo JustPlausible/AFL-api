@@ -1,5 +1,33 @@
 # Public AFL metadata collection
 
+## First-run season bootstrap
+
+After creating a clean database, migrate it and persist the prerequisite AFL
+competition hierarchy with:
+
+```bash
+python -m db.migrate
+python cli.py --bootstrap-afl-season 2026
+```
+
+The command resolves the Premiership competition and requested year through
+the public metadata API, then atomically inserts or updates the competition,
+season, teams, rounds and matches. It prints counts for records read, inserted,
+updated, unchanged and failed. Repeating it is safe: stable AFL identifiers are
+used as keys, while fixture, venue, score and status changes are updated.
+
+Recommended new-installation settings are `AFL_COMPETITION_CODE=AFL`,
+`AFL_COMPETITION_PROVIDER_ID=CD_C014`, and `AFL_SEASON_YEAR=2026`. An explicit
+`--bootstrap-afl-season YEAR`, `--afl-competition-code`, or
+`--afl-competition-provider-id` takes precedence over its environment default.
+Legacy numeric settings remain available to legacy scrapers.
+
+Add `--afl-raw-directory PATH` to retain deterministic raw API responses for
+diagnostics. The bootstrap only collects and persists public metadata: it does
+not start the scheduler or collect rosters, lineups, injuries, or player stats.
+
+## Read-only diagnostics
+
 The public JSON collector discovers and normalises the AFL metadata hierarchy
 without writing it to the application database:
 

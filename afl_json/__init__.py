@@ -52,6 +52,7 @@ from .player_stats import (
     resolve_canonical_match_status,
     upsert_player_stats,
 )
+from .bootstrap import BootstrapSummary, persist_afl_metadata
 
 __all__ = [
     "CFS_ERROR_AUTH",
@@ -96,4 +97,6 @@ __all__ = [
     "normalise_player_stats",
     "resolve_canonical_match_status",
     "upsert_player_stats",
+    "BootstrapSummary",
+    "persist_afl_metadata",
 ]

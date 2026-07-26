@@ -14,9 +14,9 @@ from db.import_to_db import import_players, save_lineups_to_db, save_clubs_to_db
 from db.connection import get_db_connection
 from afl_json import (
     AflJsonClient, MatchPlayerStatsCollector, MatchRosterCollector, PublicAflCollector,
-    resolve_canonical_match_status,
+    persist_afl_metadata, resolve_canonical_match_status, upsert_player_stats,
 )
-from config import DB_PATH
+from config import AFL_COMPETITION_CODE, AFL_COMPETITION_PROVIDER_ID, AFL_SEASON_YEAR, DB_PATH
 
 
 def _json_default(value):
@@ -120,9 +120,13 @@ def handle_args():
     metadata_group = parser.add_argument_group("Public AFL Metadata")
     metadata_group.add_argument("--collect-afl-metadata", action="store_true",
                                 help="Collect competition, season, rounds, teams and matches without database writes")
-    metadata_group.add_argument("--afl-season", help="Select a season by year, AFL ID, provider ID or exact name")
-    metadata_group.add_argument("--afl-competition-code", default="AFL", help="Stable Premiership competition code")
-    metadata_group.add_argument("--afl-competition-provider-id", default="CD_C014",
+    metadata_group.add_argument("--bootstrap-afl-season", metavar="YEAR",
+                                help="Collect and idempotently persist an AFL season (does not start the scheduler)")
+    metadata_group.add_argument("--afl-season", default=AFL_SEASON_YEAR,
+                                help="Select a season by year, AFL ID, provider ID or exact name")
+    metadata_group.add_argument("--afl-competition-code", default=AFL_COMPETITION_CODE,
+                                help="Stable Premiership competition code")
+    metadata_group.add_argument("--afl-competition-provider-id", default=AFL_COMPETITION_PROVIDER_ID,
                                 help="Stable Premiership provider ID")
     metadata_group.add_argument("--afl-raw-directory", type=Path,
                                 help="Store original per-endpoint/page API JSON below this directory")
@@ -199,21 +203,40 @@ def main():
         scrape_afl_player_stats.run_scraper(match_id=args.scrape_match, once=True)
 
     elif args.collect_match_player_stats:
-        resolved_status = args.source_status
-        status_resolution = "explicit" if resolved_status else None
-        if resolved_status is None and Path(DB_PATH).is_file():
-            with sqlite3.connect(DB_PATH) as metadata_conn:
+        conn = get_db_connection()
+        try:
+            resolved_status = args.source_status
+            status_resolution = "explicit" if resolved_status else None
+            if resolved_status is None:
                 resolved_status = resolve_canonical_match_status(
-                    metadata_conn, match_provider_id=args.collect_match_player_stats,
+                    conn, match_provider_id=args.collect_match_player_stats,
                     afl_match_id=args.afl_match_id,
                 )
-            if resolved_status:
-                status_resolution = "canonical_match_database"
-        with AflJsonClient() as client:
-            result = MatchPlayerStatsCollector(
-                client, raw_directory=args.afl_raw_directory
-            ).collect(args.collect_match_player_stats, afl_match_id=args.afl_match_id,
-                      canonical_match_status=resolved_status)
+                if resolved_status:
+                    status_resolution = "canonical_match_database"
+            with audited_scrape_run(
+                "match_player_stats", target_type="match",
+                target_identifier=args.collect_match_player_stats, conn=conn,
+            ) as audit:
+                with AflJsonClient() as client:
+                    result = MatchPlayerStatsCollector(
+                        client, raw_directory=args.afl_raw_directory
+                    ).collect(args.collect_match_player_stats, afl_match_id=args.afl_match_id,
+                              canonical_match_status=resolved_status)
+                # Keep persistence atomic even if a later record fails. The
+                # audit context can then safely record the failed operation
+                # without accidentally committing a partial snapshot.
+                conn.execute("BEGIN")
+                try:
+                    rows_written = upsert_player_stats(conn, result)
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+                    raise
+                audit["rows_read"] = len(result.records)
+                audit["rows_written"] = rows_written
+        finally:
+            conn.close()
         output = {
             "match_provider_id": result.match_provider_id,
             "status": result.status.value,
@@ -222,6 +245,8 @@ def main():
             "status_resolution": status_resolution,
             "collected_at": result.collected_at,
             "source_endpoint": result.source_endpoint,
+            "records_collected": len(result.records),
+            "rows_written": rows_written,
             "rejected_records": result.rejected_records,
             "diagnostics": result.diagnostics,
             "records": result.records,
@@ -231,7 +256,10 @@ def main():
         else:
             print(json.dumps({"match_provider_id": result.match_provider_id,
                               "status": result.status.value,
-                              "records": len(result.records),
+                              "resolved_match_status": result.resolved_match_status,
+                              "records_collected": len(result.records),
+                              "rows_written": rows_written,
+                              "rejected_records": result.rejected_records,
                               "diagnostics": len(result.diagnostics)}))
 
     elif args.collect_match_rosters:
@@ -254,6 +282,32 @@ def main():
             print(json.dumps({"round_provider_id": result.round_provider_id,
                               "status": result.status.value,
                               "selections": len(result.selections)}))
+
+    elif args.bootstrap_afl_season:
+        with AflJsonClient() as client:
+            result = PublicAflCollector(
+                client, raw_directory=args.afl_raw_directory
+            ).collect(
+                competition_code=args.afl_competition_code,
+                competition_provider_id=args.afl_competition_provider_id,
+                season=args.bootstrap_afl_season,
+            )
+        conn = get_db_connection()
+        try:
+            with audited_scrape_run(
+                "afl_metadata_bootstrap", target_type="season",
+                target_identifier=args.bootstrap_afl_season, conn=conn,
+            ) as audit:
+                summary = persist_afl_metadata(conn, result)
+                audit["rows_read"] = summary.records_read
+                audit["rows_written"] = summary.inserted + summary.updated
+        finally:
+            conn.close()
+        print(json.dumps({
+            "competition": result.competition["name"], "season": result.season["name"],
+            "records_read": summary.records_read, "inserted": summary.inserted,
+            "updated": summary.updated, "unchanged": summary.unchanged, "failed": summary.failed,
+        }))
 
     elif args.collect_afl_metadata:
         with AflJsonClient() as client:
