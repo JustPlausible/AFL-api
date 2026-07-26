@@ -14,9 +14,9 @@ from db.import_to_db import import_players, save_lineups_to_db, save_clubs_to_db
 from db.connection import get_db_connection
 from afl_json import (
     AflJsonClient, MatchPlayerStatsCollector, MatchRosterCollector, PublicAflCollector,
-    resolve_canonical_match_status,
+    persist_afl_metadata, resolve_canonical_match_status,
 )
-from config import DB_PATH
+from config import AFL_COMPETITION_CODE, AFL_COMPETITION_PROVIDER_ID, AFL_SEASON_YEAR, DB_PATH
 
 
 def _json_default(value):
@@ -120,9 +120,13 @@ def handle_args():
     metadata_group = parser.add_argument_group("Public AFL Metadata")
     metadata_group.add_argument("--collect-afl-metadata", action="store_true",
                                 help="Collect competition, season, rounds, teams and matches without database writes")
-    metadata_group.add_argument("--afl-season", help="Select a season by year, AFL ID, provider ID or exact name")
-    metadata_group.add_argument("--afl-competition-code", default="AFL", help="Stable Premiership competition code")
-    metadata_group.add_argument("--afl-competition-provider-id", default="CD_C014",
+    metadata_group.add_argument("--bootstrap-afl-season", metavar="YEAR",
+                                help="Collect and idempotently persist an AFL season (does not start the scheduler)")
+    metadata_group.add_argument("--afl-season", default=AFL_SEASON_YEAR,
+                                help="Select a season by year, AFL ID, provider ID or exact name")
+    metadata_group.add_argument("--afl-competition-code", default=AFL_COMPETITION_CODE,
+                                help="Stable Premiership competition code")
+    metadata_group.add_argument("--afl-competition-provider-id", default=AFL_COMPETITION_PROVIDER_ID,
                                 help="Stable Premiership provider ID")
     metadata_group.add_argument("--afl-raw-directory", type=Path,
                                 help="Store original per-endpoint/page API JSON below this directory")
@@ -254,6 +258,32 @@ def main():
             print(json.dumps({"round_provider_id": result.round_provider_id,
                               "status": result.status.value,
                               "selections": len(result.selections)}))
+
+    elif args.bootstrap_afl_season:
+        with AflJsonClient() as client:
+            result = PublicAflCollector(
+                client, raw_directory=args.afl_raw_directory
+            ).collect(
+                competition_code=args.afl_competition_code,
+                competition_provider_id=args.afl_competition_provider_id,
+                season=args.bootstrap_afl_season,
+            )
+        conn = get_db_connection()
+        try:
+            with audited_scrape_run(
+                "afl_metadata_bootstrap", target_type="season",
+                target_identifier=args.bootstrap_afl_season, conn=conn,
+            ) as audit:
+                summary = persist_afl_metadata(conn, result)
+                audit["rows_read"] = summary.records_read
+                audit["rows_written"] = summary.inserted + summary.updated
+        finally:
+            conn.close()
+        print(json.dumps({
+            "competition": result.competition["name"], "season": result.season["name"],
+            "records_read": summary.records_read, "inserted": summary.inserted,
+            "updated": summary.updated, "unchanged": summary.unchanged, "failed": summary.failed,
+        }))
 
     elif args.collect_afl_metadata:
         with AflJsonClient() as client:
