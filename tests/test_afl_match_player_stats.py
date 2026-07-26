@@ -159,7 +159,7 @@ def test_final_supersedes_live_is_idempotent_and_cannot_be_downgraded():
     stale_live = collect("match_player_stats_live_partial.json", "2026-07-25T13:00:00+00:00")
     assert upsert_player_stats(conn, live) == 1
     assert upsert_player_stats(conn, final) == 2
-    assert upsert_player_stats(conn, final) == 2
+    assert upsert_player_stats(conn, final) == 0
     assert upsert_player_stats(conn, stale_live) == 0
     row = conn.execute("SELECT goals, endpoint_source_status, snapshot_authority FROM cfs_player_stats WHERE champion_data_player_id='CD_I1'").fetchone()
     assert row == (2, "CONCLUDED", 2)

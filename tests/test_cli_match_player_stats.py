@@ -84,11 +84,11 @@ def test_cli_persists_stats_resolves_concluded_status_and_is_idempotent(
 
     assert first == {
         "match_provider_id": "CD_M20260140204", "status": "concluded",
-        "collection_status": "concluded", "resolved_match_status": "CONCLUDED",
+        "resolved_match_status": "CONCLUDED",
         "records_collected": 2, "rows_written": 2, "rejected_records": 0,
         "diagnostics": 0,
     }
-    assert second["rows_written"] == 2
+    assert second["rows_written"] == 0
     conn = sqlite3.connect(cli_database)
     assert conn.execute("SELECT COUNT(*) FROM cfs_player_stats").fetchone()[0] == 2
     assert conn.execute(

@@ -240,7 +240,6 @@ def main():
         output = {
             "match_provider_id": result.match_provider_id,
             "status": result.status.value,
-            "collection_status": result.status.value,
             "endpoint_source_status": result.endpoint_source_status,
             "resolved_match_status": result.resolved_match_status,
             "status_resolution": status_resolution,
@@ -257,7 +256,6 @@ def main():
         else:
             print(json.dumps({"match_provider_id": result.match_provider_id,
                               "status": result.status.value,
-                              "collection_status": result.status.value,
                               "resolved_match_status": result.resolved_match_status,
                               "records_collected": len(result.records),
                               "rows_written": rows_written,
