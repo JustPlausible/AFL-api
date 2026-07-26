@@ -1,0 +1,150 @@
+[
+  {
+    "match": {
+      "id": 90,
+      "providerId": "CD_M090",
+      "round": 17,
+      "name": "Match 90"
+    },
+    "matchRoster": {
+      "awayTeam": {
+        "clubDebuts": [],
+        "ins": [],
+        "lateChanges": [],
+        "matchId": "CD_M090",
+        "milestones": [],
+        "outs": [],
+        "positions": [
+          {
+            "position": "FORWARDS",
+            "players": [
+              {
+                "playerId": "CD_I4",
+                "playerName": {
+                  "givenName": "Dee",
+                  "surname": "Dove"
+                },
+                "captain": false,
+                "playerJumperNumber": 10
+              }
+            ]
+          },
+          {
+            "position": "INTERCHANGE",
+            "players": []
+          },
+          {
+            "position": "EMERGENCIES",
+            "players": []
+          }
+        ],
+        "teamId": "CD_T4",
+        "teamName": "Swans",
+        "teamStatus": "CONFIRMED"
+      },
+      "competitionId": "CD_C014",
+      "homeTeam": {
+        "clubDebuts": [],
+        "ins": [],
+        "lateChanges": [],
+        "matchId": "CD_M090",
+        "milestones": [
+          {
+            "player": {
+              "playerId": "CD_I5",
+              "playerName": {
+                "givenName": "Eve",
+                "surname": "Elm"
+              },
+              "captain": false,
+              "playerJumperNumber": 11
+            },
+            "reason": "100 games"
+          }
+        ],
+        "outs": [],
+        "positions": [
+          {
+            "position": "FORWARDS",
+            "players": [
+              {
+                "playerId": "CD_I5",
+                "playerName": {
+                  "givenName": "Eve",
+                  "surname": "Elm"
+                },
+                "captain": false,
+                "playerJumperNumber": 11
+              }
+            ]
+          },
+          {
+            "position": "INTERCHANGE",
+            "players": []
+          },
+          {
+            "position": "EMERGENCIES",
+            "players": []
+          }
+        ],
+        "teamId": "CD_T3",
+        "teamName": "Lions",
+        "teamStatus": "CONFIRMED"
+      },
+      "lastUpdated": "2026-07-25T08:30:00Z",
+      "matchId": "CD_M090",
+      "operationHeader": {
+        "operation": "publish"
+      },
+      "recentMatches": [],
+      "roundNumber": 17,
+      "status": "CONCLUDED",
+      "umpires": [
+        {
+          "name": "Official"
+        }
+      ],
+      "weather": {
+        "description": "Fine"
+      }
+    },
+    "recentMatchScores": {
+      "home": 80,
+      "away": 70
+    },
+    "teamPlayers": [
+      {
+        "teamId": "CD_T3",
+        "players": [
+          {
+            "playerId": "CD_I1",
+            "playerName": {
+              "givenName": "Ada",
+              "surname": "Able"
+            },
+            "captain": true,
+            "playerJumperNumber": 7
+          }
+        ]
+      },
+      {
+        "teamId": "CD_T4",
+        "players": [
+          {
+            "playerId": "CD_I3",
+            "playerName": {
+              "givenName": "Cam",
+              "surname": "Cook"
+            },
+            "captain": false,
+            "playerJumperNumber": 9
+          }
+        ]
+      }
+    ],
+    "venue": {
+      "providerId": "CD_V1",
+      "name": "Example Oval"
+    }
+  }
+]

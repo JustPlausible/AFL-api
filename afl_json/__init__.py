@@ -34,6 +34,13 @@ from .collectors import (
     resolve_competition,
     select_season,
 )
+from .rosters import (
+    MatchRosterCollector,
+    RosterChanges,
+    RosterCollectionResult,
+    RosterStatus,
+    compare_rosters,
+)
 
 __all__ = [
     "CFS_ERROR_AUTH",
@@ -64,4 +71,9 @@ __all__ = [
     "RawResponseWriter",
     "resolve_competition",
     "select_season",
+    "MatchRosterCollector",
+    "RosterChanges",
+    "RosterCollectionResult",
+    "RosterStatus",
+    "compare_rosters",
 ]
