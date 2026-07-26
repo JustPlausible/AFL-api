@@ -81,7 +81,9 @@ def compare_rosters(previous: RosterCollectionResult,
     changed: list[dict[str, Any]] = []
     unchanged: list[dict[str, Any]] = []
     for key in sorted(before.keys() & after.keys()):
-        if before[key] == after[key]:
+        # Provider array order is retained for diagnostics, but is not a roster
+        # change: live positions arrays can reorder between publications.
+        if _comparison_value(before[key]) == _comparison_value(after[key]):
             unchanged.append(after[key])
         else:
             changed.append({"before": before[key], "after": after[key]})
@@ -285,16 +287,27 @@ def _normalise_player_record(player: Mapping[str, Any], *, team: Mapping[str, An
 
 
 def _selection_key(item: Mapping[str, Any]) -> tuple[str, ...]:
-    player = item.get("champion_data_player_id") or item.get("player_name")
-    fallback_order = item.get("source_order") if player is None else None
+    player = item.get("champion_data_player_id")
+    if player is None:
+        player = item.get("player_name") or json.dumps({
+            "jumper_number": item.get("jumper_number"),
+            "provider_fields": item.get("provider_fields"),
+            "reason": item.get("reason"),
+        }, sort_keys=True, separators=(",", ":"), default=str)
     # A position name is mutable state rather than identity, so moves compare as changes.
     collection_identity = (item.get("source_collection")
                            if item.get("record_kind") == "change" else item.get("record_kind"))
     return tuple(str(value) for value in (
         item.get("match_provider_id") or item.get("afl_match_id"),
         item.get("team_provider_id"), player, collection_identity,
-        json.dumps(fallback_order, sort_keys=True),
     ))
+
+
+def _comparison_value(item: Mapping[str, Any]) -> dict[str, Any]:
+    """Return meaningful state without provider array-order diagnostics."""
+    value = deepcopy(dict(item))
+    value.pop("source_order", None)
+    return value
 
 
 def _required_object(value: Mapping[str, Any], key: str) -> Mapping[str, Any]:

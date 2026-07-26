@@ -152,6 +152,34 @@ def test_changed_verified_roster_detects_moves_additions_removals_and_change_rec
     assert len({_identity(item) for item in changed.selections}) == len(changed.selections)
 
 
+def test_position_and_player_array_reordering_is_unchanged_with_stable_ids():
+    initial_payload = fixture("match_rosters_available.json")
+    positions = initial_payload[0]["matchRoster"]["homeTeam"]["positions"]
+    # Put two players in one verified positional group so both group and player
+    # ordering can change without changing selection membership or state.
+    positions[0]["players"].extend(positions[1]["players"])
+    positions[1]["players"] = []
+    initial_payload[0]["matchRoster"]["status"] = "UNCONFIRMED_TEAMS"
+    reordered_payload = deepcopy(initial_payload)
+    reordered_payload[0]["matchRoster"]["status"] = "LIVE"
+    reordered_payload[0]["matchRoster"]["lastUpdated"] = "2026-07-25T09:03:00Z"
+    reordered = reordered_payload[0]["matchRoster"]["homeTeam"]["positions"]
+    reordered.reverse()
+    for group in reordered:
+        group["players"].reverse()
+
+    initial = MatchRosterCollector(FixtureClient(initial_payload)).collect("CD_R1")
+    later = MatchRosterCollector(FixtureClient(reordered_payload)).collect("CD_R1")
+    diff = compare_rosters(initial, later)
+
+    assert diff.added == []
+    assert diff.removed == []
+    assert diff.changed == []
+    assert len(diff.unchanged) == len(initial.selections)
+    assert {item["champion_data_player_id"] for item in diff.unchanged} >= {"CD_I1", "CD_I2"}
+    assert initial.provider_timestamp != later.provider_timestamp
+
+
 def _identity(item):
     return (item["match_provider_id"], item["team_provider_id"],
             item["champion_data_player_id"], item["record_kind"],

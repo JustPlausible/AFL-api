@@ -81,7 +81,17 @@ Comparison uses match, team, player and record kind as stable identity. The
 change collection also participates in identity so an `in`, `out`, or late
 change is not flattened into a lineup selection. Position names are mutable
 state, allowing a move between position groups to be reported as a changed
-record. Repeated responses are sorted and deduplicated deterministically.
+record. Provider array indexes are retained as diagnostic `source_order`, but
+are deliberately excluded from identity and change equality: reordering the
+positions array or players within a position is therefore unchanged. Repeated
+responses are sorted and deduplicated deterministically by stable identifiers.
+
+Live validation found the endpoint available both before and during matches,
+with status transitioning from `UNCONFIRMED_TEAMS` to `LIVE`. Selections may
+change shortly before first bounce. A pre-bounce and live capture differed only
+in the roster timestamp, and the live roster then appeared stable. This is
+evidence that publication is effectively frozen near first bounce, but remains
+a provider observation rather than a persistence rule enforced by the collector.
 
 ## Still unresolved
 
@@ -89,9 +99,9 @@ Further live investigation should establish:
 
 * the complete semantics and possible variants of `positions`;
 * how emergencies are represented across competitions and publication stages;
-* exact lineup publication timing;
-* late-change timing and whether records are replaced or accumulated;
+* whether publication can change after first bounce in exceptional cases;
+* late-change timing and whether records are replaced or accumulated before bounce;
 * whether `teamPlayers` is identity, squad, or supplemental lineup data and its
   precise relationship to `positions`;
 * whether an empty list has different semantics from `null`;
-* whether live/in-progress responses differ from concluded responses.
+* whether concluded responses can differ from the frozen live roster.
