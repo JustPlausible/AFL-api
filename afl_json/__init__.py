@@ -41,6 +41,16 @@ from .rosters import (
     RosterStatus,
     compare_rosters,
 )
+from .player_stats import (
+    CANONICAL_STAT_FIELDS,
+    CanonicalPlayerStat,
+    MatchPlayerStatsCollector,
+    PlayerStatDiagnostic,
+    PlayerStatsCollectionResult,
+    PlayerStatsStatus,
+    normalise_player_stats,
+    upsert_player_stats,
+)
 
 __all__ = [
     "CFS_ERROR_AUTH",
@@ -76,4 +86,12 @@ __all__ = [
     "RosterCollectionResult",
     "RosterStatus",
     "compare_rosters",
+    "CANONICAL_STAT_FIELDS",
+    "CanonicalPlayerStat",
+    "MatchPlayerStatsCollector",
+    "PlayerStatDiagnostic",
+    "PlayerStatsCollectionResult",
+    "PlayerStatsStatus",
+    "normalise_player_stats",
+    "upsert_player_stats",
 ]

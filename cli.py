@@ -12,7 +12,20 @@ from merge.helpers import resolve_players_for_club
 from utils.club_lookup import load_clubs, get_club
 from db.import_to_db import import_players, save_lineups_to_db, save_clubs_to_db
 from db.connection import get_db_connection
-from afl_json import AflJsonClient, MatchRosterCollector, PublicAflCollector
+from afl_json import (
+    AflJsonClient, MatchPlayerStatsCollector, MatchRosterCollector, PublicAflCollector,
+)
+
+
+def _json_default(value):
+    """Keep precise validated decimals printable by diagnostic commands."""
+    from dataclasses import asdict, is_dataclass
+    from decimal import Decimal
+    if isinstance(value, Decimal):
+        return str(value)
+    if is_dataclass(value):
+        return asdict(value)
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
 def import_clubs_to_db():
     """Load clubs from JSON and import using shared connection."""
@@ -113,6 +126,8 @@ def handle_args():
                                 help="Store original per-endpoint/page API JSON below this directory")
     metadata_group.add_argument("--collect-match-rosters", metavar="ROUND_PROVIDER_ID",
                                 help="Collect CFS team selections for a Champion Data round ID")
+    metadata_group.add_argument("--collect-match-player-stats", metavar="MATCH_PROVIDER_ID",
+                                help="Collect canonical CFS player statistics for a Champion Data match ID")
 
     # 🔹 Backup and restore
     db_group = parser.add_argument_group("Data Backup / Restore")
@@ -176,6 +191,29 @@ def main():
         # commands, including --help and public metadata collection.
         from scraper import scrape_afl_player_stats
         scrape_afl_player_stats.run_scraper(match_id=args.scrape_match, once=True)
+
+    elif args.collect_match_player_stats:
+        with AflJsonClient() as client:
+            result = MatchPlayerStatsCollector(
+                client, raw_directory=args.afl_raw_directory
+            ).collect(args.collect_match_player_stats)
+        output = {
+            "match_provider_id": result.match_provider_id,
+            "status": result.status.value,
+            "source_status": result.source_status,
+            "collected_at": result.collected_at,
+            "source_endpoint": result.source_endpoint,
+            "rejected_records": result.rejected_records,
+            "diagnostics": result.diagnostics,
+            "records": result.records,
+        }
+        if args.print_json:
+            print(json.dumps(output, indent=2, default=_json_default))
+        else:
+            print(json.dumps({"match_provider_id": result.match_provider_id,
+                              "status": result.status.value,
+                              "records": len(result.records),
+                              "diagnostics": len(result.diagnostics)}))
 
     elif args.collect_match_rosters:
         with AflJsonClient() as client:
