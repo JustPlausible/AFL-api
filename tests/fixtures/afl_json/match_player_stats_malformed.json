@@ -1,0 +1,13 @@
+{
+  "matchStatus": "LIVE",
+  "homeTeamPlayerStats": [
+    {"player": {"teamId": "CD_T1", "player": {"player": {"player": {"playerId": "CD_BAD"}}}}, "playerStats": {"stats": {"goals": "many", "behinds": true, "futureStat": "retained"}}},
+    {"player": {"teamId": "CD_T1"}, "playerStats": {"stats": {"goals": 1}}},
+    {"player": {"player": {"playerId": "CD_DUP"}}, "playerStats": {"stats": {"goals": 1}}},
+    {"player": {"player": {"playerId": "CD_DUP"}}, "playerStats": {"stats": {"goals": 2}}},
+    "not-an-object"
+  ],
+  "awayTeamPlayerStats": [
+    {"player": {"player": {"playerId": "CD_BAD"}}, "playerStats": {"stats": {"goals": 3}}}
+  ]
+}
