@@ -3,21 +3,22 @@ import sqlite3
 from pathlib import Path
 import json
 from utils.log import log
-import config
+from db.connection import get_db_path
 import re
 
 CLUBS_JSON = Path("data/clubs.json")
-DB_PATH = Path(config.DB_PATH)
-
 def load_clubs():
     """Load all club data from the database, fallback to JSON."""
-    if DB_PATH.exists():
+    db_path = get_db_path()
+    if db_path.exists():
         try:
-            conn = sqlite3.connect(DB_PATH)
-            cur = conn.cursor()
-            cur.execute("SELECT code, name, slug, website, squad_url, aliases FROM clubs ORDER BY code")
-            rows = cur.fetchall()
-            conn.close()
+            # This lookup deliberately uses a direct connection because a missing or
+            # unreadable database falls back to JSON. Resolve the central path at call
+            # time for test overrides, and preserve the existing tuple-row behaviour.
+            with sqlite3.connect(db_path) as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT code, name, slug, website, squad_url, aliases FROM clubs ORDER BY code")
+                rows = cur.fetchall()
 
             clubs = []
             for row in rows:
@@ -98,4 +99,3 @@ def resolve_club_code(name: str) -> str:
 
     log(f"⚠️ Unmatched team name: '{name}'", "WARN")
     return name
-

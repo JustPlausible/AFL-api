@@ -19,6 +19,22 @@ python -m db.init_db
 
 Both commands honour the configured `DB_PATH`, create a fresh database, upgrade a supported existing database, and exit non-zero on migration failure.
 
+## Database paths in collection code
+
+`DB_PATH` is the supported SQLite location for the API, CLI, scheduler, and active
+scrapers. Its default is `data/afl_players.db`, resolved relative to the repository
+root; deployments may set an absolute path (for example through `.env`). Active
+collection code must resolve this setting at runtime and normally open the database
+with `db.connection.get_db_connection()`, which also preserves named `sqlite3.Row`
+access and the existing missing-database check.
+
+Tests should monkeypatch `config.DB_PATH` to a database below `tmp_path` and initialise
+that database before invoking collection code. Hard-coded repository-relative SQLite
+paths are not permitted in active scraper or scraper-adjacent code. A direct
+`sqlite3.connect()` is appropriate only when the shared helper's missing-file or row
+factory behaviour is unsuitable; it must still use `db.connection.get_db_path()` at
+call time and preserve the required cleanup and transaction behaviour.
+
 ## v0.3.0 baseline strategy
 
 For a database with no `schema_migrations` table, the runner distinguishes:
