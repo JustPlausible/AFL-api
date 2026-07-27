@@ -16,4 +16,4 @@ This directory contains active project documentation for operating, developing, 
 
 ## Reviews and planning
 
-- [AFL-api v0.4.0 architectural review](architectural_review_v0_4_0.md)
+- [Architectural reviews](architecture/README.md)
