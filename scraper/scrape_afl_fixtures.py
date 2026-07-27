@@ -1,13 +1,12 @@
 # scraper/scrape_afl_fixtures.py
 
 from bs4 import BeautifulSoup
-import sqlite3
 from utils.http_utils import load_page_with_playwright
 from utils.log import log
 from utils.afl_urls import get_fixture_url
 from db.import_to_db import save_rounds_to_db
 from db.scrape_runs import audited_scrape_run
-import config
+from db.connection import get_db_connection
 from scraper.afl_selectors import FIXTURE_SELECTORS
 
 
@@ -73,12 +72,14 @@ def _update_fixture_cache(audit=None):
     rounds = parse_round_list(html)
 
     if rounds and metadata:
-        conn = sqlite3.connect("data/afl_players.db")
-        save_rounds_to_db(rounds, metadata, conn)
-        if audit is not None:
-            audit["rows_read"] = len(rounds)
-            audit["rows_written"] = len(rounds)
-        conn.close()
+        conn = get_db_connection()
+        try:
+            save_rounds_to_db(rounds, metadata, conn)
+            if audit is not None:
+                audit["rows_read"] = len(rounds)
+                audit["rows_written"] = len(rounds)
+        finally:
+            conn.close()
     else:
         log("Skipping DB save due to missing data.", "WARN")
 

@@ -1,10 +1,10 @@
 import json
 import re
-import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from db.import_to_db import save_injuries_to_db
 from db.scrape_runs import audited_scrape_run
+from db.connection import get_db_connection
 
 from bs4 import BeautifulSoup, Comment
 from playwright.sync_api import sync_playwright
@@ -167,8 +167,9 @@ def _scrape_injury_list(db_conn) -> dict:
     }
 
 if __name__ == "__main__":
-    db_conn = sqlite3.connect("data/afl_players.db")
-    db_conn.row_factory = sqlite3.Row
-    result = scrape_injury_list(db_conn)
-    db_conn.close()
+    db_conn = get_db_connection()
+    try:
+        result = scrape_injury_list(db_conn)
+    finally:
+        db_conn.close()
     print(json.dumps(result, indent=2))

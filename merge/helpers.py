@@ -6,6 +6,7 @@ from utils.log import log
 #from enrich.afl_com import resolve_player
 from utils.club_lookup import get_club_by_slug
 import sqlite3
+from db.connection import get_db_connection
 from difflib import get_close_matches
 from utils.stats_cache import ensure_leaderboard_fresh
 from utils.dictionary import KNOWN_NICKNAMES
@@ -100,15 +101,14 @@ def clean_name(name: str) -> str:
         parts = parts[:-1]
     return " ".join(parts)
 
-def match_injury_player_to_db(name: str, club_slug: str, conn: sqlite3.Connection | None = None, db_path="data/afl_players.db") -> int | None:
+def match_injury_player_to_db(name: str, club_slug: str, conn: sqlite3.Connection | None = None) -> int | None:
     """
     Attempts to match an injury player's name to the database and return their AFL ID.
     Accepts an optional open DB connection for performance.
     """
     close_conn = False
     if conn is None:
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
+        conn = get_db_connection()
         close_conn = True
 
     cur = conn.cursor()

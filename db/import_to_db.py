@@ -8,7 +8,6 @@ from utils.club_lookup import load_clubs
 from db.connection import get_db_connection
 import config
 
-#DB_FILE = Path("data/afl_players.db")
 DATA_DIR = Path("data")
 
 def resolve_club_code_from_name(club_name: str) -> str | None:

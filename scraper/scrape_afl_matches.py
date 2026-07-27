@@ -9,9 +9,9 @@ from utils.afl_urls import get_fixture_url_for_round
 from utils.club_lookup import resolve_club_code
 from db.import_to_db import save_matches_to_db
 from db.scrape_runs import audited_scrape_run
+from db.connection import get_db_connection
 from utils.match_time import parse_match_time
 from scraper.afl_selectors import MATCH_CARD_SELECTORS
-import config
 
 log = setup_logger("match_scraper", "scrape_afl_matches.log")
 def load_existing_matches(conn: sqlite3.Connection) -> dict[int, dict]:
@@ -171,21 +171,22 @@ def run(round_id: int | None = None, trigger_source: str | None = None, correlat
         return _run(round_id, audit)
 
 def _run(round_id: int | None = None, audit=None):
-    conn = sqlite3.connect("data/afl_players.db")
+    conn = get_db_connection()
+    try:
+        if round_id:
+            scrape_round(round_id, conn)
+        else:
+            log.info("🔁 No round ID provided, scraping all rounds from DB...")
+            cursor = conn.cursor()
+            cursor.execute("SELECT round_id FROM rounds ORDER BY round_id ASC")
+            for (rid,) in cursor.fetchall():
+                scrape_round(rid, conn)
 
-    if round_id:
-        scrape_round(round_id, conn)
-    else:
-        log.info("🔁 No round ID provided, scraping all rounds from DB...")
-        cursor = conn.cursor()
-        cursor.execute("SELECT round_id FROM rounds ORDER BY round_id ASC")
-        for (rid,) in cursor.fetchall():
-            scrape_round(rid, conn)
-
-    if audit is not None:
-        audit["rows_read"] = None
-        audit["rows_written"] = None
-    conn.close()
+        if audit is not None:
+            audit["rows_read"] = None
+            audit["rows_written"] = None
+    finally:
+        conn.close()
 
 
 if __name__ == "__main__":
