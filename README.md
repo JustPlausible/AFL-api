@@ -292,6 +292,7 @@ MIT
 - [SQLite database migrations](docs/database_migrations.md)
 - [Scheduler registry and restart recovery](docs/scheduler_registry.md)
 - [Scrape run audit records](docs/scrape_run_audit.md)
+- [AFL scraper source inventory and page contracts](docs/scraper_source_inventory.md)
 
 ## Scraper HTTP network policy
 
