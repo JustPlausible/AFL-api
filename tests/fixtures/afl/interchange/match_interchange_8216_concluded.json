@@ -1,0 +1,193 @@
+{
+  "matchId": "CD_M20260142001",
+  "homeInterchange": [
+    {
+      "teamId": "CD_T10",
+      "player": {
+        "playerId": "CD_I1031792",
+        "playerName": {
+          "givenName": "Finnbar",
+          "surname": "Maley"
+        },
+        "captain": false,
+        "playerJumperNumber": 36
+      },
+      "interchangeCount": 8,
+      "benchReason": "ROTATION",
+      "timeOnGround": 4697,
+      "timeOnBench": 568,
+      "powerRating": 5
+    },
+    {
+      "teamId": "CD_T10",
+      "player": {
+        "playerId": "CD_I990882",
+        "playerName": {
+          "givenName": "Wayne",
+          "surname": "Milera"
+        },
+        "captain": false,
+        "playerJumperNumber": 30
+      },
+      "interchangeCount": 9,
+      "benchReason": "ROTATION",
+      "timeOnGround": 6183,
+      "timeOnBench": 89,
+      "powerRating": 4
+    },
+    {
+      "teamId": "CD_T10",
+      "player": {
+        "playerId": "CD_I296420",
+        "playerName": {
+          "givenName": "Alex",
+          "surname": "Neal-Bullen"
+        },
+        "captain": false,
+        "playerJumperNumber": 28
+      },
+      "interchangeCount": 7,
+      "benchReason": "ROTATION",
+      "timeOnGround": 5803,
+      "timeOnBench": 543,
+      "powerRating": 5
+    },
+    {
+      "teamId": "CD_T10",
+      "player": {
+        "playerId": "CD_I1006013",
+        "playerName": {
+          "givenName": "James",
+          "surname": "Peatling"
+        },
+        "captain": false,
+        "playerJumperNumber": 25
+      },
+      "interchangeCount": 10,
+      "benchReason": "ROTATION",
+      "timeOnGround": 3955,
+      "timeOnBench": 1088,
+      "powerRating": 5
+    },
+    {
+      "teamId": "CD_T10",
+      "player": {
+        "playerId": "CD_I1017109",
+        "playerName": {
+          "givenName": "Jake",
+          "surname": "Soligo"
+        },
+        "captain": false,
+        "playerJumperNumber": 14
+      },
+      "interchangeCount": 9,
+      "benchReason": "ROTATION",
+      "timeOnGround": 6082,
+      "timeOnBench": 306,
+      "powerRating": 5
+    }
+  ],
+  "awayInterchange": [
+    {
+      "teamId": "CD_T40",
+      "player": {
+        "playerId": "CD_I1015332",
+        "playerName": {
+          "givenName": "Harvey",
+          "surname": "Harrison"
+        },
+        "captain": false,
+        "playerJumperNumber": 36
+      },
+      "interchangeCount": 7,
+      "benchReason": "ROTATION",
+      "timeOnGround": 5319,
+      "timeOnBench": 542,
+      "powerRating": 5
+    },
+    {
+      "teamId": "CD_T40",
+      "player": {
+        "playerId": "CD_I1017124",
+        "playerName": {
+          "givenName": "Ned",
+          "surname": "Long"
+        },
+        "captain": false,
+        "playerJumperNumber": 44
+      },
+      "interchangeCount": 9,
+      "benchReason": "ROTATION",
+      "timeOnGround": 5339,
+      "timeOnBench": 468,
+      "powerRating": 5
+    },
+    {
+      "teamId": "CD_T40",
+      "player": {
+        "playerId": "CD_I992010",
+        "playerName": {
+          "givenName": "Brayden",
+          "surname": "Maynard"
+        },
+        "captain": false,
+        "playerJumperNumber": 4
+      },
+      "interchangeCount": 9,
+      "benchReason": "ROTATION",
+      "timeOnGround": 5015,
+      "timeOnBench": 1098,
+      "powerRating": 5
+    },
+    {
+      "teamId": "CD_T40",
+      "player": {
+        "playerId": "CD_I297504",
+        "playerName": {
+          "givenName": "Daniel",
+          "surname": "McStay"
+        },
+        "captain": false,
+        "playerJumperNumber": 11
+      },
+      "interchangeCount": 9,
+      "benchReason": "ROTATION",
+      "timeOnGround": 6268,
+      "timeOnBench": 418,
+      "powerRating": 5
+    },
+    {
+      "teamId": "CD_T40",
+      "player": {
+        "playerId": "CD_I1017745",
+        "playerName": {
+          "givenName": "Liam",
+          "surname": "Puncher"
+        },
+        "captain": false,
+        "playerJumperNumber": 47
+      },
+      "interchangeCount": 9,
+      "benchReason": "ROTATION",
+      "timeOnGround": 5532,
+      "timeOnBench": 542,
+      "powerRating": 5
+    }
+  ],
+  "homeInterchangeCounts": {
+    "totalInterchangeCount": 75.0,
+    "interchangeCap": 75.0,
+    "interchangeCountQ1": 20.0,
+    "interchangeCountQ2": 17.0,
+    "interchangeCountQ3": 19.0,
+    "interchangeCountQ4": 19.0
+  },
+  "awayInterchangeCounts": {
+    "totalInterchangeCount": 73.0,
+    "interchangeCap": 75.0,
+    "interchangeCountQ1": 18.0,
+    "interchangeCountQ2": 19.0,
+    "interchangeCountQ3": 17.0,
+    "interchangeCountQ4": 19.0
+  }
+}

@@ -1,0 +1,89 @@
+{
+  "domain": "match_commentary",
+  "fixture_set": "match_8216_concluded",
+  "season": 2026,
+  "round_number": 20,
+  "match": {
+    "afl_match_id": 8216,
+    "match_provider_id": "CD_M20260142001",
+    "competition_season_provider_id": "CD_S2026014",
+    "status": "CONCLUDED",
+    "home_team": {"name": "Adelaide Crows", "provider_id": "CD_T10"},
+    "away_team": {"name": "Collingwood", "provider_id": "CD_T40"}
+  },
+  "capture": {
+    "capture_date": "2026-07-29",
+    "time_zone": "Australia/Perth",
+    "same_browser_session": true,
+    "source_page_url": "https://www.afl.com.au/afl/matches/8216#timeline",
+    "match_status_at_capture": "CONCLUDED"
+  },
+  "sources": [
+    {
+      "filename": "match_8216_commentary_concluded.json",
+      "source_type": "authenticated_cfs_json",
+      "request": {
+        "method": "GET",
+        "url": "https://api.afl.com.au/cfs/commentaryFeed/CD_M20260142001",
+        "endpoint_template": "/cfs/commentaryFeed/{matchProviderId}",
+        "authentication": {
+          "required": true,
+          "header": "x-media-mis-token",
+          "token_source": "/cfs/afl/WMCTok"
+        }
+      },
+      "response": {"http_status": 200, "content_type": "application/json"},
+      "capture_method": "token_script",
+      "raw_response_preserved": true
+    },
+    {
+      "filename": "match_8216_match_feed_concluded_rendered.html",
+      "source_type": "rendered_html_fragment",
+      "widget": {
+        "name": "Match Feed",
+        "data_widget": "mc-interactive-match-feed",
+        "data_script": "aflm_mc-interactive-match-feed",
+        "data_mid": "8216",
+        "data_pid": "CD_M20260142001",
+        "data_match_status": "CONCLUDED",
+        "data_comp_pid": "CD_S2026014"
+      },
+      "capture_method": "Chrome DevTools Copy outerHTML",
+      "capture_scope": "entire Match Feed widget as presented in DevTools Elements, including the score worm/timeline",
+      "full_document": false,
+      "rendered_dom": true
+    }
+  ],
+  "json_schema_observations": {
+    "top_level_fields": ["matchId", "lastUpdated", "commentaryEvent"],
+    "event_fields": ["comment", "periodNumber", "periodSeconds", "playerId", "teamId", "scoreEvent"],
+    "source_last_updated": "2026-07-23T12:25:15.324+0000",
+    "period_zero_contains_prematch_events": true,
+    "events_are_reverse_chronological": true,
+    "player_ids_are_champion_data_ids": true,
+    "team_ids_are_champion_data_ids": true,
+    "player_id_may_be_null": true,
+    "team_id_may_be_null": true
+  },
+  "html_enrichment_observations": {
+    "includes_formatted_event_time": true,
+    "includes_quarter_markers": true,
+    "includes_player_names": true,
+    "includes_afl_player_profile_urls": true,
+    "includes_champion_data_player_ids": true,
+    "includes_player_headshots": true,
+    "includes_team_badges": true,
+    "includes_cumulative_player_score_totals": true,
+    "includes_match_timeline_score_worm": true,
+    "score_worm_source_not_independently_confirmed": true
+  },
+  "notes": [
+    "The JSON is the preferred canonical source for commentary event data.",
+    "The rendered HTML is retained for regression testing and comparison with display enrichment.",
+    "The captured widget includes the score worm/timeline in addition to commentary events.",
+    "The score worm may be derived from the same broader match data source, but no separate source mapping has been confirmed.",
+    "Commentary text includes scoring events, statistical observations, quarter markers, interchange or injury notes and pre-match team changes.",
+    "Some narrative commentary mentions players without populating playerId.",
+    "The event ordering should be preserved or explicitly normalised during ingestion."
+  ]
+}
