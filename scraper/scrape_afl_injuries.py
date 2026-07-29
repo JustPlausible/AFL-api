@@ -77,6 +77,59 @@ def scrape_injury_list(db_conn, trigger_source: str | None = None, correlation_i
         audit["rows_read"] = sum(team.get("player_count", 0) for team in result.get("teams", []))
         return result
 
+def parse_injuries_html(html: str, db_conn=None, *, club_resolver=extract_and_match_club) -> list[dict]:
+    """Parse rendered injury-list HTML without acquiring a browser page."""
+    soup = BeautifulSoup(html, "html.parser")
+    if not soup.select_one(INJURY_SELECTORS.ARTICLE_BODY):
+        raise ValueError(
+            f"Injury source contract missing article body '{INJURY_SELECTORS.ARTICLE_BODY}'"
+        )
+    team_blocks = soup.select(INJURY_SELECTORS.TEAM_BLOCKS)
+    if not team_blocks:
+        raise ValueError(
+            f"Injury source contract contains no team blocks '{INJURY_SELECTORS.TEAM_BLOCKS}'"
+        )
+
+    results = []
+    for index, block in enumerate(team_blocks):
+        comment = block.find(string=lambda text: isinstance(text, Comment))
+        image_soup = BeautifulSoup(comment, "html.parser") if comment else None
+        img = image_soup.find("img", class_=INJURY_SELECTORS.PROMO_IMAGE_CLASS) if image_soup else None
+        if not img or not img.get("src"):
+            raise ValueError(f"Injury team block {index} is missing its commented promo image")
+        club = club_resolver(img["src"], img.get("alt", "").strip())
+        if not club:
+            raise ValueError(f"Injury team block {index} has an unrecognised club image")
+
+        table_wrapper = block.find_next_sibling()
+        if table_wrapper and "table" not in table_wrapper.get("class", []):
+            table_wrapper = None
+        table = table_wrapper.find("table") if table_wrapper else None
+        if table is None:
+            raise ValueError(f"Injury team block {index} ({club['code']}) is missing its table")
+
+        players, updated_text = [], ""
+        for row_index, row in enumerate(table.find_all("tr")[1:], start=1):
+            cols = row.find_all("td")
+            if len(cols) >= 3:
+                name = cols[0].get_text(" ", strip=True)
+                players.append({
+                    "name": name,
+                    "injury": cols[1].get_text(" ", strip=True),
+                    "return": cols[2].get_text(" ", strip=True),
+                    "afl_id": match_injury_player_to_db(name, club["code"], conn=db_conn),
+                })
+            elif len(cols) == 1 and "updated:" in cols[0].get_text().lower():
+                match = re.search(r"updated:\s*(.+)", cols[0].get_text(" ", strip=True), re.I)
+                updated_text = match.group(1).strip() if match else ""
+            elif cols:
+                raise ValueError(
+                    f"Injury table for {club['code']} has unexpected row {row_index} with {len(cols)} cells"
+                )
+        results.append({"club": club["code"], "updated": updated_text,
+                        "player_count": len(players), "players": players})
+    return results
+
 def _scrape_injury_list(db_conn) -> dict:
     url = "https://www.afl.com.au/matches/injury-list"
     log.info(f"🌐 Fetching injury list from: {url}")
@@ -87,76 +140,7 @@ def _scrape_injury_list(db_conn) -> dict:
         page.goto(url, timeout=60000)
         page.wait_for_selector(INJURY_SELECTORS.ARTICLE_BODY, timeout=15000)
         html = page.content()
-        soup = BeautifulSoup(html, "html.parser")
-        team_blocks = soup.select(INJURY_SELECTORS.TEAM_BLOCKS)
-
-        log.debug("✅ Page rendered")
-        log.debug(f"🔍 Found {len(team_blocks)} team blocks")
-
-        results = []
-        for i, block in enumerate(team_blocks):
-            club = None
-
-            comment = block.find(string=lambda text: isinstance(text, Comment))
-            if comment:
-                image_soup = BeautifulSoup(comment, "html.parser")
-                img = image_soup.find("img", class_=INJURY_SELECTORS.PROMO_IMAGE_CLASS)
-                if img and img.get("src"):
-                    alt_text = img.get("alt", "").strip()
-                    club = extract_and_match_club(img["src"], alt_text)
-
-            club_slug = club["slug"] if club else None
-            club_code = club["code"] if club else "???"
-
-            log.debug(f"🧩 [{i}] Club: {club_code} ({club_slug})")
-            if not club_slug:
-                log.warning(f"[!] No club slug for block {i}")
-                continue
-
-            # Table sits in next sibling div
-            table_wrapper = block.find_next_sibling("div", class_="table")
-            if not table_wrapper:
-                log.warning(f"[!] No table wrapper for {club_code}")
-                continue
-
-            table = table_wrapper.find("table")
-            if not table:
-                log.warning(f"[!] No table found for {club_code}")
-                continue
-
-            rows = table.find_all("tr")[1:]  # Skip header
-            players = []
-            for row in rows:
-                cols = row.find_all("td")
-                if len(cols) >= 3:
-                    name = cols[0].text.strip()
-                    afl_id = match_injury_player_to_db(name, club_code, conn=db_conn)
-                    if afl_id:
-                        log.debug(f"✅ Matched player '{name}' to AFL ID {afl_id}")
-                    else:
-                        log.warning(f"❌ No match for player '{name}' ({club_code})")
-                    players.append({
-                        "name": name,
-                        "injury": cols[1].text.strip(),
-                        "return": cols[2].text.strip(),
-                        "afl_id": afl_id
-                    })
-                elif len(cols) == 1 and "updated:" in cols[0].text.lower():
-                    # Extract the update date text
-                    updated_text = None
-                    match = re.search(r"updated:\s*(.+)", cols[0].text.strip(), re.IGNORECASE)
-                    if match:
-                        updated_text = match.group(1).strip()
-                        log.debug(f"🗓️  Injury list updated: {updated_text} ({club_code})")
-
-            log.info(f"📦 {club_code}: {len(players)} players")
-
-            results.append({
-                "club": club_code,
-                "updated": updated_text or "",
-                "player_count": len(players),
-                "players": players
-            })
+        results = parse_injuries_html(html, db_conn)
 
         browser.close()
 

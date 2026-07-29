@@ -7,8 +7,8 @@ import argparse
 import sqlite3
 import os
 import sys
-import socket
 import json
+from pathlib import Path
 from datetime import datetime, timezone
 from bs4 import BeautifulSoup
 from utils.log import setup_logger
@@ -29,8 +29,8 @@ log.debug(f"  PYTHONPATH: {os.environ.get('PYTHONPATH')}")
 log.debug(f"  Executable: {sys.executable}")
 log.debug(f"  Args: {sys.argv}")
 
-with open("data/clubs.json", "r", encoding="utf-8") as f:
-    clubs = json.load(f)
+clubs_path = Path("data/clubs.json")
+clubs = json.loads(clubs_path.read_text(encoding="utf-8")) if clubs_path.exists() else []
 
 # Build alias → code lookup map
 alias_map = {}
@@ -41,12 +41,6 @@ for club in clubs:
     # Include each alias
     for alias in club.get("aliases", []):
         alias_map[alias.upper()] = club["code"]
-
-try:
-    resolved = socket.gethostbyname("www.afl.com.au")
-    log.info(f"🔗 DNS resolved: www.afl.com.au → {resolved}")
-except socket.gaierror as e:
-    log.error(f"⛔ DNS resolution failed: {e}")
 
 def retry_load_page(url: str, retries: int = 3, delay: int = 8) -> str | None:
     for attempt in range(retries):
@@ -78,13 +72,17 @@ def parse_live_stats(html: str, match_id: int, round_id: int | None, status: str
     stats_table = soup.select_one(PLAYER_STATS_SELECTORS.STATS_TABLE)
 
     if not stats_table:
-        log.error(f"[match {match_id}] ❌ Could not find player stats table.")
-        return []
+        raise ValueError(
+            f"Player-stat source contract missing table '{PLAYER_STATS_SELECTORS.STATS_TABLE}' "
+            f"for match {match_id}"
+        )
 
     headers = [
         th.text.strip().replace("%", "").replace("ToG", "ToG%")  # Normalise for field_map
         for th in stats_table.select(PLAYER_STATS_SELECTORS.HEADER_CELLS)
     ]
+    if not headers:
+        raise ValueError(f"Player-stat source contract has no headers for match {match_id}")
     log.debug(f"[match {match_id}] 📋 Detected headers: {headers}")
 
     # Map AFL stat labels to our database field names
