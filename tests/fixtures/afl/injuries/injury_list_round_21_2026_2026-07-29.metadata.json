@@ -1,0 +1,42 @@
+{
+  "domain": "injuries",
+  "source_type": "rendered_html_fragment",
+  "source_page": "https://www.afl.com.au/matches/injury-list",
+  "capture_date": "2026-07-29",
+  "capture_time_zone": "Australia/Perth",
+  "season": 2026,
+  "round_context": {
+    "round_number": 21,
+    "afl_round_id": 1364,
+    "timing": "prior_to_round"
+  },
+  "content_scope": {
+    "selector": "div.article__body.article-body",
+    "capture_method": "Chrome DevTools Copy outerHTML",
+    "full_document": false,
+    "rendered_dom": true
+  },
+  "source_observations": {
+    "linked_cfs_json_found": false,
+    "content_appears_editorial": true,
+    "player_ids_present": false,
+    "team_ids_present": false,
+    "structured_team_attributes_present": false
+  },
+  "fixture_expectations": {
+    "club_count": 18,
+    "table_columns": [
+      "PLAYER",
+      "INJURY",
+      "ESTIMATED RETURN"
+    ],
+    "includes_team_update_dates": true,
+    "includes_in_the_mix_editorial": true
+  },
+  "notes": [
+    "Most club sections show an update date of July 28, 2026.",
+    "The fixture was captured on July 29, 2026 before Round 21.",
+    "Team identity is inferred from the ordered club image separators and surrounding content.",
+    "Player names are plain text and are not linked to AFL or Champion Data player records."
+  ]
+}

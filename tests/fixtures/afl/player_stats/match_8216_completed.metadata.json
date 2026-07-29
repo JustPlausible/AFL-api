@@ -1,0 +1,17 @@
+{
+  "fixture": "match_8216_completed_rendered.html",
+  "domain": "match_player_statistics",
+  "capture_date": "2026-07-28",
+  "page_state": "completed",
+  "source_type": "rendered_html",
+  "afl_match_id": 8216,
+  "match_provider_id": "CD_M20260142001",
+  "competition_season_provider_id": "CD_S2026014",
+  "home_team_provider_id": "CD_T10",
+  "away_team_provider_id": "CD_T40",
+  "source_url": "https://www.afl.com.au/afl/matches/8216#player-stats",
+  "underlying_source": "/cfs/afl/playerStats/match/CD_M20260142001",
+  "authentication_material_included": false,
+  "sanitisation": "Scripts and unrelated page content omitted",
+  "expected_player_rows": 46
+}

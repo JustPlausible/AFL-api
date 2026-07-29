@@ -1,0 +1,886 @@
+{
+  "matchId": "CD_M20260142001",
+  "lastUpdated": "2026-07-23T12:25:15.324+0000",
+  "commentaryEvent": [
+    {
+      "comment": "Adelaide were unable to create out of their defensive 50 tonight, achieving an inside 50 just three times from 34 defensive 50 chains and were unable to score from the zone. The last time they were scoreless from the zone was Round 18, 2024.",
+      "periodNumber": 4,
+      "periodSeconds": 1950,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "Collingwood's forward half pressure was fantastic in the second half, having a forward half pressure rating of 186 and forcing 16 forward half turnovers, scoring 5.2 (32) from them. In comparison, the Crows scored just 1.1 (7) from the source in the second half.",
+      "periodNumber": 4,
+      "periodSeconds": 1950,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "The siren has sounded to end Q4.",
+      "periodNumber": 4,
+      "periodSeconds": 1950,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "GOAL - Crows (Toby Murray)",
+      "periodNumber": 4,
+      "periodSeconds": 1943,
+      "playerId": "CD_I1020950",
+      "teamId": "CD_T10",
+      "scoreEvent": true
+    },
+    {
+      "comment": "GOAL - Magpies (Tim Membrey)",
+      "periodNumber": 4,
+      "periodSeconds": 1836,
+      "playerId": "CD_I294596",
+      "teamId": "CD_T40",
+      "scoreEvent": true
+    },
+    {
+      "comment": "BEHIND - Magpies (Jack Crisp)",
+      "periodNumber": 4,
+      "periodSeconds": 1820,
+      "playerId": "CD_I293871",
+      "teamId": "CD_T40",
+      "scoreEvent": true
+    },
+    {
+      "comment": "Nick Daicos has been exceptional in the contest tonight, having seven clearances, eight first possessions and 18 contested possessions (his most in a game since 2024).",
+      "periodNumber": 4,
+      "periodSeconds": 1769,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "BEHIND - Crows (Izak Rankine)",
+      "periodNumber": 4,
+      "periodSeconds": 1661,
+      "playerId": "CD_I1001195",
+      "teamId": "CD_T10",
+      "scoreEvent": true
+    },
+    {
+      "comment": "After having 15 disposals and five score involvements in the first half, Jordan Dawson has been shut down since half-time, having six disposals and zero score involvements.",
+      "periodNumber": 4,
+      "periodSeconds": 1601,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "BEHIND - Magpies (Jordan De Goey)",
+      "periodNumber": 4,
+      "periodSeconds": 1601,
+      "playerId": "CD_I994185",
+      "teamId": "CD_T40",
+      "scoreEvent": true
+    },
+    {
+      "comment": "Collingwood has been excellent on turnover in the second half, outscoring the Crows 5.4 (34) - 2.1 (13) from the source. In the first half, the Magpies managed a total of just 2.1 (13) from the source.",
+      "periodNumber": 4,
+      "periodSeconds": 1376,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "GOAL - Magpies (Beau McCreery)",
+      "periodNumber": 4,
+      "periodSeconds": 1376,
+      "playerId": "CD_I1004757",
+      "teamId": "CD_T40",
+      "scoreEvent": true
+    },
+    {
+      "comment": "BEHIND - Magpies (Charlie West)",
+      "periodNumber": 4,
+      "periodSeconds": 1350,
+      "playerId": "CD_I1027382",
+      "teamId": "CD_T40",
+      "scoreEvent": true
+    },
+    {
+      "comment": "Adelaide continues to struggle out of their defensive half this term, achieving an inside 50 just once from 11 chains and scoring 0.1 (1) from the zone.",
+      "periodNumber": 4,
+      "periodSeconds": 1283,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "GOAL - Magpies (Edward Allan)",
+      "periodNumber": 4,
+      "periodSeconds": 1167,
+      "playerId": "CD_I1022915",
+      "teamId": "CD_T40",
+      "scoreEvent": true
+    },
+    {
+      "comment": "Collingwood's forward half pressure has been incredible this term, having a pressure rating of 234 in the zone and forcing seven forward half turnovers, scoring 2.0 (12) from them.",
+      "periodNumber": 4,
+      "periodSeconds": 992,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "GOAL - Magpies (Edward Allan)",
+      "periodNumber": 4,
+      "periodSeconds": 974,
+      "playerId": "CD_I1022915",
+      "teamId": "CD_T40",
+      "scoreEvent": true
+    },
+    {
+      "comment": "BEHIND - Magpies (Edward Allan)",
+      "periodNumber": 4,
+      "periodSeconds": 926,
+      "playerId": "CD_I1022915",
+      "teamId": "CD_T40",
+      "scoreEvent": true
+    },
+    {
+      "comment": "Riley Thilthorpe kicks the Crows' first of the final term to keep them in the hunt. Adelaide have been incredibly accurate from set shots tonight, kicking 8.0 (48).",
+      "periodNumber": 4,
+      "periodSeconds": 867,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "GOAL - Crows (Riley Thilthorpe)",
+      "periodNumber": 4,
+      "periodSeconds": 859,
+      "playerId": "CD_I1008384",
+      "teamId": "CD_T10",
+      "scoreEvent": true
+    },
+    {
+      "comment": "Magpies Interchange - Brayden Maynard and is possibly out for the game.",
+      "periodNumber": 4,
+      "periodSeconds": 852,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "Collingwood has been fantastic in the air this term, having five contested marks. They have had 16 contested marks tonight, their most in a game this season.",
+      "periodNumber": 4,
+      "periodSeconds": 756,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "GOAL - Magpies (Tim Membrey)",
+      "periodNumber": 4,
+      "periodSeconds": 756,
+      "playerId": "CD_I294596",
+      "teamId": "CD_T40",
+      "scoreEvent": true
+    },
+    {
+      "comment": "Nick Daicos kicks the first goal of the quarter to extend the Magpies' lead. He has had a fantastic night, amassing 32 disposals, six clearances, four inside 50s, a goal and seven score involvements. He has had 8-plus score involvements in each of his last six games, the longest active streak.",
+      "periodNumber": 4,
+      "periodSeconds": 513,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "GOAL - Magpies (Nick Daicos)",
+      "periodNumber": 4,
+      "periodSeconds": 513,
+      "playerId": "CD_I1023261",
+      "teamId": "CD_T40",
+      "scoreEvent": true
+    },
+    {
+      "comment": "After conceding the first three inside 50s of the quarter, Collingwood has wrestled back control, having four straight inside 50s, although they have been unable to score.",
+      "periodNumber": 4,
+      "periodSeconds": 441,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "Josh Worrell has been fantastic on intercept tonight, having a game-high 11 intercept possessions and six intercept marks, a career-high.",
+      "periodNumber": 4,
+      "periodSeconds": 345,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "BEHIND - Crows (Josh Rachele)",
+      "periodNumber": 4,
+      "periodSeconds": 64,
+      "playerId": "CD_I1017051",
+      "teamId": "CD_T10",
+      "scoreEvent": true
+    },
+    {
+      "comment": "Q4 is now underway.",
+      "periodNumber": 4,
+      "periodSeconds": 0,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "The Crows struggled going inside 50 in the third term, retaining possession from just 50% of their kicks inside 50 and scoring from 20% of their entries. In contrast, the Magpies scored from 61.5% of their inside 50s.",
+      "periodNumber": 3,
+      "periodSeconds": 2021,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "Collingwood struggled in the final 10-minutes of the third term, having just one clearance to the Crows' eight and conceding the final eight inside 50s of the quarter. Despite this, they were outscored by just six points in that time.",
+      "periodNumber": 3,
+      "periodSeconds": 2021,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "The siren has sounded to end Q3.",
+      "periodNumber": 3,
+      "periodSeconds": 2021,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "GOAL - Crows (Ben Keays)",
+      "periodNumber": 3,
+      "periodSeconds": 1865,
+      "playerId": "CD_I993946",
+      "teamId": "CD_T10",
+      "scoreEvent": true
+    },
+    {
+      "comment": "Adelaide has had a strong finish to the quarter, having the last six inside 50s and seven of the last eight clearances, although they haven't been able to hit the scoreboard.",
+      "periodNumber": 3,
+      "periodSeconds": 1769,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "After having 34 uncontested marks in the second quarter, the Crows have been unable to control the ball this term, having just 16 uncontested marks and just 34% time in possession.",
+      "periodNumber": 3,
+      "periodSeconds": 1596,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "Crows Interchange - James Peatling off due to an injury.",
+      "periodNumber": 3,
+      "periodSeconds": 1430,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "This quarter, the Magpies have been incredible out of their defensive midfield, achieving an inside 50 from 70% of chains and scoring 2.1 (13) from the zone. In the first half, the Magpies were unable to score from the zone.",
+      "periodNumber": 3,
+      "periodSeconds": 1306,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "GOAL - Magpies (Jordan De Goey)",
+      "periodNumber": 3,
+      "periodSeconds": 1306,
+      "playerId": "CD_I994185",
+      "teamId": "CD_T40",
+      "scoreEvent": true
+    },
+    {
+      "comment": "GOAL - Magpies (Angus Anderson)",
+      "periodNumber": 3,
+      "periodSeconds": 1069,
+      "playerId": "CD_I1023744",
+      "teamId": "CD_T40",
+      "scoreEvent": true
+    },
+    {
+      "comment": "Harvey Harrison gives Collingwood their first lead since the 19-minute mark of the first quarter, coming back from 27 points down. The Magpies have scored from 67% of their inside 50s this quarter, although they have kicked a goal from 22%.",
+      "periodNumber": 3,
+      "periodSeconds": 981,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "GOAL - Magpies (Harvey Harrison)",
+      "periodNumber": 3,
+      "periodSeconds": 979,
+      "playerId": "CD_I1015332",
+      "teamId": "CD_T40",
+      "scoreEvent": true
+    },
+    {
+      "comment": "The Crows have been unable to win the ball in their forward half, having just one chain in the zone and a total of just five disposals, whereas the Magpies have five forward half chains and 30 disposals.",
+      "periodNumber": 3,
+      "periodSeconds": 787,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "BEHIND - Magpies (Harvey Harrison)",
+      "periodNumber": 3,
+      "periodSeconds": 709,
+      "playerId": "CD_I1015332",
+      "teamId": "CD_T40",
+      "scoreEvent": true
+    },
+    {
+      "comment": "The ball has lived in the Magpies' forward half, having 73% time in the forward half this quarter and having seven of eight inside 50s. Despite this, they have outscored the Crows by just three points this quarter.",
+      "periodNumber": 3,
+      "periodSeconds": 581,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "GOAL - Magpies (Steele Sidebottom)",
+      "periodNumber": 3,
+      "periodSeconds": 581,
+      "playerId": "CD_I280965",
+      "teamId": "CD_T40",
+      "scoreEvent": true
+    },
+    {
+      "comment": "BEHIND - Magpies (Daniel McStay)",
+      "periodNumber": 3,
+      "periodSeconds": 470,
+      "playerId": "CD_I297504",
+      "teamId": "CD_T40",
+      "scoreEvent": true
+    },
+    {
+      "comment": "Adelaide have been unable to move the ball out of their defensive 50 this term, being unable to achieve an inside 50 from seven chains and turning the ball over five times.",
+      "periodNumber": 3,
+      "periodSeconds": 459,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "Josh Rachele kicks the first goal of the second half, against the run of play. Rachele is averaging 6.6 score involvements over the last eight rounds - ranked No. 1 for general forwards.",
+      "periodNumber": 3,
+      "periodSeconds": 310,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "GOAL - Crows (Josh Rachele)",
+      "periodNumber": 3,
+      "periodSeconds": 310,
+      "playerId": "CD_I1017051",
+      "teamId": "CD_T10",
+      "scoreEvent": true
+    },
+    {
+      "comment": "BEHIND - Magpies (Rushed)",
+      "periodNumber": 3,
+      "periodSeconds": 181,
+      "playerId": null,
+      "teamId": "CD_T40",
+      "scoreEvent": true
+    },
+    {
+      "comment": "Collingwood has continued to dominate this term, having the first five inside 50s of the quarter, although they have scored just 0.2 (2).",
+      "periodNumber": 3,
+      "periodSeconds": 172,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "BEHIND - Magpies (Patrick Lipinski)",
+      "periodNumber": 3,
+      "periodSeconds": 99,
+      "playerId": "CD_I1003130",
+      "teamId": "CD_T40",
+      "scoreEvent": true
+    },
+    {
+      "comment": "Q3 is now underway.",
+      "periodNumber": 3,
+      "periodSeconds": 0,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "The Magpies struggled to score on turnover in the first half, scoring a total of just 2.1 (13) from the source, their second-lowest total in a half this season. Since Round 15, the Magpies have averaged 58.8 points from the source, ranked 2nd.",
+      "periodNumber": 2,
+      "periodSeconds": 1846,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "After having just three inside 50s through the first 20 minutes of the quarter, the Magpies were dominant in the final 10, finishing the quarter with eight straight inside 50s and outscoring the Crows 3.1 (19) - 0.0 (0).",
+      "periodNumber": 2,
+      "periodSeconds": 1846,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "The siren has sounded to end Q2.",
+      "periodNumber": 2,
+      "periodSeconds": 1846,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "GOAL - Magpies (Daniel McStay)",
+      "periodNumber": 2,
+      "periodSeconds": 1771,
+      "playerId": "CD_I297504",
+      "teamId": "CD_T40",
+      "scoreEvent": true
+    },
+    {
+      "comment": "BEHIND - Magpies (Rushed)",
+      "periodNumber": 2,
+      "periodSeconds": 1687,
+      "playerId": null,
+      "teamId": "CD_T40",
+      "scoreEvent": true
+    },
+    {
+      "comment": "GOAL - Magpies (Jeremy Howe)",
+      "periodNumber": 2,
+      "periodSeconds": 1617,
+      "playerId": "CD_I291313",
+      "teamId": "CD_T40",
+      "scoreEvent": true
+    },
+    {
+      "comment": "Josh Worrell has been fantastic this quarter, having four intercept possessions (with three being marks), along with six disposals, four uncontested possessions and 117 metres gained.",
+      "periodNumber": 2,
+      "periodSeconds": 1557,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "Scott Pendelbury kicks the first goal of the quarter for the Magpies from a forward 50 stoppage. They are yet to have a forward half turnover this quarter, with all three of their forward half chains coming from stoppage.",
+      "periodNumber": 2,
+      "periodSeconds": 1379,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "GOAL - Magpies (Scott Pendlebury)",
+      "periodNumber": 2,
+      "periodSeconds": 1379,
+      "playerId": "CD_I260257",
+      "teamId": "CD_T40",
+      "scoreEvent": true
+    },
+    {
+      "comment": "Collingwood has struggled to move the ball this term, being forced to kick long 55% of the time (was just 37% in the first quarter), allowing for the Crows to have 15 intercept possessions and seven intercept marks.",
+      "periodNumber": 2,
+      "periodSeconds": 1139,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "The Crows are completely controlling the ball this term, having 55% time in possession and being plus nine in uncontested possessions.",
+      "periodNumber": 2,
+      "periodSeconds": 1021,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "BEHIND - Crows (Ben Keays)",
+      "periodNumber": 2,
+      "periodSeconds": 893,
+      "playerId": "CD_I993946",
+      "teamId": "CD_T10",
+      "scoreEvent": true
+    },
+    {
+      "comment": "Adelaide has almost exclusively moved the ball by foot this quarter, having a kick-to-handball ratio of 1.89 this term and just 18 handball metres gained, whereas the Magpies have a kick-to-handball ratio of 1.00 and 86 handball metres gained.",
+      "periodNumber": 2,
+      "periodSeconds": 847,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "BEHIND - Crows (Alex Neal-Bullen)",
+      "periodNumber": 2,
+      "periodSeconds": 833,
+      "playerId": "CD_I296420",
+      "teamId": "CD_T10",
+      "scoreEvent": true
+    },
+    {
+      "comment": "Collingwood have been unable to move the ball out of their defensive half this term, achieving just one inside 50 from 11 chains and turning the ball over three times.",
+      "periodNumber": 2,
+      "periodSeconds": 749,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "The Crows have been dominant to start the second quarter, having seven of nine inside 50s, and outscoring the Magpies 2.1 (13) - 0.1 (1).",
+      "periodNumber": 2,
+      "periodSeconds": 539,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "GOAL - Crows (Riley Thilthorpe)",
+      "periodNumber": 2,
+      "periodSeconds": 538,
+      "playerId": "CD_I1008384",
+      "teamId": "CD_T10",
+      "scoreEvent": true
+    },
+    {
+      "comment": "BEHIND - Crows (Taylor Walker)",
+      "periodNumber": 2,
+      "periodSeconds": 393,
+      "playerId": "CD_I280506",
+      "teamId": "CD_T10",
+      "scoreEvent": true
+    },
+    {
+      "comment": "Adelaide's ball movement has been exemplary early this term, achieving an inside 50 from 60% of their defensive half chains (three of five), and scoring 1.0 (6) from the zone.",
+      "periodNumber": 2,
+      "periodSeconds": 297,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "GOAL - Crows (Taylor Walker)",
+      "periodNumber": 2,
+      "periodSeconds": 296,
+      "playerId": "CD_I280506",
+      "teamId": "CD_T10",
+      "scoreEvent": true
+    },
+    {
+      "comment": "The Magpies have had a strong start from stoppage in the second term, winning the first three clearances of the quarter, with two of those coming from Nick Daicos.",
+      "periodNumber": 2,
+      "periodSeconds": 116,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "BEHIND - Magpies (Nick Daicos)",
+      "periodNumber": 2,
+      "periodSeconds": 101,
+      "playerId": "CD_I1023261",
+      "teamId": "CD_T40",
+      "scoreEvent": true
+    },
+    {
+      "comment": "Q2 is now underway.",
+      "periodNumber": 2,
+      "periodSeconds": 0,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "Adelaide were incredibly effective going inside 50 in the first quarter, scoring from 66.7% of their inside 50s and kicking a goal from 41.7% of their entries.",
+      "periodNumber": 1,
+      "periodSeconds": 1901,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "Collingwood scored just 0.1 (1) from turnover in the first quarter, their equal-second lowest total from the source in any quarter this season, with their lowest coming in their Round 1 loss against the Crows.",
+      "periodNumber": 1,
+      "periodSeconds": 1901,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "The siren has sounded to end Q1.",
+      "periodNumber": 1,
+      "periodSeconds": 1901,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "GOAL - Crows (Taylor Walker)",
+      "periodNumber": 1,
+      "periodSeconds": 1822,
+      "playerId": "CD_I280506",
+      "teamId": "CD_T10",
+      "scoreEvent": true
+    },
+    {
+      "comment": "Collingwood gets their first inside 50 since the 20-minute mark of the quarter, kicking a goal through Patrick Lipinski. The Magpies have been fantastic from Kick-In chains tonight, scoring 2.0 (12) from the source.",
+      "periodNumber": 1,
+      "periodSeconds": 1715,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "GOAL - Magpies (Patrick Lipinski)",
+      "periodNumber": 1,
+      "periodSeconds": 1715,
+      "playerId": "CD_I1003130",
+      "teamId": "CD_T40",
+      "scoreEvent": true
+    },
+    {
+      "comment": "BEHIND - Crows (Jake Soligo)",
+      "periodNumber": 1,
+      "periodSeconds": 1675,
+      "playerId": "CD_I1017109",
+      "teamId": "CD_T10",
+      "scoreEvent": true
+    },
+    {
+      "comment": "Taylor Walker kicks his 700th career goal, and the Crows' fourth in a row. Adelaide have been fantastic out of their defensive midfield, achieving an inside 50 four times from seven chains and scoring 2.0 (12) from the zone.",
+      "periodNumber": 1,
+      "periodSeconds": 1463,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "GOAL - Crows (Taylor Walker)",
+      "periodNumber": 1,
+      "periodSeconds": 1463,
+      "playerId": "CD_I280506",
+      "teamId": "CD_T10",
+      "scoreEvent": true
+    },
+    {
+      "comment": "Since the 16-minute mark of the quarter, the Crows have been dominant, having four of the last five inside 50s and outscoring the Magpies 3.0 (18) - 0.0 (0) in that time.",
+      "periodNumber": 1,
+      "periodSeconds": 1325,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "GOAL - Crows (Finnbar Maley)",
+      "periodNumber": 1,
+      "periodSeconds": 1325,
+      "playerId": "CD_I1031792",
+      "teamId": "CD_T10",
+      "scoreEvent": true
+    },
+    {
+      "comment": "GOAL - Crows (Riley Thilthorpe)",
+      "periodNumber": 1,
+      "periodSeconds": 1144,
+      "playerId": "CD_I1008384",
+      "teamId": "CD_T10",
+      "scoreEvent": true
+    },
+    {
+      "comment": "Jordan Dawson has had a hot start for the Crows, accounting for all three of the Crows scoring shots, having six disposals, three contested possessions and 154 metres gained.",
+      "periodNumber": 1,
+      "periodSeconds": 982,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "GOAL - Crows (Jordan Dawson)",
+      "periodNumber": 1,
+      "periodSeconds": 975,
+      "playerId": "CD_I992242",
+      "teamId": "CD_T10",
+      "scoreEvent": true
+    },
+    {
+      "comment": "Adelaide is struggling to move the ball out of their back half, achieving an inside 50 from just 20% of their defensive half chains. This season, they have achieved an inside 50 from just 21.5% of their defensive 50 chains, ranked 16th.",
+      "periodNumber": 1,
+      "periodSeconds": 925,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "BEHIND - Magpies (Rushed)",
+      "periodNumber": 1,
+      "periodSeconds": 757,
+      "playerId": null,
+      "teamId": "CD_T40",
+      "scoreEvent": true
+    },
+    {
+      "comment": "After losing four of the first five clearances, the Magpies have responded, winning the last four and scoring 1.1 (7) from them.",
+      "periodNumber": 1,
+      "periodSeconds": 722,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "BEHIND - Magpies (Angus Anderson)",
+      "periodNumber": 1,
+      "periodSeconds": 722,
+      "playerId": "CD_I1023744",
+      "teamId": "CD_T40",
+      "scoreEvent": true
+    },
+    {
+      "comment": "GOAL - Magpies (Daniel McStay)",
+      "periodNumber": 1,
+      "periodSeconds": 605,
+      "playerId": "CD_I297504",
+      "teamId": "CD_T40",
+      "scoreEvent": true
+    },
+    {
+      "comment": "Ned Long kicks the first goal of the game for the Magpies from a forward half turnover. Collingwood has two fewer forward half turnovers than the Crows; however, they have scored 1.0 (6) from the source, whereas Adelaide have scored just 0.1 (1).",
+      "periodNumber": 1,
+      "periodSeconds": 531,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "GOAL - Magpies (Ned Long)",
+      "periodNumber": 1,
+      "periodSeconds": 531,
+      "playerId": "CD_I1017124",
+      "teamId": "CD_T40",
+      "scoreEvent": true
+    },
+    {
+      "comment": "Adelaide's pressure has been excellent early, having a pressure rating of 214 and nine tackles (with two being inside 50).",
+      "periodNumber": 1,
+      "periodSeconds": 491,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "BEHIND - Crows (Jordan Dawson)",
+      "periodNumber": 1,
+      "periodSeconds": 472,
+      "playerId": "CD_I992242",
+      "teamId": "CD_T10",
+      "scoreEvent": true
+    },
+    {
+      "comment": "The Crows have looked to control the ball early, having 50% time in possession (the Magpies have 25%), along with 18 uncontested possessions and 10 uncontested marks.",
+      "periodNumber": 1,
+      "periodSeconds": 273,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "BEHIND - Crows (Jordan Dawson)",
+      "periodNumber": 1,
+      "periodSeconds": 174,
+      "playerId": "CD_I992242",
+      "teamId": "CD_T10",
+      "scoreEvent": true
+    },
+    {
+      "comment": "Q1 is now underway.",
+      "periodNumber": 1,
+      "periodSeconds": 0,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "The Magpies have won the tackle count by 12.6 per game. ranked No.1 and are on track to have the second-best season on record by any team.",
+      "periodNumber": 0,
+      "periodSeconds": 0,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "Collingwood has won seven of its last eight matches against Adelaide at Adelaide Oval, dating back to Round 4, 2018, by an average winning margin of 25 points.",
+      "periodNumber": 0,
+      "periodSeconds": 0,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "Don't forget to enter your tips for this match, you have until the bounce to make your selection.",
+      "periodNumber": 0,
+      "periodSeconds": 0,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "Outs for Magpies: S.Swadling (Omitted)",
+      "periodNumber": 0,
+      "periodSeconds": 0,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "Ins for Magpies: J.Howe",
+      "periodNumber": 0,
+      "periodSeconds": 0,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "Outs for Crows: M.Keane (Illness), B.Cook (Managed), D.Fogarty (Suspension)",
+      "periodNumber": 0,
+      "periodSeconds": 0,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "Ins for Crows: N.Murray, T.Walker, F.Maley",
+      "periodNumber": 0,
+      "periodSeconds": 0,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "Welcome to Adelaide Oval for the Adelaide Crows v Collingwood Round 20 clash.",
+      "periodNumber": 0,
+      "periodSeconds": 0,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    }
+  ]
+}
