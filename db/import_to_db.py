@@ -321,6 +321,7 @@ def save_lineups_to_db(players: list[dict], conn: sqlite3.Connection, round_numb
 
     conn.commit()
     log(f"💾 Saved {inserted} player lineups to DB", "SUCCESS")
+    return inserted
 
 def save_rounds_to_db(rounds: list[dict], metadata: dict, conn: sqlite3.Connection):
     """

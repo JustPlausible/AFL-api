@@ -62,9 +62,20 @@ def _post_manual_trigger(kind: str, payload: dict):
     return response.json()
 
 def _format_trigger_response(data: dict) -> str:
+    details = (
+        f"Source: {data.get('selected_source', 'unknown')}; "
+        f"collector: {data.get('collector', 'unknown')}; "
+        f"behaviour: {data.get('persistence', 'unknown')}; "
+        f"rows collected: {data.get('rows_collected') if data.get('rows_collected') is not None else 'pending'}; "
+        f"rows persisted: {data.get('rows_persisted') if data.get('rows_persisted') is not None else 'pending'}; "
+        f"outcome: {data.get('outcome_status', data.get('status', 'unknown'))}; "
+        f"fallback: {'yes' if data.get('fallback_occurred') else 'no'}"
+        + (f" ({data.get('fallback_reason')})" if data.get('fallback_reason') else "")
+        + "."
+    )
     if data.get("status") == "already_running":
-        return f"ℹ️ Equivalent manual job is already queued or running: {data.get('job_id', 'unknown job')}."
-    return f"✅ Manual job queued: {data.get('job_id', 'unknown job')}. Acceptance means queued, not completed; inspect scheduler and scrape-run audit status for progress."
+        return f"ℹ️ Equivalent manual job is already queued or running: {data.get('job_id', 'unknown job')}. {details}"
+    return f"✅ Manual job queued: {data.get('job_id', 'unknown job')}. {details} Acceptance means queued, not completed; inspect scheduler and scrape-run audit status for final row counts and status."
 
 
 

@@ -1,5 +1,11 @@
 # v0.5.0 release-readiness review
 
+> **Implementation status (Issue #73):** The historical findings below were
+> assessed before the operational source policy was implemented. Scheduler and
+> Admin collection now share the JSON-first policy documented in
+> [`docs/operational_source_policy.md`](../operational_source_policy.md). This
+> note does not alter the review's original verdict or findings.
+
 **Review date:** 30 July 2026
 
 **Reviewed revision:** `fe59f78` (`work`)

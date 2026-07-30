@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from uuid import uuid4
-import sqlite3
 from typing import Any
 
 from apscheduler.triggers.date import DateTrigger
@@ -63,38 +62,57 @@ def _job_id(kind: str, target: str) -> str:
 
 
 def manual_refresh_injuries(correlation_id: str):
-    conn = get_db_connection()
-    try:
-        from scraper.scrape_afl_injuries import scrape_injury_list
-        return scrape_injury_list(conn, trigger_source=TRIGGER_ADMIN_MANUAL, correlation_id=correlation_id)
-    finally:
-        conn.close()
+    from collection.source_policy import OperationalDomain, collect_operational
+    return collect_operational(OperationalDomain.INJURIES,
+                               trigger_source=TRIGGER_ADMIN_MANUAL,
+                               correlation_id=correlation_id)
 
 
 def manual_refresh_fixtures_round(round_id: int, correlation_id: str):
-    from scraper.scrape_afl_matches import run as scrape_matches
-    return scrape_matches(round_id=round_id, trigger_source=TRIGGER_ADMIN_MANUAL, correlation_id=correlation_id)
+    from collection.source_policy import OperationalDomain, collect_operational
+    return collect_operational(OperationalDomain.METADATA, target_id=round_id,
+                               trigger_source=TRIGGER_ADMIN_MANUAL,
+                               correlation_id=correlation_id)
 
 
 def manual_refresh_lineups_round(round_id: int, correlation_id: str):
-    from scraper.scrape_afl_lineups import scrape_team_lineups
-    return scrape_team_lineups(round_number=round_id, trigger_source=TRIGGER_ADMIN_MANUAL, correlation_id=correlation_id)
+    from collection.source_policy import OperationalDomain, collect_operational
+    return collect_operational(OperationalDomain.LINEUPS, target_id=round_id,
+                               trigger_source=TRIGGER_ADMIN_MANUAL,
+                               correlation_id=correlation_id)
 
 
 def manual_refresh_lineups_match(match_id: int, correlation_id: str):
-    from scraper.scrape_afl_lineups import scrape_match_lineup
-    return scrape_match_lineup(match_id=match_id, trigger_source=TRIGGER_ADMIN_MANUAL, correlation_id=correlation_id)
+    from collection.source_policy import OperationalDomain, collect_operational, round_for_match
+    return collect_operational(OperationalDomain.LINEUPS,
+                               target_id=round_for_match(match_id),
+                               trigger_source=TRIGGER_ADMIN_MANUAL,
+                               correlation_id=correlation_id)
 
 
 def manual_refresh_player_stats_match(match_id: int, correlation_id: str):
-    from scraper.scrape_afl_player_stats import run_scraper as scrape_player_stats
-    return scrape_player_stats(match_id=match_id, once=True, trigger_source=TRIGGER_ADMIN_MANUAL, correlation_id=correlation_id)
+    from collection.source_policy import OperationalDomain, collect_operational
+    return collect_operational(OperationalDomain.MATCH_PLAYER_STATS, target_id=match_id,
+                               trigger_source=TRIGGER_ADMIN_MANUAL,
+                               correlation_id=correlation_id)
 
 
-def _enqueue(func, *, job_type: str, target_type: str, target_id: int | None = None, round_id: int | None = None, match_id: int | None = None):
+def _enqueue(func, *, job_type: str, target_type: str, target_id: int | None = None, round_id: int | None = None, match_id: int | None = None, policy_domain: str):
+    from collection.source_policy import policy_for
+    selected = policy_for(policy_domain)
+    diagnostics = {
+        "requested_domain": selected.domain.value,
+        "selected_source": selected.source_family, "collector": selected.collector,
+        "persistence": "persistent" if selected.persists else "read_only",
+        "rows_collected": None, "rows_persisted": None,
+        "fallback_occurred": False, "fallback_reason": None,
+    }
     duplicate = _duplicate(job_type, round_id=round_id, match_id=match_id)
     if duplicate:
-        return {"status": "already_running", "job_id": duplicate["job_id"], "message": "An equivalent manual job is already queued or running."}
+        return {"status": "already_running", "outcome_status": "pending",
+                "job_id": duplicate["job_id"],
+                "message": "An equivalent manual job is already queued or running.",
+                **diagnostics}
     target = target_type if target_id is None else f"{target_type}_{target_id}"
     jid = _job_id(job_type, target)
     args = [jid] if target_id is None else [target_id, jid]
@@ -104,7 +122,12 @@ def _enqueue(func, *, job_type: str, target_type: str, target_id: int | None = N
         args=args, job_id=jid, job_type=job_type, round_id=round_id, match_id=match_id,
         name=f"Admin manual {job_type} {target}", replace_existing=False, trigger_type="admin_manual",
     )
-    return {"status": "queued", "job_id": jid, "correlation_id": jid, "trigger_source": TRIGGER_ADMIN_MANUAL, "target_type": target_type, "target_identifier": target_id}
+    return {
+        "status": "queued", "outcome_status": "pending", "job_id": jid,
+        "correlation_id": jid, "trigger_source": TRIGGER_ADMIN_MANUAL,
+        "target_type": target_type, "target_identifier": target_id,
+        **diagnostics,
+    }
 
 
 @router.post("/injuries")
@@ -114,7 +137,7 @@ def trigger_injuries(payload: ManualTriggerRequest | None = None):
         _require_tables(conn)
     finally:
         conn.close()
-    return _enqueue(manual_refresh_injuries, job_type="injury", target_type="injury_list")
+    return _enqueue(manual_refresh_injuries, job_type="injury", target_type="injury_list", policy_domain="injuries")
 
 
 @router.post("/fixtures/round")
@@ -126,7 +149,7 @@ def trigger_fixtures_round(payload: ManualTriggerRequest):
         _require_tables(conn); _round_exists(conn, payload.round_id)
     finally:
         conn.close()
-    return _enqueue(manual_refresh_fixtures_round, job_type="fixture", target_type="round", target_id=payload.round_id, round_id=payload.round_id)
+    return _enqueue(manual_refresh_fixtures_round, job_type="fixture", target_type="round", target_id=payload.round_id, round_id=payload.round_id, policy_domain="metadata")
 
 
 @router.post("/lineups/round")
@@ -138,7 +161,7 @@ def trigger_lineups_round(payload: ManualTriggerRequest):
         _require_tables(conn); _round_exists(conn, payload.round_id)
     finally:
         conn.close()
-    return _enqueue(manual_refresh_lineups_round, job_type="lineup", target_type="round", target_id=payload.round_id, round_id=payload.round_id)
+    return _enqueue(manual_refresh_lineups_round, job_type="lineup", target_type="round", target_id=payload.round_id, round_id=payload.round_id, policy_domain="lineups")
 
 
 @router.post("/lineups/match")
@@ -150,7 +173,7 @@ def trigger_lineups_match(payload: ManualTriggerRequest):
         _require_tables(conn); _match_exists(conn, payload.match_id)
     finally:
         conn.close()
-    return _enqueue(manual_refresh_lineups_match, job_type="lineup", target_type="match", target_id=payload.match_id, match_id=payload.match_id)
+    return _enqueue(manual_refresh_lineups_match, job_type="lineup", target_type="match", target_id=payload.match_id, match_id=payload.match_id, policy_domain="lineups")
 
 
 @router.post("/player-stats/match")
@@ -162,4 +185,4 @@ def trigger_player_stats_match(payload: ManualTriggerRequest):
         _require_tables(conn); _match_exists(conn, payload.match_id)
     finally:
         conn.close()
-    return _enqueue(manual_refresh_player_stats_match, job_type="player_stats", target_type="match", target_id=payload.match_id, match_id=payload.match_id)
+    return _enqueue(manual_refresh_player_stats_match, job_type="player_stats", target_type="match", target_id=payload.match_id, match_id=payload.match_id, policy_domain="match_player_stats")

@@ -4,6 +4,8 @@ This directory contains active project documentation for operating, developing, 
 
 ## Operational and development guides
 
+- [Operational AFL source policy and source matrix](operational_source_policy.md)
+
 - [Administrator CSRF protection](admin_csrf.md)
 - [Admin manual scheduler triggers](admin_manual_triggers.md)
 - [API key storage migration](api_key_migration.md)

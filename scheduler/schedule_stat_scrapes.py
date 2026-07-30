@@ -4,8 +4,6 @@ from apscheduler.triggers.date import DateTrigger
 from datetime import datetime, timedelta, timezone
 from utils.log import setup_logger
 import pytz
-import sqlite3
-import subprocess
 from db.connection import get_db_connection
 from scheduler.registry import add_registered_job, stats_match_job_id
 
@@ -15,20 +13,10 @@ scheduler_log = setup_logger("scheduler_jobs", "scheduler_jobs.log")
 AWST = pytz.timezone("Australia/Perth")
 
 def run_stats_scraper(match_id: int):
-    """Subprocess wrapper to run scraper via match_id."""
-    scheduler_log.info(f"📈 Running stat scraper for match {match_id}")
-    cmd = f"python3 -m scraper.scrape_afl_player_stats --match-id {match_id}"
-    scheduler_log.info(f"📦 Executing command: {cmd}")
-
-    try:
-        result = subprocess.run(
-            cmd.split(), capture_output=True, text=True, check=True
-        )
-        scheduler_log.info(f"✅ Command succeeded for match {match_id}")
-
-    except subprocess.CalledProcessError as e:
-        scheduler_log.error(f"❌ Command failed for match {match_id} with exit code {e.returncode}")
-        scheduler_log.error(f"❌ STDERR:\n{e.stderr.strip()}")
+    """Run the policy-selected canonical CFS collector for an internal match ID."""
+    from collection.source_policy import OperationalDomain, collect_operational
+    scheduler_log.info(f"📈 Running CFS stat collector for match {match_id}")
+    return collect_operational(OperationalDomain.MATCH_PLAYER_STATS, target_id=match_id)
 
 def was_scraped_recently(match_id: int, conn, window_minutes: int = 5) -> bool:
     cursor = conn.cursor()

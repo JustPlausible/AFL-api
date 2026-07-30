@@ -1,9 +1,7 @@
 from apscheduler.triggers.date import DateTrigger
 from datetime import datetime, timedelta
 from db.helpers import get_round_start_times
-import sqlite3
 import pytz
-import subprocess
 from utils.log import setup_logger
 from db.connection import get_db_connection
 from scheduler.registry import add_registered_job, lineup_match_job_id, lineup_round_job_id
@@ -12,22 +10,15 @@ AWST = pytz.timezone("Australia/Perth")
 log = setup_logger("refresh_afl_lineups", "refresh_afl_lineups.log")
 
 def run_lineup_round_scraper(round_id: int):
-    log.info(f"🚀 [Lineups] Running line-up scrape for round {round_id}")
-    command = ["python3", "-m", "scraper.scrape_afl_lineups", "--round", str(round_id)]
-    try:
-        subprocess.run(command, check=True)
-    except subprocess.CalledProcessError as exc:
-        log.error(f"❌ [Lineups] Round scrape failed for round {round_id} with exit code {exc.returncode}")
-        raise
+    from collection.source_policy import OperationalDomain, collect_operational
+    log.info(f"🚀 [Lineups] Running persistent HTML lineup collection for round {round_id}")
+    return collect_operational(OperationalDomain.LINEUPS, target_id=round_id)
 
 def run_lineup_match_scraper(match_id: int):
-    log.info(f"🚀 [Lineups] Running line-up scrape for match {match_id}")
-    command = ["python3", "-m", "scraper.scrape_afl_lineups", "--match", str(match_id)]
-    try:
-        subprocess.run(command, check=True)
-    except subprocess.CalledProcessError as exc:
-        log.error(f"❌ [Lineups] Match scrape failed for match {match_id} with exit code {exc.returncode}")
-        raise
+    from collection.source_policy import OperationalDomain, collect_operational, round_for_match
+    log.info(f"🚀 [Lineups] Running persistent HTML lineup collection for match {match_id}")
+    return collect_operational(OperationalDomain.LINEUPS,
+                               target_id=round_for_match(match_id))
 
 def register_lineup_jobs(scheduler):
     log.info("📋 Registering line-up scrape jobs...")

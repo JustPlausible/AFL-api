@@ -106,10 +106,10 @@ def handle_args():
     match_group.add_argument("--scrape-injuries", action="store_true", help="Scrape AFL injury list")
     match_group.add_argument("--print-json", action="store_true",
                              help="Print full scraped or normalised JSON to stdout (redirect to save it)")
-    match_group.add_argument("--scrape-lineups", type=int, metavar="ROUND", help="Scrape team lineups for a round")
-    match_group.add_argument("--scrape-round", type=int, metavar="ROUND_ID", help="Scrape AFL matches for a specific round_id (e.g. 1156)")
-    match_group.add_argument("--scrape-all-rounds", action="store_true", help="Scrape AFL matches for all rounds in DB")
-    match_group.add_argument("--scrape-match", type=int, metavar="MATCH_ID", help="Scrape player stats for a specific match_id")
+    match_group.add_argument("--scrape-lineups", type=int, metavar="ROUND", help="Explicit legacy HTML lineup scrape (persists legacy lineup tables)")
+    match_group.add_argument("--scrape-round", type=int, metavar="ROUND_ID", help="Explicit legacy HTML match scrape for a round_id")
+    match_group.add_argument("--scrape-all-rounds", action="store_true", help="Explicit legacy HTML match scrape for all database rounds")
+    match_group.add_argument("--scrape-match", type=int, metavar="MATCH_ID", help="Explicit legacy HTML player-stat scrape for a match_id")
 
     metadata_group = parser.add_argument_group("Public AFL Metadata")
     metadata_group.add_argument("--collect-afl-metadata", action="store_true",
@@ -125,9 +125,9 @@ def handle_args():
     metadata_group.add_argument("--afl-raw-directory", type=Path,
                                 help="Store original per-endpoint/page API JSON below this directory")
     metadata_group.add_argument("--collect-match-rosters", metavar="ROUND_PROVIDER_ID",
-                                help="Collect CFS team selections for a Champion Data round ID")
+                                help="Collect CFS team selections read-only for a Champion Data round ID")
     metadata_group.add_argument("--collect-match-player-stats", metavar="MATCH_PROVIDER_ID",
-                                help="Collect canonical CFS player statistics for a Champion Data match ID")
+                                help="Collect and persist canonical CFS player statistics for a Champion Data match ID")
     metadata_group.add_argument("--source-status",
                                 help="Canonical match status fallback for player-stat diagnostics")
     metadata_group.add_argument("--afl-match-id", type=int,
