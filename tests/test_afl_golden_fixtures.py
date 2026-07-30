@@ -8,7 +8,7 @@ from bs4 import BeautifulSoup
 
 from scraper.afl_selectors import CLUB_SQUAD_SELECTORS, STATS_LEADERS_SELECTORS
 from scraper.monitor_match_status import extract_status_for_match
-from scraper.scrape_afl_injuries import parse_injuries_html
+from scraper.scrape_afl_injuries import extract_and_match_club, parse_injuries_html
 from scraper.scrape_afl_lineups import parse_lineups_html
 from scraper.scrape_afl_player_stats import get_match_status_from_header, parse_live_stats
 
@@ -84,6 +84,32 @@ def test_rendered_injuries_populated_and_empty_tables(monkeypatch):
                          "players": [{"name": "Jordan Example", "injury": "Hamstring",
                                       "return": "2-3 weeks", "afl_id": 9001}]}
     assert result[1]["club"] == "CARL" and result[1]["players"] == []
+
+
+def test_injury_editorial_filename_resolves_canonical_abbreviation_token():
+    image = (
+        "https://resources.afl.com.au/photo-resources/2026/03/20/"
+        "25cca3e6-d7a9-4150-9f5f-4fbec66314a0/"
+        "26_0134_Editorial-GFX_Straps-Badge-Refresh_ADEL_FA-1x.jpg?width=1511"
+    )
+
+    club = extract_and_match_club(image)
+
+    assert club is not None
+    assert club["name"] == "Adelaide Crows"
+    assert club["code"] == "ADE"
+    assert club["abbreviation"] == "ADEL"
+
+
+def test_injury_image_without_recognised_token_raises_source_contract_error():
+    html = fixture("html_rendered/injuries_round_21_populated.html").replace(
+        'src="/logos/adelaide-logo.jpg" alt="Adelaide Crows"',
+        'src="https://resources.afl.com.au/artwork/26_0134_Editorial-GFX_FA-1x.png?width=1511" alt=""',
+        1,
+    )
+
+    with pytest.raises(ValueError, match="Injury team block 0 has an unrecognised club image"):
+        parse_injuries_html(html)
 
 
 @pytest.mark.parametrize("needle,replacement,message", [

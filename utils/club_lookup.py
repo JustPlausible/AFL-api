@@ -43,6 +43,22 @@ def load_clubs():
 
     return load_club_seed()
 
+
+def get_canonical_club(identifier: str) -> dict | None:
+    """Match one normalized source token against canonical club identifiers."""
+    needle = re.sub(r"[^a-z0-9]", "", identifier.casefold())
+    if not needle:
+        return None
+    for club in load_club_seed():
+        identifiers = (
+            club["code"], club["abbreviation"], club["slug"],
+            *club.get("aliases", []),
+        )
+        if any(re.sub(r"[^a-z0-9]", "", value.casefold()) == needle
+               for value in identifiers):
+            return club
+    return None
+
 def get_club(identifier: str) -> dict | None:
     """
     Lookup a club by slug or short code (case-insensitive).
