@@ -1,14 +1,13 @@
 # utils/club_lookup.py
 import sqlite3
-from pathlib import Path
 import json
 from utils.log import log
 from db.connection import get_db_path
+from db.club_seed import load_club_seed
 import re
 
-CLUBS_JSON = Path("data/clubs.json")
 def load_clubs():
-    """Load all club data from the database, fallback to JSON."""
+    """Load all club data from the database, falling back to the canonical seed."""
     db_path = get_db_path()
     if db_path.exists():
         try:
@@ -40,11 +39,9 @@ def load_clubs():
                 })
             return clubs
         except Exception as e:
-            log(f"⚠️ Failed to load clubs from DB: {e}, falling back to JSON", "WARN")
+            log(f"⚠️ Failed to load clubs from DB: {e}, falling back to canonical seed", "WARN")
 
-    # Fallback to static JSON
-    with CLUBS_JSON.open("r") as f:
-        return json.load(f)
+    return load_club_seed()
 
 def get_club(identifier: str) -> dict | None:
     """

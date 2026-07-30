@@ -47,6 +47,21 @@ The baseline signature is the v0.3.0 `init_db()` schema for `api_keys`, `clubs`,
 
 Legacy API-key plaintext schemas are upgraded by migration `0003` in a transaction. Plaintext keys are hashed, prefixes are stored, and `api_key` is nulled idempotently without deleting rows.
 
+## Canonical club seed
+
+`bootstrap/clubs.json` is the single, versioned source of truth for AFL club
+identity and editorial aliases. The shared loader validates `schema_version` and
+the required club fields before mapping canonical seed names onto the older
+database interface: `canonicalCode` to `code`, `clubSiteUrl` to `website`,
+`squadUrl` to `squad_url`, and `editorialAliases` to `aliases`. Canonical codes
+remain stable internal identifiers and are not replaced by AFL abbreviations.
+
+Migration `0008` loads the canonical seed and upserts clubs by `code`. Fresh
+installs therefore begin with all canonical clubs, while upgrades refresh those
+rows without deleting unrelated rows. Re-running the migration/upsert produces
+the same rows. Runtime lookup, the club import CLI, and player-stat alias loading
+all use the same validated loader rather than `data/clubs.json`.
+
 ## Creating a migration
 
 1. Add `db/migrations/NNNN_short_description.py` with the next identifier.

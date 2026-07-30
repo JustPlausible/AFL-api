@@ -5,6 +5,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from utils.log import log
 from utils.club_lookup import load_clubs
+from db.club_seed import load_club_seed
 from db.connection import get_db_connection
 import config
 
@@ -90,15 +91,13 @@ def export_clubs_from_db():
     log(f"✅ Exported {len(clubs)} clubs to {OUTPUT_PATH}", "SUCCESS")
 
 def diff_clubs():
-    source_path = Path("data/clubs.json")
     backup_path = Path("data/clubs-bak.json")
 
-    if not source_path.exists() or not backup_path.exists():
-        log("❌ Cannot diff clubs — one or both files are missing.", "ERROR")
+    if not backup_path.exists():
+        log("❌ Cannot diff clubs — database backup file is missing.", "ERROR")
         return
 
-    with source_path.open() as f:
-        source = {c["code"]: c for c in json.load(f)}
+    source = {c["code"]: c for c in load_club_seed()}
 
     with backup_path.open() as f:
         backup = {c["code"]: c for c in json.load(f)}

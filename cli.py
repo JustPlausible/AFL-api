@@ -10,8 +10,9 @@ from scraper import scrape_afl_matches
 from db.scrape_runs import audited_scrape_run
 from merge.helpers import resolve_players_for_club
 from utils.club_lookup import load_clubs, get_club
-from db.import_to_db import import_players, save_lineups_to_db, save_clubs_to_db
+from db.import_to_db import import_players, save_lineups_to_db
 from db.connection import get_db_connection
+from db.club_seed import upsert_club_seed
 from afl_json import (
     AflJsonClient, MatchPlayerStatsCollector, MatchRosterCollector, PublicAflCollector,
     later_match_status, persist_afl_metadata, reconcile_match_status, upsert_player_stats,
@@ -30,19 +31,12 @@ def _json_default(value):
     raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
 def import_clubs_to_db():
-    """Load clubs from JSON and import using shared connection."""
-    path = Path("data/clubs.json")
-    if not path.exists():
-        log("❌ data/clubs.json not found.", "ERROR")
-        return
-
-    with path.open("r") as f:
-        clubs = json.load(f)
-
+    """Load clubs from the canonical seed and import using a shared connection."""
     conn = get_db_connection()
-    save_clubs_to_db(conn, clubs)
+    count = upsert_club_seed(conn)
     conn.commit()
     conn.close()
+    log(f"✅ Imported {count} canonical clubs into DB", "SUCCESS")
 
 def scrape_all_clubs(skip_existing=False):
     clubs = load_clubs()

@@ -8,7 +8,6 @@ import sqlite3
 import os
 import sys
 import json
-from pathlib import Path
 from datetime import datetime, timezone
 from bs4 import BeautifulSoup
 from utils.log import setup_logger
@@ -18,6 +17,7 @@ from merge.helpers import extract_club_player_id, extract_champion_id
 from db.connection import get_db_connection
 from db.scrape_runs import audited_scrape_run
 from scraper.afl_selectors import PLAYER_STATS_SELECTORS
+from db.club_seed import load_club_seed
 
 log = setup_logger("player_stats_scraper", "scrape_afl_player_stats.log")
 
@@ -29,8 +29,7 @@ log.debug(f"  PYTHONPATH: {os.environ.get('PYTHONPATH')}")
 log.debug(f"  Executable: {sys.executable}")
 log.debug(f"  Args: {sys.argv}")
 
-clubs_path = Path("data/clubs.json")
-clubs = json.loads(clubs_path.read_text(encoding="utf-8")) if clubs_path.exists() else []
+clubs = load_club_seed()
 
 # Build alias → code lookup map
 alias_map = {}
