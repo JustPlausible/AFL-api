@@ -261,6 +261,24 @@ the downstream database necessarily accepts every shape.
   convention, list completeness, and season rollover. Repository verified
   2026-07-28; live HTML blocked.
 
+#### Player bootstrap identity resolution
+
+Club squad cards and leaderboard rows both expose the Champion Data identifier
+in `ChampIDImages/.../{champion_data_id}.png`. Club profile links additionally
+contain the numeric AFL player ID in `/players/{afl_id}/`, so the squad scraper
+now persists that direct identity as well as using the leaderboard mapping.
+Champion Data identifiers are normalized to strings at the join boundary.
+
+The previous on-demand refresh invoked the nonexistent
+`scraper.scrape_afl_stats` module. A missing or stale leaderboard was therefore
+left missing/stale after the failed subprocess, and enrichment silently produced
+players with null `afl_id`. Refresh now invokes `scraper.scrape_afl_players` with
+the current Python interpreter and rejects missing, invalid, or empty output.
+Under Compose, the repository is mounted at `/app` and the shared data volume at
+`/app/data`, matching the relative paths used by the CLI and refresh subprocess.
+An unmatched Champion Data ID is never guessed; it remains unresolved and is
+skipped explicitly by the importer.
+
 #### Leaderboard player statistics (manual export)
 
 * **Domain/module/entry:** season total/average export;

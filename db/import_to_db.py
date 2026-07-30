@@ -136,7 +136,7 @@ def diff_clubs():
 def import_players():
     if not Path(config.DB_PATH).exists():
         log("❌ Database not found. Run init_db.py first.", "ERROR")
-        return
+        return {"processed": 0, "inserted": 0, "updated": 0, "skipped_missing_afl_id": 0, "failed": 0}
 
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -144,17 +144,24 @@ def import_players():
     now = datetime.now(timezone.utc).isoformat()
 
     enriched_files = sorted(f for f in DATA_DIR.glob("players-*.json") if "-raw" not in f.stem)
-    total_imported = 0
+    counts = {"processed": 0, "inserted": 0, "updated": 0,
+              "skipped_missing_afl_id": 0, "failed": 0}
 
     for file in enriched_files:
         with file.open() as f:
             players = json.load(f)
 
         for player in players:
+            counts["processed"] += 1
             if not player.get("afl_id"):
+                counts["skipped_missing_afl_id"] += 1
                 log(f"⚠️ Skipping player without afl_id: {player.get('full_name', 'Unknown')} in file {file.name}", "WARN")
                 continue
-            cursor.execute("""
+            try:
+                exists = cursor.execute(
+                    "SELECT 1 FROM players WHERE afl_id = ?", (player["afl_id"],)
+                ).fetchone() is not None
+                cursor.execute("""
                 INSERT INTO players (
                     afl_id, full_name, first_name, last_name,
                     nickname, formatted_nickname, formatted_last_name,
@@ -181,7 +188,7 @@ def import_players():
                     scraped_at = excluded.scraped_at,
                     resolved_at = excluded.resolved_at,
                     last_updated = excluded.last_updated
-            """, (
+                """, (
                 player.get("afl_id"),
                 player.get("full_name"),
                 player.get("first_name"),
@@ -200,15 +207,20 @@ def import_players():
                 player.get("source"),
                 player.get("scraped_at"),
                 player.get("resolved_at"),
-                now
-            ))
-
-        total_imported += len(players)
-        log(f"📥 Imported {len(players)} players from {file.name}", "INFO")
+                    now
+                ))
+                counts["updated" if exists else "inserted"] += 1
+            except Exception as exc:
+                counts["failed"] += 1
+                log(f"❌ Failed to import {player.get('full_name', 'Unknown')} from {file.name}: {exc}", "ERROR")
 
     conn.commit()
     conn.close()
-    log(f"✅ Total players processed: {total_imported}", "SUCCESS")
+    log(
+        "✅ Player import: " + ", ".join(f"{name}={value}" for name, value in counts.items()),
+        "SUCCESS" if not counts["failed"] else "WARN",
+    )
+    return counts
 
 def save_injuries_to_db(data: dict, conn: sqlite3.Connection):
     """

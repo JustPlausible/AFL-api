@@ -11,6 +11,7 @@ from scraper.monitor_match_status import extract_status_for_match
 from scraper.scrape_afl_injuries import extract_and_match_club, parse_injuries_html
 from scraper.scrape_afl_lineups import parse_lineups_html
 from scraper.scrape_afl_player_stats import get_match_status_from_header, parse_live_stats
+from merge.helpers import extract_champion_data_id_from_html, extract_club_player_id
 
 ROOT = Path(__file__).parent / "fixtures"
 CORPUS = ROOT / "afl_sources"
@@ -154,12 +155,15 @@ def test_club_and_leaderboard_rendered_contract_extracts_key_identities_and_stat
     cards = club.select(CLUB_SQUAD_SELECTORS.SQUAD_CARD)
     assert len(cards) == 2
     assert cards[0].select_one(CLUB_SQUAD_SELECTORS.PLAYER_LINK)["href"].startswith("/players/2474/")
+    assert extract_club_player_id(cards[0].select_one(CLUB_SQUAD_SELECTORS.PLAYER_LINK)["href"]) == 2474
+    assert extract_champion_data_id_from_html(str(cards[0]))[0] == "1008230"
     assert cards[1].select_one(CLUB_SQUAD_SELECTORS.POSITION) is None
 
     leaders = BeautifulSoup(fixture("html_rendered/player_leaders_identity_and_stats.html"), "html.parser")
     rows = leaders.select(STATS_LEADERS_SELECTORS.BODY_ROWS)
     assert len(rows) == 1
     assert rows[0].select_one(STATS_LEADERS_SELECTORS.PLAYER_NAME_LINK)["href"].startswith("/players/2474")
+    assert extract_champion_data_id_from_html(str(rows[0]))[0] == "1008230"
     stats = {button["title"].split(": ")[1].rstrip("."): button.get_text(strip=True)
              for button in rows[0].select(STATS_LEADERS_SELECTORS.STAT_BUTTONS)}
     assert stats == {"Goals": "2", "Disposals": "18", "Hitouts": "0", "Marks": "6", "Tackles": "4"}
