@@ -26,10 +26,15 @@ def extract_afl_id(href: str) -> int | None:
 
 def parse_lineups_html(html, round_number):
     soup = BeautifulSoup(html, "html.parser")
+    matches = soup.select(TEAM_LINEUP_SELECTORS.MATCH_ITEM)
+    if not matches:
+        raise ValueError(
+            f"Lineup source contract contains no match blocks '{TEAM_LINEUP_SELECTORS.MATCH_ITEM}'"
+        )
     all_players = []
     now_iso = datetime.now(timezone.utc).isoformat()
 
-    for match in soup.select(TEAM_LINEUP_SELECTORS.MATCH_ITEM):
+    for match in matches:
         # Extract match_id directly from match page link
         header_link = match.select_one(TEAM_LINEUP_SELECTORS.MATCH_HEADER_LINK)
         match_id = None
