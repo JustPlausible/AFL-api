@@ -8,6 +8,7 @@ import sqlite3
 import os
 import sys
 import json
+from pathlib import Path
 from datetime import datetime, timezone
 from bs4 import BeautifulSoup
 from utils.log import setup_logger
