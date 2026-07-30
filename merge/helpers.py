@@ -25,20 +25,26 @@ def load_leaderboard_index():
     ensure_leaderboard_fresh(max_age_hours=24)
 
     if not LEADERBOARD_PATH.exists():
-        log("❌ Leaderboard file not found after attempted refresh!", "ERROR")
-        return {}
+        raise RuntimeError("Leaderboard file not found after attempted refresh")
 
     with LEADERBOARD_PATH.open("r") as f:
         leaderboard = json.load(f)
 
+    if not isinstance(leaderboard, list) or not leaderboard:
+        raise RuntimeError("Leaderboard contains no player identity records")
+
     index = {}
     for player in leaderboard:
         champ_id = player.get("champion_data_id")
-        if champ_id:
-            index[champ_id] = {
+        afl_id = player.get("afl_id")
+        afl_url = player.get("afl_url")
+        if champ_id is not None and afl_id and afl_url:
+            index[str(champ_id).strip()] = {
                 "afl_id": player.get("afl_id"),
-                "afl_url": player.get("afl_url"),
+                "afl_url": afl_url,
             }
+    if not index:
+        raise RuntimeError("Leaderboard contains no usable Champion Data to AFL identity mappings")
     return index
 
 def resolve_players_for_club(club_slug: str, skip_existing=False):
@@ -56,7 +62,14 @@ def resolve_players_for_club(club_slug: str, skip_existing=False):
         log(f"[!] Missing raw file for {display_name}", "ERROR")
         return
 
-    leaderboard_index = load_leaderboard_index()
+    try:
+        leaderboard_index = load_leaderboard_index()
+    except (RuntimeError, OSError, json.JSONDecodeError) as exc:
+        # Fresh squad records carry the AFL ID from their canonical profile URL.
+        # Continue with those direct identities, but never hide cache failure or
+        # invent an identity for older unresolved records.
+        log(f"⚠️ Leaderboard identities unavailable: {exc}; using direct squad identities only", "WARN")
+        leaderboard_index = {}
 
     with raw_path.open("r") as f:
         raw_players = json.load(f)
@@ -64,12 +77,13 @@ def resolve_players_for_club(club_slug: str, skip_existing=False):
     enriched_players = []
     for player in raw_players:
         champ_id = player.get("champion_data_id")
+        champ_id = str(champ_id).strip() if champ_id is not None else None
         leaderboard_data = leaderboard_index.get(champ_id)
 
         enriched = {
             **player,
             "afl_id": leaderboard_data["afl_id"] if leaderboard_data else player.get("afl_id"),
-            "afl_url": leaderboard_data["afl_url"] if leaderboard_data else None,
+            "afl_url": leaderboard_data["afl_url"] if leaderboard_data else player.get("afl_url"),
             "source": "afl-leaderboard" if leaderboard_data else "fallback",
             "resolved_at": datetime.now(timezone.utc).isoformat()
         }

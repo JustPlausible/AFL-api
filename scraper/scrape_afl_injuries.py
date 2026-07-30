@@ -2,6 +2,7 @@ import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 from db.import_to_db import save_injuries_to_db
 from db.scrape_runs import audited_scrape_run
 from db.connection import get_db_connection
@@ -11,7 +12,7 @@ from playwright.sync_api import sync_playwright
 
 from utils.log import setup_logger
 from merge.helpers import match_injury_player_to_db
-from utils.club_lookup import get_club_by_slug, load_clubs, resolve_club_code
+from utils.club_lookup import get_canonical_club, load_clubs, resolve_club_code
 from utils.dictionary import CLUB_SLUG_ALIASES
 from scraper.afl_selectors import INJURY_SELECTORS
 
@@ -34,8 +35,17 @@ def extract_and_match_club(img_src: str, alt_text: str = "") -> dict | None:
 
     # Fallback: extract and normalise from img src
     log.debug(f"🖼 Image src: {img_src}")
-    filename = img_src.split("/")[-1].split("?")[0]  # e.g. 'kuwarna-strap-2024-logo.jpg'
-    slug_raw = filename.replace(".jpg", "")
+    filename = Path(unquote(urlsplit(img_src).path)).name
+    slug_raw = Path(filename).stem
+
+    # Current editorial artwork names contain useful identifiers among unrelated
+    # production tokens. Match each separator-delimited token independently; do
+    # not turn the full, release-specific artwork name into a persistent alias.
+    for token in re.split(r"[_\-\s]+", slug_raw):
+        club = get_canonical_club(token)
+        if club:
+            log.debug(f"🆔 Matched image filename token: {token} → {club['code']}")
+            return club
     
     # Strip only recognised trailing suffixes
     slug_cleaned = re.sub(r"(-(?:sdnr-)?(?:strap|logo|banner)(?:-[\d]{4})?)$", "", slug_raw, flags=re.IGNORECASE)
@@ -44,9 +54,9 @@ def extract_and_match_club(img_src: str, alt_text: str = "") -> dict | None:
     if slug_raw != slug_cleaned:
         log.debug(f"🧽 Cleaned slug: '{slug_raw}' → '{slug_cleaned}'")
 
-    if slug_cleaned in [club["code"].lower() for club in clubs]:
-        club = next(c for c in clubs if c["code"].lower() == slug_cleaned)
-        log.debug(f"🆔 Matched using club code fallback: {slug_cleaned} → {club['code']}")
+    club = get_canonical_club(slug_cleaned)
+    if club:
+        log.debug(f"🆔 Matched using whole-slug fallback: {slug_cleaned} → {club['code']}")
         return club
 
     # Try match against slug or aliases

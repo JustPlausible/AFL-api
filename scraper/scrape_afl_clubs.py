@@ -106,6 +106,10 @@ def scrape_club_players(club: dict) -> list[dict]:
                     "club_profile_url": club_profile_url,
                     "image_url": image_url,
                     "champion_data_id": champion_data_id,
+                    # Club profile links use the canonical AFL player ID. Keep
+                    # club_id for compatibility while exposing its true identity.
+                    "afl_id": club_id,
+                    "afl_url": f"https://www.afl.com.au/players/{club_id}" if club_id else None,
                     "club_id": club_id,
                     "scraped_at": scrape_time
                 })

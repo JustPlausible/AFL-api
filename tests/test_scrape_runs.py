@@ -66,7 +66,7 @@ def test_recover_stale_running_runs_uses_cutoff(tmp_path):
 
 def test_migration_is_additive_and_idempotent(tmp_path):
     db = tmp_path / "fresh.db"
-    assert migrate_database(db) == ["0001", "0002", "0003", "0004", "0005", "0006", "0007"]
+    assert migrate_database(db) == ["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008"]
     assert migrate_database(db) == []
     c = sqlite3.connect(db)
     tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
