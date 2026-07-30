@@ -1,0 +1,278 @@
+{
+  "schema_version": 1,
+  "source": "Canonical AFL bootstrap seed",
+  "seed_source": "Public AFL API (/afl/v2/teams?compSeasonId=<seasonId>&pageSize=20) plus local editorial aliases",
+  "last_reviewed": "2026-07-30",
+  "clubs": [
+    {
+      "name": "Adelaide Crows",
+      "slug": "adelaide",
+      "canonicalCode": "ADE",
+      "teamId": 1,
+      "clubId": 3,
+      "providerId": "CD_T10",
+      "abbreviation": "ADEL",
+      "clubSiteUrl": "https://www.afc.com.au/",
+      "squadUrl": "https://www.afc.com.au/teams/afl",
+      "editorialAliases": [
+        "kuwarna",
+        "kuwarnastrap",
+        "adelaidecrows",
+        "adelaidestrapnew"
+      ]
+    },
+    {
+      "name": "Brisbane Lions",
+      "slug": "brisbane",
+      "canonicalCode": "BRI",
+      "teamId": 2,
+      "clubId": 13,
+      "providerId": "CD_T20",
+      "abbreviation": "BL",
+      "clubSiteUrl": "https://www.lions.com.au/",
+      "squadUrl": "https://www.lions.com.au/teams/afl/squad",
+      "editorialAliases": [
+        "goreng goreng",
+        "brisbanelions"
+      ]
+    },
+    {
+      "name": "Carlton Blues",
+      "slug": "carlton",
+      "canonicalCode": "CAR",
+      "teamId": 5,
+      "clubId": 1,
+      "providerId": "CD_T30",
+      "abbreviation": "CARL",
+      "clubSiteUrl": "https://www.carltonfc.com.au/",
+      "squadUrl": "https://www.carltonfc.com.au/teams/afl",
+      "editorialAliases": [
+        "yanoong"
+      ]
+    },
+    {
+      "name": "Collingwood Magpies",
+      "slug": "collingwood",
+      "canonicalCode": "COL",
+      "teamId": 3,
+      "clubId": 12,
+      "providerId": "CD_T40",
+      "abbreviation": "COLL",
+      "clubSiteUrl": "https://www.collingwoodfc.com.au/",
+      "squadUrl": "https://www.collingwoodfc.com.au/teams/afl",
+      "editorialAliases": []
+    },
+    {
+      "name": "Essendon Bombers",
+      "slug": "essendon",
+      "canonicalCode": "ESS",
+      "teamId": 12,
+      "clubId": 10,
+      "providerId": "CD_T50",
+      "abbreviation": "ESS",
+      "clubSiteUrl": "https://www.essendonfc.com.au/",
+      "squadUrl": "https://www.essendonfc.com.au/teams/afl",
+      "editorialAliases": [
+        "ngarrindjeri"
+      ]
+    },
+    {
+      "name": "Fremantle Dockers",
+      "slug": "fremantle",
+      "canonicalCode": "FRE",
+      "teamId": 14,
+      "clubId": 6,
+      "providerId": "CD_T60",
+      "abbreviation": "FRE",
+      "clubSiteUrl": "https://www.fremantlefc.com.au/",
+      "squadUrl": "https://www.fremantlefc.com.au/teams/afl",
+      "editorialAliases": [
+        "walyalup"
+      ]
+    },
+    {
+      "name": "Geelong Cats",
+      "slug": "geelong",
+      "canonicalCode": "GEE",
+      "teamId": 10,
+      "clubId": 15,
+      "providerId": "CD_T70",
+      "abbreviation": "GEEL",
+      "clubSiteUrl": "https://www.geelongcats.com.au/",
+      "squadUrl": "https://www.geelongcats.com.au/teams/afl",
+      "editorialAliases": [
+        "djilang",
+        "geelongcats"
+      ]
+    },
+    {
+      "name": "Hawthorn Hawks",
+      "slug": "hawthorn",
+      "canonicalCode": "HAW",
+      "teamId": 9,
+      "clubId": 16,
+      "providerId": "CD_T80",
+      "abbreviation": "HAW",
+      "clubSiteUrl": "https://www.hawthornfc.com.au/",
+      "squadUrl": "https://www.hawthornfc.com.au/teams/afl",
+      "editorialAliases": [
+        "kulin"
+      ]
+    },
+    {
+      "name": "Melbourne Demons",
+      "slug": "melbourne",
+      "canonicalCode": "MEL",
+      "teamId": 17,
+      "clubId": 14,
+      "providerId": "CD_T90",
+      "abbreviation": "MELB",
+      "clubSiteUrl": "https://www.melbournefc.com.au/",
+      "squadUrl": "https://www.melbournefc.com.au/teams/afl",
+      "editorialAliases": [
+        "narrm"
+      ]
+    },
+    {
+      "name": "North Melbourne Kangaroos",
+      "slug": "northmelbourne",
+      "canonicalCode": "NTH",
+      "teamId": 6,
+      "clubId": 20,
+      "providerId": "CD_T100",
+      "abbreviation": "NMFC",
+      "clubSiteUrl": "https://www.nmfc.com.au/",
+      "squadUrl": "https://www.nmfc.com.au/teams/afl/players",
+      "editorialAliases": [
+        "yowong-illam",
+        "northmelbourne"
+      ]
+    },
+    {
+      "name": "Port Adelaide Power",
+      "slug": "portadelaide",
+      "canonicalCode": "PTA",
+      "teamId": 7,
+      "clubId": 19,
+      "providerId": "CD_T110",
+      "abbreviation": "PORT",
+      "clubSiteUrl": "https://www.portadelaidefc.com.au/",
+      "squadUrl": "https://www.portadelaidefc.com.au/teams/afl",
+      "editorialAliases": [
+        "yartapuulti",
+        "portadelaide"
+      ]
+    },
+    {
+      "name": "Richmond Tigers",
+      "slug": "richmond",
+      "canonicalCode": "RIC",
+      "teamId": 16,
+      "clubId": 22,
+      "providerId": "CD_T120",
+      "abbreviation": "RICH",
+      "clubSiteUrl": "https://www.richmondfc.com.au/",
+      "squadUrl": "https://www.richmondfc.com.au/football/afl/squad",
+      "editorialAliases": [
+        "ngarra"
+      ]
+    },
+    {
+      "name": "St Kilda Saints",
+      "slug": "stkilda",
+      "canonicalCode": "STK",
+      "teamId": 11,
+      "clubId": 21,
+      "providerId": "CD_T130",
+      "abbreviation": "STK",
+      "clubSiteUrl": "https://www.saints.com.au/",
+      "squadUrl": "https://www.saints.com.au/afl/squad",
+      "editorialAliases": [
+        "euro-yroke",
+        "stkilda",
+        "stkstrapnew"
+      ]
+    },
+    {
+      "name": "Sydney Swans",
+      "slug": "sydney",
+      "canonicalCode": "SYD",
+      "teamId": 13,
+      "clubId": 24,
+      "providerId": "CD_T160",
+      "abbreviation": "SYD",
+      "clubSiteUrl": "https://www.sydneyswans.com.au/",
+      "squadUrl": "https://www.sydneyswans.com.au/afl",
+      "editorialAliases": [
+        "gadigal",
+        "sydneyswans"
+      ]
+    },
+    {
+      "name": "West Coast Eagles",
+      "slug": "westcoast",
+      "canonicalCode": "WCE",
+      "teamId": 18,
+      "clubId": 23,
+      "providerId": "CD_T150",
+      "abbreviation": "WCE",
+      "clubSiteUrl": "https://www.westcoasteagles.com.au/",
+      "squadUrl": "https://www.westcoasteagles.com.au/teams/afl/players",
+      "editorialAliases": [
+        "waalitj marawar",
+        "westcoasteagles"
+      ]
+    },
+    {
+      "name": "Western Bulldogs",
+      "slug": "westernbulldogs",
+      "canonicalCode": "WBD",
+      "teamId": 8,
+      "clubId": 25,
+      "providerId": "CD_T140",
+      "abbreviation": "WB",
+      "clubSiteUrl": "https://www.westernbulldogs.com.au/",
+      "squadUrl": "https://www.westernbulldogs.com.au/teams/afl",
+      "editorialAliases": [
+        "westernbulldogs",
+        "bulldogs",
+        "ngarigo",
+        "westernbulldogsafl"
+      ]
+    },
+    {
+      "name": "Gold Coast Suns",
+      "slug": "goldcoast",
+      "canonicalCode": "GCS",
+      "teamId": 4,
+      "clubId": 9,
+      "providerId": "CD_T1000",
+      "abbreviation": "GCFC",
+      "clubSiteUrl": "https://www.goldcoastfc.com.au/",
+      "squadUrl": "https://www.goldcoastfc.com.au/teams/afl/players",
+      "editorialAliases": [
+        "goldcoast",
+        "suns",
+        "yugambeh",
+        "gc",
+        "gcstrapnewlogored",
+        "goldcoastsuns"
+      ]
+    },
+    {
+      "name": "Greater Western Sydney Giants",
+      "slug": "gws",
+      "canonicalCode": "GWS",
+      "teamId": 15,
+      "clubId": 5,
+      "providerId": "CD_T1010",
+      "abbreviation": "GWS",
+      "clubSiteUrl": "https://www.gwsgiants.com.au/",
+      "squadUrl": "https://www.gwsgiants.com.au/teams/afl",
+      "editorialAliases": [
+        "GWS Giants",
+        "gulumbirri"
+      ]
+    }
+  ]
+}
