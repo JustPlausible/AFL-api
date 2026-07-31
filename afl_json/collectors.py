@@ -17,7 +17,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-from .client import AflJsonClient, AflJsonInvalidResponse
+from .client import AflJsonClient, AflJsonInvalidResponse, AflJsonResourceUnavailable
 from .contracts import IDENTIFIER_TYPES, Pagination, get_endpoint
 
 logger = logging.getLogger(__name__)
@@ -56,6 +56,7 @@ class PlayerCollectionResult:
     players: list[dict[str, Any]]
     player_seasons: list[dict[str, Any]]
     diagnostics: list[CollectionDiagnostic]
+    status: str = "published"
 
 
 class RawResponseWriter:
@@ -289,23 +290,30 @@ class PublicAflCollector:
             mappings, diagnostics = self.player_id_map()
         else:
             mappings, diagnostics = dict(id_map), []
-        raw_players, season_diagnostics = self.season_players(provider_season_id)
+        try:
+            raw_players, season_diagnostics = self.season_players(provider_season_id)
+        except AflJsonResourceUnavailable:
+            return PlayerCollectionResult([], [], diagnostics, "unavailable")
         diagnostics.extend(season_diagnostics)
         identities: list[dict[str, Any]] = []
         associations: list[dict[str, Any]] = []
         for item in raw_players:
             champion_id = item["playerId"]
             afl_id = mappings.get(champion_id)
-            name = _player_name(item.get("playerName"))
+            player_name = item.get("playerName")
+            name = _player_name(player_name)
             identities.append({"champion_data_player_id": champion_id,
-                               "afl_player_id": afl_id, "name": name})
+                               "afl_player_id": afl_id, "name": name,
+                               "given_name": (player_name.get("givenName") if isinstance(player_name, dict) else None),
+                               "family_name": (player_name.get("surname") if isinstance(player_name, dict) else None)})
             associations.append(_normalise_player_season(item, provider_season_id))
             if afl_id is None:
                 self._diagnose(diagnostics, "unmapped_player",
                                "No AFL numeric ID for season player",
                                provider_season_id=provider_season_id,
                                champion_data_player_id=champion_id)
-        return PlayerCollectionResult(identities, associations, diagnostics)
+        status = "empty" if not raw_players else ("partial" if season_diagnostics else "published")
+        return PlayerCollectionResult(identities, associations, diagnostics, status)
 
     def collect(self, *, competition_code: str = "AFL", competition_provider_id: str = "CD_C014",
                 season: str | int | None = None, relevant_date: date | None = None) -> CollectionResult:

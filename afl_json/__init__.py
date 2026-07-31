@@ -57,6 +57,9 @@ from .match_status import (
     later_match_status, normalise_match_status, reconcile_match_status,
 )
 from .bootstrap import BootstrapSummary, persist_afl_metadata
+from .player_persistence import (
+    PlayerIdentityConflict, PlayerPersistenceSummary, persist_player_seasons,
+)
 
 __all__ = [
     "CFS_ERROR_AUTH",
@@ -109,4 +112,7 @@ __all__ = [
     "reconcile_match_status",
     "BootstrapSummary",
     "persist_afl_metadata",
+    "PlayerIdentityConflict",
+    "PlayerPersistenceSummary",
+    "persist_player_seasons",
 ]

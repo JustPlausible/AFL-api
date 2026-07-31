@@ -30,6 +30,11 @@ CLI outcomes are distinct:
 The structured output identifies `source_family=cfs_json`,
 `collector=MatchRosterCollector`, a null `persistence_target`, and
 `persistence_performed=false`. Roster collection does not write lineup rows.
+Although roster selections repeat Champion Data player, team and match IDs,
+they do not supply the independent AFL numeric player crosswalk or a trustworthy
+replacement boundary. v0.5.0 therefore uses the season-player and ID-map
+collectors for canonical persistence and deliberately defers match-selection
+persistence to v0.5.1.
 
 `--afl-raw-directory PATH` enables the existing deterministic raw capture.
 Available responses are saved as their original JSON list and unpublished

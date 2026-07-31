@@ -62,6 +62,16 @@ rows without deleting unrelated rows. Re-running the migration/upsert produces
 the same rows. Runtime lookup, the club import CLI, and player-stat alias loading
 all use the same validated loader rather than `data/clubs.json`.
 
+Migration `0009` adds `canonical_players` plus the provider-namespaced
+`player_provider_ids` crosswalk. Provider values are stored as opaque text and
+are unique inside their namespace; contradictory mappings fail instead of
+being reassigned. `competition_season_players` retains one canonical player
+membership per AFL competition season, with an optional composite foreign key
+to `afl_team_seasons`. The minimal team-season table prevents historical player
+membership from depending on the mutable `afl_teams.season_id` compatibility
+column. Existing `players`, `player_stats`, and `cfs_player_stats` behavior is
+preserved; CFS statistic observations gain a nullable canonical-player link.
+
 ## Creating a migration
 
 1. Add `db/migrations/NNNN_short_description.py` with the next identifier.

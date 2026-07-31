@@ -1,7 +1,12 @@
 import json
 from pathlib import Path
 
-from afl_json import AflJsonResponse, PublicAflCollector
+import pytest
+
+from afl_json import (
+    AflJsonAuthenticationError, AflJsonResourceUnavailable, AflJsonResponse,
+    PublicAflCollector,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures" / "afl_json"
 def fixture(name): return json.loads((FIXTURES / name).read_text())
@@ -19,7 +24,12 @@ class FixtureClient:
 def test_collects_and_joins_mapped_and_unmapped_players_without_live_requests():
     client = FixtureClient({"player_id_map": fixture("player_id_map.json"), "season_players": fixture("season_players_complete.json")})
     result = PublicAflCollector(client).collect_players("CD_S2026")
-    assert result.players == [{"champion_data_player_id":"CD_I100","afl_player_id":7001,"name":"Ada Example"},{"champion_data_player_id":"CD_I999","afl_player_id":None,"name":"Una Mapped"}]
+    assert result.players == [
+        {"champion_data_player_id":"CD_I100","afl_player_id":7001,"name":"Ada Example",
+         "given_name":"Ada","family_name":"Example"},
+        {"champion_data_player_id":"CD_I999","afl_player_id":None,"name":"Una Mapped",
+         "given_name":"Una","family_name":"Mapped"},
+    ]
     assert result.player_seasons[0]["team_abbreviation"] == "CAT"
     assert [(x.code,x.context["champion_data_player_id"]) for x in result.diagnostics] == [("unmapped_player","CD_I999")]
 
@@ -55,6 +65,24 @@ def test_transferred_player_keeps_distinct_season_associations():
     collector=PublicAflCollector(FixtureClient({"season_players":[first,second]}))
     one=collector.collect_players("CD_S1",{"CD_I100":7001}); two=collector.collect_players("CD_S2",{"CD_I100":7001})
     assert {(x["provider_season_id"],x["team_id"]) for x in one.player_seasons+two.player_seasons} == {("CD_S1","CD_T1"),("CD_S2","CD_T2")}
+
+
+def test_unavailable_is_distinct_and_authentication_failure_propagates():
+    class FailingClient(FixtureClient):
+        error = None
+        def get(self, endpoint, **kwargs):
+            name = endpoint.name if hasattr(endpoint, "name") else endpoint
+            if name == "season_players":
+                raise self.error
+            return super().get(endpoint, **kwargs)
+
+    client = FailingClient({"player_id_map": fixture("player_id_map.json")})
+    client.error = AflJsonResourceUnavailable("not published", endpoint="season_players")
+    assert PublicAflCollector(client).collect_players("CD_S1").status == "unavailable"
+
+    client.error = AflJsonAuthenticationError("bad token", endpoint="season_players")
+    with pytest.raises(AflJsonAuthenticationError, match="bad token"):
+        PublicAflCollector(client).collect_players("CD_S1")
 
 def test_player_raw_diagnostic_files_have_stable_endpoint_season_and_page_names(tmp_path):
     initial={"players":[{"playerId":"CD_I1"}],"totalResults":2}; page={"players":[{"playerId":"CD_I1"},{"playerId":"CD_I2"}],"totalResults":2}
