@@ -95,3 +95,24 @@ def test_fresh_install_and_upgrade_receive_canonical_clubs(tmp_path):
     migrate_database(upgraded)
     conn = sqlite3.connect(upgraded)
     assert conn.execute("SELECT name FROM clubs WHERE code='ADE'").fetchone() == ("Adelaide Crows",)
+
+
+def test_identifier_refresh_migration_updates_brisbane_and_preserves_unrelated_rows(tmp_path):
+    database = tmp_path / "already-migrated.db"
+    migrate_database(database)
+    conn = sqlite3.connect(database)
+    conn.execute("UPDATE clubs SET aliases = ? WHERE code = 'BRI'", (json.dumps(["brisbanelions"]),))
+    conn.execute("INSERT INTO clubs(code, name, aliases) VALUES ('LOCAL', 'Local Club', '[]')")
+    conn.execute("DELETE FROM schema_migrations WHERE migration_id = '0010'")
+    conn.commit()
+    conn.close()
+
+    assert migrate_database(database) == ["0010"]
+
+    conn = sqlite3.connect(database)
+    brisbane_aliases = json.loads(
+        conn.execute("SELECT aliases FROM clubs WHERE code = 'BRI'").fetchone()[0]
+    )
+    assert "BRIS" in brisbane_aliases
+    assert conn.execute("SELECT name FROM clubs WHERE code = 'LOCAL'").fetchone() == ("Local Club",)
+    conn.close()
