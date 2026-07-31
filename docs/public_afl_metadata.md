@@ -11,10 +11,12 @@ python cli.py --bootstrap-afl-season 2026
 ```
 
 The command resolves the Premiership competition and requested year through
-the public metadata API, then atomically inserts or updates the competition,
-season, teams, rounds and matches. It prints counts for records read, inserted,
-updated, unchanged and failed. Repeating it is safe: stable AFL identifiers are
-used as keys, while fixture, venue, score and status changes are updated.
+the public metadata API, then inserts or updates the competition, season,
+team-season links, rounds and matches. It next uses the existing normalized CFS
+season-player and public player-ID-map collectors to transactionally persist
+canonical players, separate provider mappings, and player-season membership.
+It prints metadata and player counts, diagnostics, missing team-link counts and
+the player collection state. Repeating it is safe.
 
 Recommended new-installation settings are `AFL_COMPETITION_CODE=AFL`,
 `AFL_COMPETITION_PROVIDER_ID=CD_C014`, and `AFL_SEASON_YEAR=2026`. An explicit
@@ -23,8 +25,11 @@ Recommended new-installation settings are `AFL_COMPETITION_CODE=AFL`,
 Legacy numeric settings remain available to legacy scrapers.
 
 Add `--afl-raw-directory PATH` to retain deterministic raw API responses for
-diagnostics. The bootstrap only collects and persists public metadata: it does
-not start the scheduler or collect rosters, lineups, injuries, or player stats.
+diagnostics. The bootstrap does not start the scheduler or persist match
+selections, lineups, injuries, or player stats. CFS authentication is required
+for the season-player population. `unavailable` and a valid `empty` population
+are reported distinctly and neither deletes existing membership;
+authentication errors remain errors and never trigger a legacy HTML fallback.
 
 ## Read-only diagnostics
 
@@ -88,3 +93,21 @@ retained with a null AFL ID; malformed, duplicate, contradictory, count and
 unmapped cases are returned as structured diagnostics. When raw capture is
 enabled, both endpoints use the same endpoint/scope/page filename convention as
 the metadata hierarchy.
+
+The ID map is authoritative for the AFL numeric ID to Champion Data player-ID
+crosswalk. The season-player response is authoritative for membership in the
+requested Champion Data competition season and supplies a Champion Data team
+ID when available. That team ID is linked only when it matches a team in the
+metadata-bootstrap team-season association. No provider ID is transformed into
+another provider's ID, and unresolved team links remain null with diagnostics.
+
+## v0.5.0 persistence boundary
+
+v0.5.0 persists the AFL metadata hierarchy, canonical player identities and
+provider mappings, competition-season player membership, reliable season team
+links, and current CFS match player statistics. It does not promise a complete
+model of every discovered AFL domain, complete historical roster
+reconstruction, publication-safe persistence of every match selection,
+automatic deletion after partial/unavailable responses, or removal of all
+legacy player and enrichment tables. Match roster persistence is deliberately
+deferred to v0.5.1.

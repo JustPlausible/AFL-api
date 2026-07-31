@@ -112,6 +112,12 @@ def persist_afl_metadata(conn: sqlite3.Connection, result: CollectionResult) -> 
                 "club_json": _json(team.get("club")), "source_json": _json(team.get("source")),
                 "updated_at": now,
             })
+            conn.execute(
+                "INSERT INTO afl_team_seasons(competition_season_id,team_id,created_at,updated_at) "
+                "VALUES (?,?,?,?) ON CONFLICT(competition_season_id,team_id) "
+                "DO UPDATE SET updated_at=excluded.updated_at",
+                (season["afl_id"], team["afl_id"], now, now),
+            )
         for round_record in result.rounds:
             save("rounds", "round_id", {
                 "round_id": round_record["afl_id"], "round_label": round_record.get("name"),

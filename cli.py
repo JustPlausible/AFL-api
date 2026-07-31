@@ -16,7 +16,8 @@ from db.connection import get_db_connection
 from db.club_seed import upsert_club_seed
 from afl_json import (
     AflJsonClient, MatchPlayerStatsCollector, MatchRosterCollector, PublicAflCollector,
-    later_match_status, persist_afl_metadata, reconcile_match_status, upsert_player_stats,
+    later_match_status, persist_afl_metadata, persist_player_seasons,
+    reconcile_match_status, upsert_player_stats,
 )
 from config import AFL_COMPETITION_CODE, AFL_COMPETITION_PROVIDER_ID, AFL_SEASON_YEAR, DB_PATH
 
@@ -137,7 +138,7 @@ def handle_args():
     metadata_group.add_argument("--collect-afl-metadata", action="store_true",
                                 help="Collect competition, season, rounds, teams and matches without database writes")
     metadata_group.add_argument("--bootstrap-afl-season", metavar="YEAR",
-                                help="Collect and idempotently persist an AFL season (does not start the scheduler)")
+                                help="Persist AFL metadata plus canonical players and season membership")
     metadata_group.add_argument("--afl-season", default=AFL_SEASON_YEAR,
                                 help="Select a season by year, AFL ID, provider ID or exact name")
     metadata_group.add_argument("--afl-competition-code", default=AFL_COMPETITION_CODE,
@@ -321,13 +322,15 @@ def main():
 
     elif args.bootstrap_afl_season:
         with AflJsonClient() as client:
-            result = PublicAflCollector(
+            collector = PublicAflCollector(
                 client, raw_directory=args.afl_raw_directory
-            ).collect(
+            )
+            result = collector.collect(
                 competition_code=args.afl_competition_code,
                 competition_provider_id=args.afl_competition_provider_id,
                 season=args.bootstrap_afl_season,
             )
+            player_result = collector.collect_players(result.season["provider_id"])
         conn = get_db_connection()
         try:
             with audited_scrape_run(
@@ -335,14 +338,28 @@ def main():
                 target_identifier=args.bootstrap_afl_season, conn=conn,
             ) as audit:
                 summary = persist_afl_metadata(conn, result)
-                audit["rows_read"] = summary.records_read
-                audit["rows_written"] = summary.inserted + summary.updated
+                player_summary = persist_player_seasons(
+                    conn, player_result, provider_season_id=result.season["provider_id"]
+                )
+                audit["rows_read"] = summary.records_read + player_summary.records_read
+                audit["rows_written"] = (summary.inserted + summary.updated
+                                         + player_summary.rows_written)
         finally:
             conn.close()
         print(json.dumps({
             "competition": result.competition["name"], "season": result.season["name"],
             "records_read": summary.records_read, "inserted": summary.inserted,
             "updated": summary.updated, "unchanged": summary.unchanged, "failed": summary.failed,
+            "player_collection_status": player_summary.status,
+            "players_collected": player_summary.records_read,
+            "canonical_players_inserted": player_summary.players_inserted,
+            "canonical_players_updated": player_summary.players_updated,
+            "provider_mappings_inserted": player_summary.mappings_inserted,
+            "player_seasons_inserted": player_summary.associations_inserted,
+            "player_seasons_updated": player_summary.associations_updated,
+            "player_seasons_unchanged": player_summary.unchanged,
+            "missing_team_links": player_summary.missing_team_links,
+            "player_diagnostics": [diagnostic.code for diagnostic in player_result.diagnostics],
         }))
 
     elif args.collect_afl_metadata:

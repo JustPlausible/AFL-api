@@ -293,10 +293,20 @@ def upsert_player_stats(conn: sqlite3.Connection, result: PlayerStatsCollectionR
     if result.status in {PlayerStatsStatus.UNAVAILABLE, PlayerStatsStatus.EMPTY}:
         return 0
     authority = 2 if result.status is PlayerStatsStatus.CONCLUDED else 1
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    stat_columns = {row[1] for row in conn.execute("PRAGMA table_info(cfs_player_stats)")}
+    supports_canonical_link = ("player_provider_ids" in tables
+                               and "canonical_player_id" in stat_columns)
     written = 0
     for record in result.records:
         values = asdict(record)
         numeric = [_sqlite_number(values[name]) for name in CANONICAL_STAT_FIELDS]
+        mapped_player = (conn.execute(
+            "SELECT player_id FROM player_provider_ids "
+            "WHERE provider='champion_data' AND provider_player_id=?",
+            (record.champion_data_player_id,),
+        ).fetchone() if supports_canonical_link else None)
+        canonical_player_id = mapped_player[0] if mapped_player else None
         # Collection time alone does not make a snapshot new information. A
         # repeated response should therefore be a zero-write idempotent run,
         # while a newer same-authority response with any changed source or
@@ -306,18 +316,35 @@ def upsert_player_stats(conn: sqlite3.Connection, result: PlayerStatsCollectionR
             "endpoint_source_status", "resolved_match_status",
             *CANONICAL_STAT_FIELDS, "extra_stats_json", "raw_player_json",
         )
+        if supports_canonical_link:
+            changed_columns = (*changed_columns, "canonical_player_id")
         meaningful_change = " OR ".join(
             f"excluded.{name} IS NOT cfs_player_stats.{name}" for name in changed_columns
         )
+        canonical_column = "canonical_player_id," if supports_canonical_link else ""
+        canonical_assignment = ("canonical_player_id=excluded.canonical_player_id,"
+                                if supports_canonical_link else "")
+        parameters = [record.match_provider_id, record.champion_data_player_id,
+                      None if record.afl_match_id is None else str(record.afl_match_id),
+                      record.team_provider_id]
+        if supports_canonical_link:
+            parameters.append(canonical_player_id)
+        parameters.extend((record.side, record.collected_at, record.source_endpoint,
+                           record.endpoint_source_status, record.resolved_match_status,
+                           authority, *numeric,
+                           json.dumps(record.extra_stats, separators=(",", ":"), sort_keys=True),
+                           json.dumps(record.raw_player, separators=(",", ":"), sort_keys=True)))
         cursor = conn.execute(f"""
             INSERT INTO cfs_player_stats (
                 match_provider_id, champion_data_player_id, afl_match_id, team_provider_id,
+                {canonical_column}
                 side, collected_at, source_endpoint, endpoint_source_status,
                 resolved_match_status, snapshot_authority,
                 {', '.join(CANONICAL_STAT_FIELDS)}, extra_stats_json, raw_player_json
-            ) VALUES ({', '.join('?' for _ in range(20))})
+            ) VALUES ({', '.join('?' for _ in parameters)})
             ON CONFLICT(match_provider_id, champion_data_player_id) DO UPDATE SET
                 afl_match_id=excluded.afl_match_id, team_provider_id=excluded.team_provider_id,
+                {canonical_assignment}
                 side=excluded.side, collected_at=excluded.collected_at,
                 source_endpoint=excluded.source_endpoint,
                 endpoint_source_status=excluded.endpoint_source_status,
@@ -329,13 +356,7 @@ def upsert_player_stats(conn: sqlite3.Connection, result: PlayerStatsCollectionR
                OR (excluded.snapshot_authority = cfs_player_stats.snapshot_authority
                    AND excluded.collected_at >= cfs_player_stats.collected_at
                    AND ({meaningful_change}))
-        """, (record.match_provider_id, record.champion_data_player_id,
-              None if record.afl_match_id is None else str(record.afl_match_id),
-              record.team_provider_id, record.side, record.collected_at,
-              record.source_endpoint, record.endpoint_source_status,
-              record.resolved_match_status, authority, *numeric,
-              json.dumps(record.extra_stats, separators=(",", ":"), sort_keys=True),
-              json.dumps(record.raw_player, separators=(",", ":"), sort_keys=True)))
+        """, parameters)
         written += cursor.rowcount
     return written
 

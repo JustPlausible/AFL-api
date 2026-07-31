@@ -6,6 +6,14 @@
 > [`docs/operational_source_policy.md`](../operational_source_policy.md). This
 > note does not alter the review's original verdict or findings.
 
+> **Implementation status (Issue #75):** The canonical persistence gap recorded
+> below is now implemented. The supported season bootstrap persists normalized
+> player identities, separate AFL and Champion Data provider mappings,
+> competition-season membership, and reliable metadata-backed team links. Empty
+> or unavailable responses never delete existing membership, and match roster
+> selections remain read-only pending publication-safe v0.5.1 semantics. This
+> status note preserves the historical review findings and verdict as written.
+
 **Review date:** 30 July 2026
 
 **Reviewed revision:** `fe59f78` (`work`)
