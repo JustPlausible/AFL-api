@@ -4,6 +4,7 @@ This directory contains active project documentation for operating, developing, 
 
 ## Operational and development guides
 
+- [Operator CLI command reference](cli.md)
 - [Operational AFL source policy and source matrix](operational_source_policy.md)
 
 - [Administrator CSRF protection](admin_csrf.md)

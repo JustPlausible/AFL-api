@@ -68,6 +68,11 @@ architectural redesign.
    one short v0.5.0 runbook covering migration, canonical club seed, season
    bootstrap, service start, readiness verification, backup, and rollback.
 
+   **Issue #76 update:** the nonexistent CLI examples have been removed from
+   the README and replaced by the implemented JSON-first commands and the
+   operator CLI reference. The environment/runbook portions of this historical
+   readiness finding remain separately scoped.
+
 ## Architecture consistency
 
 | Principle | Finding | Release assessment |
