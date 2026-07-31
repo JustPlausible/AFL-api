@@ -1,6 +1,5 @@
 import sqlite3
 from contextlib import contextmanager
-import subprocess
 
 import pytest
 
@@ -137,37 +136,36 @@ def test_cli_rejects_invalid_and_unknown_arguments(argv, message, capsys):
     assert message in capsys.readouterr().err
 
 
-def test_scheduler_round_invocation_uses_supported_cli(monkeypatch):
+def test_scheduler_round_invocation_uses_persistent_html_policy(monkeypatch):
     calls = []
-    monkeypatch.setattr(schedule_lineup_scrapes.subprocess, "run", lambda command, check: calls.append((command, check)))
+    from collection import source_policy
+    monkeypatch.setattr(source_policy, "collect_operational",
+                        lambda domain, **kwargs: calls.append((domain, kwargs)))
 
     schedule_lineup_scrapes.run_lineup_round_scraper(9)
 
-    assert calls == [(["python3", "-m", "scraper.scrape_afl_lineups", "--round", "9"], True)]
+    assert calls == [(source_policy.OperationalDomain.LINEUPS, {"target_id": 9})]
 
 
-def test_scheduler_match_invocation_uses_supported_cli(monkeypatch):
+def test_scheduler_match_invocation_resolves_round_for_persistent_html_policy(monkeypatch):
     calls = []
-    monkeypatch.setattr(schedule_lineup_scrapes.subprocess, "run", lambda command, check: calls.append((command, check)))
+    from collection import source_policy
+    monkeypatch.setattr(source_policy, "round_for_match", lambda match_id: 9)
+    monkeypatch.setattr(source_policy, "collect_operational",
+                        lambda domain, **kwargs: calls.append((domain, kwargs)))
 
     schedule_lineup_scrapes.run_lineup_match_scraper(7043)
 
-    assert calls == [(["python3", "-m", "scraper.scrape_afl_lineups", "--match", "7043"], True)]
+    assert calls == [(source_policy.OperationalDomain.LINEUPS, {"target_id": 9})]
 
 
-def test_scheduler_reports_and_propagates_failed_subprocess(monkeypatch):
-    def fail(command, check):
-        raise subprocess.CalledProcessError(7, command)
-
-    errors = []
-    monkeypatch.setattr(schedule_lineup_scrapes.subprocess, "run", fail)
-    monkeypatch.setattr(schedule_lineup_scrapes.log, "error", errors.append)
-
-    with pytest.raises(subprocess.CalledProcessError):
+def test_scheduler_propagates_policy_failure_without_html_fallback(monkeypatch):
+    from collection import source_policy
+    monkeypatch.setattr(source_policy, "round_for_match", lambda match_id: 9)
+    monkeypatch.setattr(source_policy, "collect_operational",
+                        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("CFS failed")))
+    with pytest.raises(RuntimeError, match="CFS failed"):
         schedule_lineup_scrapes.run_lineup_match_scraper(7043)
-
-    assert "match 7043" in errors[0]
-    assert "exit code 7" in errors[0]
 
 
 def test_match_mode_filters_unrelated_matches(monkeypatch):

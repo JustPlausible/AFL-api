@@ -53,6 +53,15 @@ def test_scheduler_valid_triggers_create_registry_with_admin_manual_and_correct_
         assert calls[-1][0] == func_name
         assert calls[-1][1]["job_type"] == job_type
         assert calls[-1][1]["trigger_type"] == "admin_manual"
+        body = resp.json()
+        assert body["selected_source"] in {"public_json", "cfs_json", "html"}
+        assert body["collector"]
+        assert body["persistence"] in {"persistent", "read_only"}
+        assert body["rows_collected"] is None
+        assert body["rows_persisted"] is None
+        assert body["outcome_status"] == "pending"
+        assert body["fallback_occurred"] is False
+        assert body["fallback_reason"] is None
     assert _registry_count(path) == 5
 
 
@@ -78,20 +87,17 @@ def test_scheduler_invalid_submissions_create_no_registry_or_audit_record(tmp_pa
 
 def test_manual_wrappers_propagate_admin_manual_once_and_correlation(monkeypatch):
     calls = []
-    import types, sys
-    monkeypatch.setitem(sys.modules, "scraper.scrape_afl_matches", types.SimpleNamespace(run=lambda **kw: calls.append(("fixtures", kw))))
-    monkeypatch.setitem(sys.modules, "scraper.scrape_afl_lineups", types.SimpleNamespace(
-        scrape_team_lineups=lambda **kw: calls.append(("lineups_round", kw)),
-        scrape_match_lineup=lambda **kw: calls.append(("lineups_match", kw)),
-    ))
-    monkeypatch.setitem(sys.modules, "scraper.scrape_afl_player_stats", types.SimpleNamespace(run_scraper=lambda **kw: calls.append(("stats", kw))))
+    from collection import source_policy
+    monkeypatch.setattr(source_policy, "collect_operational",
+                        lambda domain, **kw: calls.append((domain.value, kw)))
+    monkeypatch.setattr(source_policy, "round_for_match", lambda match_id: 1)
     manual_triggers.manual_refresh_fixtures_round(1, "jid")
     manual_triggers.manual_refresh_lineups_round(1, "jid")
     manual_triggers.manual_refresh_lineups_match(10, "jid")
     manual_triggers.manual_refresh_player_stats_match(10, "jid")
     assert all(call[1]["trigger_source"] == "admin_manual" for call in calls)
     assert all(call[1]["correlation_id"] == "jid" for call in calls)
-    assert calls[-1][1]["once"] is True
+    assert [call[0] for call in calls] == ["metadata", "lineups", "lineups", "match_player_stats"]
 
 
 def test_duplicate_manual_trigger_returns_existing_job(tmp_path, monkeypatch):

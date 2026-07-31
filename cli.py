@@ -1,5 +1,6 @@
 import json
 import argparse
+import re
 import sqlite3
 from pathlib import Path
 from utils.log import log
@@ -29,6 +30,27 @@ def _json_default(value):
     if is_dataclass(value):
         return asdict(value)
     raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
+def _provider_id(value: str, *, prefix: str, label: str, example: str) -> str:
+    """Validate opaque Champion Data identifiers before any CFS request."""
+    candidate = value.strip()
+    if not re.fullmatch(rf"{re.escape(prefix)}[A-Za-z0-9_-]+", candidate):
+        raise argparse.ArgumentTypeError(
+            f"{label} must be a Champion Data provider ID in the form {prefix}... "
+            f"(example: {example}); numeric AFL identifiers are not accepted"
+        )
+    return candidate
+
+
+def cfs_round_provider_id(value: str) -> str:
+    return _provider_id(value, prefix="CD_R", label="round provider ID",
+                        example="CD_R202601421")
+
+
+def cfs_match_provider_id(value: str) -> str:
+    return _provider_id(value, prefix="CD_M", label="match provider ID",
+                        example="CD_M20260142001")
 
 def import_clubs_to_db():
     """Load clubs from the canonical seed and import using a shared connection."""
@@ -106,10 +128,10 @@ def handle_args():
     match_group.add_argument("--scrape-injuries", action="store_true", help="Scrape AFL injury list")
     match_group.add_argument("--print-json", action="store_true",
                              help="Print full scraped or normalised JSON to stdout (redirect to save it)")
-    match_group.add_argument("--scrape-lineups", type=int, metavar="ROUND", help="Scrape team lineups for a round")
-    match_group.add_argument("--scrape-round", type=int, metavar="ROUND_ID", help="Scrape AFL matches for a specific round_id (e.g. 1156)")
-    match_group.add_argument("--scrape-all-rounds", action="store_true", help="Scrape AFL matches for all rounds in DB")
-    match_group.add_argument("--scrape-match", type=int, metavar="MATCH_ID", help="Scrape player stats for a specific match_id")
+    match_group.add_argument("--scrape-lineups", type=int, metavar="ROUND", help="Explicit legacy HTML lineup scrape (persists legacy lineup tables)")
+    match_group.add_argument("--scrape-round", type=int, metavar="ROUND_ID", help="Explicit legacy HTML match scrape for a round_id")
+    match_group.add_argument("--scrape-all-rounds", action="store_true", help="Explicit legacy HTML match scrape for all database rounds")
+    match_group.add_argument("--scrape-match", type=int, metavar="MATCH_ID", help="Explicit legacy HTML player-stat scrape; persists to player_stats (not fallback or dual-write)")
 
     metadata_group = parser.add_argument_group("Public AFL Metadata")
     metadata_group.add_argument("--collect-afl-metadata", action="store_true",
@@ -125,9 +147,11 @@ def handle_args():
     metadata_group.add_argument("--afl-raw-directory", type=Path,
                                 help="Store original per-endpoint/page API JSON below this directory")
     metadata_group.add_argument("--collect-match-rosters", metavar="ROUND_PROVIDER_ID",
-                                help="Collect CFS team selections for a Champion Data round ID")
+                                type=cfs_round_provider_id,
+                                help="Collect CFS selections read-only; requires CD_R... (example: CD_R202601421)")
     metadata_group.add_argument("--collect-match-player-stats", metavar="MATCH_PROVIDER_ID",
-                                help="Collect canonical CFS player statistics for a Champion Data match ID")
+                                type=cfs_match_provider_id,
+                                help="Collect CFS stats into cfs_player_stats; requires CD_M... (example: CD_M20260142001)")
     metadata_group.add_argument("--source-status",
                                 help="Canonical match status fallback for player-stat diagnostics")
     metadata_group.add_argument("--afl-match-id", type=int,
@@ -189,7 +213,12 @@ def main():
         scrape_afl_matches.run(round_id=None)
 
     elif args.scrape_match:
-        log(f"📊 Scraping player stats for match_id {args.scrape_match}", "INFO")
+        log(
+            f"📊 Explicit legacy player-stat collection for match_id {args.scrape_match}: "
+            "source_family=html collector=scraper.scrape_afl_player_stats "
+            "persistence_target=player_stats fallback_occurred=false",
+            "INFO",
+        )
         # This legacy scraper loads club aliases during import. Keep that
         # runtime-data dependency out of argument parsing and unrelated CLI
         # commands, including --help and public metadata collection.
@@ -234,6 +263,11 @@ def main():
         finally:
             conn.close()
         output = {
+            "source_family": "cfs_json",
+            "collector": "MatchPlayerStatsCollector",
+            "persistence_target": "cfs_player_stats",
+            "fallback_occurred": False,
+            "fallback_reason": None,
             "match_provider_id": result.match_provider_id,
             "status": result.status.value,
             "endpoint_source_status": result.endpoint_source_status,
@@ -264,6 +298,12 @@ def main():
                 client, raw_directory=args.afl_raw_directory
             ).collect(args.collect_match_rosters)
         output = {
+            "source_family": "cfs_json",
+            "collector": "MatchRosterCollector",
+            "persistence_target": None,
+            "persistence_performed": False,
+            "fallback_occurred": False,
+            "fallback_reason": None,
             "round_provider_id": result.round_provider_id,
             "status": result.status.value,
             "publication_state": result.publication_state,
@@ -275,9 +315,9 @@ def main():
         if args.print_json:
             print(json.dumps(output, indent=2))
         else:
-            print(json.dumps({"round_provider_id": result.round_provider_id,
-                              "status": result.status.value,
-                              "selections": len(result.selections)}))
+            output.pop("rosters")
+            output["selections"] = len(result.selections)
+            print(json.dumps(output))
 
     elif args.bootstrap_afl_season:
         with AflJsonClient() as client:

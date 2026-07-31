@@ -2,14 +2,10 @@
 
 from apscheduler.triggers.interval import IntervalTrigger
 from utils.log import setup_logger
-from datetime import datetime
 from db.connection import get_db_connection
 from scheduler.registry import add_registered_job, live_match_day_job_id, live_match_refresh_job_id
-from scraper.scrape_afl_matches import run as scrape_matches
-import sys
-import subprocess
-from subprocess import Popen
-import time, random
+import random
+import time
 
 log = setup_logger("refresh_live_matches", "refresh_live_matches.log")
 
@@ -24,7 +20,7 @@ def refresh_live_matches():
     cursor = conn.cursor()
 
     cursor.execute("""
-        SELECT DISTINCT round_id
+        SELECT match_id
         FROM matches
         WHERE status = 'LIVE' AND round_id IS NOT NULL
     """)
@@ -35,15 +31,25 @@ def refresh_live_matches():
     if not rows:
         log.info("📭 No LIVE matches found.")
 
-    for (round_id,) in rows:
-        log.info(f"🔁 Refreshing round {round_id} due to LIVE match...")
-        scrape_matches(round_id=round_id)
+    from collection.source_policy import OperationalDomain, collect_operational
+    for (match_id,) in rows:
+        log.info(f"🔁 Refreshing public JSON status for LIVE match {match_id}...")
+        collect_operational(OperationalDomain.MATCH_STATUS, target_id=match_id)
 
     conn.close()
 
 def scrape_today_matches():
-    log.info("🔁 Live match-day scrape running...")
-    subprocess.run([sys.executable, "-m", "scraper.scrape_afl_matches"], check=True)
+    log.info("🔁 Live match-day public JSON status collection running...")
+    conn = get_db_connection()
+    try:
+        rows = conn.execute("""
+            SELECT match_id FROM matches
+            WHERE date(start_time_utc) = date('now', 'localtime')
+        """).fetchall()
+    finally:
+        conn.close()
+    from collection.source_policy import OperationalDomain, collect_operational
+    return [collect_operational(OperationalDomain.MATCH_STATUS, target_id=row[0]) for row in rows]
 
 def register_live_match_day_scraper(scheduler):
     def today_has_matches():

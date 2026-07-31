@@ -129,6 +129,32 @@ def test_admin_route_returns_promptly_and_does_not_run_scraper_functions(tmp_pat
     assert time.monotonic() - start < 1
 
 
+def test_admin_queue_response_displays_source_and_pending_persistence_diagnostics(tmp_path, monkeypatch):
+    client, _ = _client(tmp_path, monkeypatch)
+    def fake_post(url, json, timeout):
+        class R:
+            status_code = 200
+            def raise_for_status(self): pass
+            def json(self): return {
+                "status": "queued", "outcome_status": "pending", "job_id": "admin_manual_lineup",
+                "selected_source": "html", "collector": "scraper.scrape_afl_lineups",
+                "persistence": "persistent", "rows_collected": None, "rows_persisted": None,
+                "fallback_occurred": False, "fallback_reason": None,
+            }
+        return R()
+    monkeypatch.setattr("admin.httpx.post", fake_post)
+    response = client.post("/scheduler/manual/lineups_round", headers=_auth(),
+                           data={"round_id": "1", "csrf_token": _token(client)})
+    assert response.status_code == 200
+    assert "Source: html" in response.text
+    assert "collector: scraper.scrape_afl_lineups" in response.text
+    assert "behaviour: persistent" in response.text
+    assert "rows collected: pending" in response.text
+    assert "rows persisted: pending" in response.text
+    assert "outcome: pending" in response.text
+    assert "fallback: no" in response.text
+
+
 def test_scheduler_unavailable_message_is_sanitized(tmp_path, monkeypatch):
     client, _ = _client(tmp_path, monkeypatch)
     import httpx
