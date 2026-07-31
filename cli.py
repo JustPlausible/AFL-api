@@ -110,60 +110,73 @@ def scrape_lineups_to_db(round_number: int, print_json: bool = False):
 
     conn.close()
 
-def handle_args():
+def create_parser() -> argparse.ArgumentParser:
+    """Build the flag-based CLI parser without loading runtime scraper data."""
     parser = argparse.ArgumentParser(
-        description="AFL CLI Tools: Scraping, Enrichment, and Data Management"
+        description=("AFL operator CLI: preferred AFL/CFS JSON collection and "
+                     "explicit legacy HTML tools")
     )
 
     # 🔹 Club-related arguments
-    club_group = parser.add_argument_group("Club Tools")
-    club_group.add_argument("--scrape-club", metavar="CLUB_NAME", help="Scrape a single club's player list")
-    club_group.add_argument("--scrape-clubs", action="store_true", help="Scrape all clubs")
-    club_group.add_argument("--enrich-club", metavar="CLUB_NAME", help="Enrich a single club with aliases/codes")
-    club_group.add_argument("--enrich-clubs", action="store_true", help="Enrich all clubs")
-    club_group.add_argument("--scrape-enrich-all", action="store_true", help="Scrape + enrich all clubs and import to DB")
+    club_group = parser.add_argument_group("Club import, export, HTML scrape, and enrichment")
+    club_group.add_argument("--scrape-club", metavar="CLUB_NAME", help="Legacy HTML: scrape one club's players to a raw JSON file")
+    club_group.add_argument("--scrape-clubs", action="store_true", help="Legacy HTML: scrape all clubs to raw JSON files")
+    club_group.add_argument("--enrich-club", metavar="CLUB_NAME", help="Enrich one existing raw club JSON file locally")
+    club_group.add_argument("--enrich-clubs", action="store_true", help="Enrich all existing raw club JSON files locally")
+    club_group.add_argument("--scrape-enrich-all", action="store_true", help="Legacy HTML: scrape and enrich every club, then persist players")
     club_group.add_argument("--skip-existing", action="store_true", help="(Club-only) Skip if output file already exists")
 
     # 🔹 Match + fixture scraping
-    match_group = parser.add_argument_group("Match + Player Stat Tools")
-    match_group.add_argument("--scrape-injuries", action="store_true", help="Scrape AFL injury list")
-    match_group.add_argument("--print-json", action="store_true",
-                             help="Print full scraped or normalised JSON to stdout (redirect to save it)")
+    match_group = parser.add_argument_group("Explicit legacy AFL HTML collection")
+    match_group.add_argument("--scrape-injuries", action="store_true", help="Legacy HTML: collect the AFL injury list and persist injuries")
     match_group.add_argument("--scrape-lineups", type=int, metavar="ROUND", help="Explicit legacy HTML lineup scrape (persists legacy lineup tables)")
     match_group.add_argument("--scrape-round", type=int, metavar="ROUND_ID", help="Explicit legacy HTML match scrape for a round_id")
     match_group.add_argument("--scrape-all-rounds", action="store_true", help="Explicit legacy HTML match scrape for all database rounds")
     match_group.add_argument("--scrape-match", type=int, metavar="MATCH_ID", help="Explicit legacy HTML player-stat scrape; persists to player_stats (not fallback or dual-write)")
 
-    metadata_group = parser.add_argument_group("Public AFL Metadata")
+    metadata_group = parser.add_argument_group("Preferred AFL public JSON")
     metadata_group.add_argument("--collect-afl-metadata", action="store_true",
                                 help="Collect competition, season, rounds, teams and matches without database writes")
-    metadata_group.add_argument("--bootstrap-afl-season", metavar="YEAR",
-                                help="Persist AFL metadata plus canonical players and season membership")
-    metadata_group.add_argument("--afl-season", default=AFL_SEASON_YEAR,
+    metadata_group.add_argument("--bootstrap-afl-season", metavar="SEASON",
+                                help="Persist AFL metadata plus CFS players and season membership")
+    metadata_group.add_argument("--afl-season", default=AFL_SEASON_YEAR, metavar="SEASON",
                                 help="Select a season by year, AFL ID, provider ID or exact name")
-    metadata_group.add_argument("--afl-competition-code", default=AFL_COMPETITION_CODE,
+    metadata_group.add_argument("--afl-competition-code", default=AFL_COMPETITION_CODE, metavar="CODE",
                                 help="Stable Premiership competition code")
-    metadata_group.add_argument("--afl-competition-provider-id", default=AFL_COMPETITION_PROVIDER_ID,
+    metadata_group.add_argument("--afl-competition-provider-id", default=AFL_COMPETITION_PROVIDER_ID, metavar="PROVIDER_ID",
                                 help="Stable Premiership provider ID")
-    metadata_group.add_argument("--afl-raw-directory", type=Path,
-                                help="Store original per-endpoint/page API JSON below this directory")
-    metadata_group.add_argument("--collect-match-rosters", metavar="ROUND_PROVIDER_ID",
+    cfs_group = parser.add_argument_group("Preferred Champion Data/CFS JSON")
+    cfs_group.add_argument("--collect-match-rosters", metavar="ROUND_PROVIDER_ID",
                                 type=cfs_round_provider_id,
                                 help="Collect CFS selections read-only; requires CD_R... (example: CD_R202601421)")
-    metadata_group.add_argument("--collect-match-player-stats", metavar="MATCH_PROVIDER_ID",
+    cfs_group.add_argument("--collect-match-player-stats", metavar="MATCH_PROVIDER_ID",
                                 type=cfs_match_provider_id,
                                 help="Collect CFS stats into cfs_player_stats; requires CD_M... (example: CD_M20260142001)")
-    metadata_group.add_argument("--source-status",
-                                help="Canonical match status fallback for player-stat diagnostics")
-    metadata_group.add_argument("--afl-match-id", type=int,
-                                help="AFL match ID used to resolve canonical match metadata")
+    cfs_group.add_argument("--source-status", metavar="STATUS",
+                           help="With --collect-match-player-stats: explicit canonical status fallback")
+    cfs_group.add_argument("--afl-match-id", type=int, metavar="AFL_MATCH_ID",
+                           help="With --collect-match-player-stats: numeric AFL ID for canonical status resolution")
+
+    output_group = parser.add_argument_group("Output and JSON diagnostics")
+    output_group.add_argument("--print-json", action="store_true",
+                              help="Print full collected/normalised JSON; does not disable persistence")
+    output_group.add_argument("--afl-raw-directory", type=Path, metavar="PATH",
+                              help="Retain original JSON responses below PATH; never stores credentials")
 
     # 🔹 Backup and restore
-    db_group = parser.add_argument_group("Data Backup / Restore")
-    db_group.add_argument("--import-clubs", action="store_true", help="Import clubs from JSON file into DB")
+    db_group = parser.add_argument_group("Club database tools")
+    db_group.add_argument("--import-clubs", action="store_true", help="Persist the canonical club seed to the database")
     db_group.add_argument("--export-clubs", action="store_true", help="Export clubs from DB to backup JSON")
 
-    return parser.parse_args()
+    return parser
+
+
+def handle_args():
+    parser = create_parser()
+    args = parser.parse_args()
+    if (args.source_status or args.afl_match_id is not None) and not args.collect_match_player_stats:
+        parser.error("--source-status and --afl-match-id require --collect-match-player-stats CD_M...")
+    return args
 
 def main():
     args = handle_args()

@@ -94,52 +94,36 @@ The intended production boundary is:
 
 Do not publish scheduler ports in production Compose files. If scheduler mutation endpoints become reachable outside the trusted management network in a supported deployment, add the smallest practical shared internal token for those mutation routes before exposing that deployment. For the documented production Compose model, a separate scheduler token is not required because the scheduler is not host-published, admin reaches it on the internal management network, `admin-access` is only for the authenticated admin host port, and the configured scheduler egress network is for outbound scraping rather than inbound management access.
 
-## 🧩 Commands
+## 🧩 Operator CLI
 
-### Run full scrape and enrich:
-
-```bash
-python3 cli.py --all
-```
-
-### Scrape or enrich individually:
+Use the implemented parser as the command reference:
 
 ```bash
-python3 cli.py --scrape richmond
-python3 cli.py --enrich richmond
+python cli.py --help
 ```
 
-### Scrape and import injury list:
+JSON is the preferred operational source. For example, public AFL metadata can
+be inspected without database writes, or bootstrapped into the canonical
+tables:
 
 ```bash
-python3 cli.py --scrape-injuries
+python cli.py --collect-afl-metadata --afl-season 2026 --print-json
+python cli.py --bootstrap-afl-season 2026
 ```
 
-### Scrape team line-ups:
+Authenticated Champion Data/CFS commands require opaque provider IDs, not AFL
+numeric IDs. Roster collection is read-only; match player-stat collection
+persists to `cfs_player_stats`:
 
 ```bash
-python3 -m scraper.scrape_afl_lineups --round 9
-python3 -m scraper.scrape_afl_lineups --match 7043
-python3 -m scraper.scrape_afl_lineups 9  # backward-compatible round form
-python3 cli.py --scrape-lineups 9
+python cli.py --collect-match-rosters CD_R202601421 --print-json
+python cli.py --collect-match-player-stats CD_M20260142001 --print-json
 ```
 
-# Scrape match fixtures for a round
-```bash
-python3 cli.py --scrape-round 9
-```
-
-# Import or export clubs
-```bash
-python3 cli.py --import-clubs
-python3 cli.py --export-clubs
-```
-
-# Scrape player stats for a match or round
-```bash
-python3 scraper/scrape_afl_player_stats.py --match-id 7043
-python3 scraper/scrape_afl_player_stats.py --round-id 1155 --once
-```
+Rendered-HTML commands remain available only as explicit legacy tools; the CLI
+never silently falls back from JSON to HTML. Club tools, persistence behavior,
+identifier formats, diagnostics, prerequisites, and every legacy command are
+documented in the **[operator CLI guide](docs/cli.md)**.
 
 ## 🔐 API Key Authentication
 

@@ -5,7 +5,7 @@ participation or player statistics. Collect one Champion Data round through the
 existing authenticated CFS client:
 
 ```bash
-python cli.py --collect-match-rosters CD_R2026_18 --print-json
+python cli.py --collect-match-rosters CD_R202601421 --print-json
 ```
 
 The argument is an opaque Champion Data round provider ID and must start with

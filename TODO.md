@@ -18,7 +18,7 @@ This is a planning document to help break down development of the AFL scraping a
 - [x] Scrape `data-season-id`, `data-competition-id`, and `data-round-id` from `.js-react-fixtures`
 - [x] Extract list of `round_id` and round names from HTML
 - [ ] Store season and round info in `rounds` table
-- [ ] Add CLI command: `cli.py scrape-fixtures-index`
+- [ ] Assess a CLI entry point for fixture-index collection.
 
 ---
 
@@ -27,7 +27,7 @@ This is a planning document to help break down development of the AFL scraping a
 - [x] Given a round ID, fetch fixture page
 - [x] Parse match details: teams, venue, time, status
 - [x] Create or update `matches` table
-- [x] Add CLI command: `cli.py scrape-round --round-id=1147`
+- [x] Add CLI command: `python cli.py --scrape-round 1147`
 - [x] Track match `status` transitions: UPCOMING → LIVE → COMPLETED
 
 ---
@@ -46,7 +46,7 @@ This is a planning document to help break down development of the AFL scraping a
 - [x] Scrape from `https://www.afl.com.au/news/injury-list`
 - [x] Parse club, player name, injury, return estimate
 - [x] Store with timestamp or round context
-- [x] Add command: `cli.py scrape-injuries`
+- [x] Add command: `python cli.py --scrape-injuries`
 
 ---
 

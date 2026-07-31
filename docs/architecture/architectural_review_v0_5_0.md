@@ -552,9 +552,10 @@ This is usable but increasingly difficult to extend.
 | --afl-match-id | Canonical match reconciliation | Necessary but advanced |
 | --import-clubs, --export-clubs | Club backup/restore | Coherent utility operations |
 | --print-json | Full output for supported paths | Useful, but not universal |
-The runtime help accurately lists the current options, but the README still advertises --all, --scrape richmond, and --enrich richmond, none of which exist in the parser.
-
-That documentation drift is a notable v0.5.0 usability risk.
+At review time, the runtime help accurately listed the current options while
+the README advertised nonexistent options. Issue #76 subsequently corrected
+those examples, added an operator command reference, and added a documentation
+contract test. The finding is retained here as historical review context.
 
 ### 7.2 Naming and parameter consistency
 Key inconsistencies:
