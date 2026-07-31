@@ -87,10 +87,13 @@ def scrape_injuries_to_db(print_json=False):
     with audited_scrape_run("injury", target_type="injury_list", conn=conn) as audit:
         data = scrape_injury_list(conn)
         audit["rows_read"] = sum(team.get("player_count", 0) for team in data.get("teams", []))
-        save_injuries_to_db(data, conn)
-        audit["rows_written"] = audit["rows_read"]
+        summary = save_injuries_to_db(data, conn)
+        audit["rows_written"] = summary["rows_persisted"]
+        audit["status"] = summary["status"]
         if print_json:
-            print(json.dumps(data, indent=2))
+            print(json.dumps({**data, "summary": summary}, indent=2))
+        else:
+            print(json.dumps(summary))
     conn.close()
 
 def scrape_lineups_to_db(round_number: int, print_json: bool = False):

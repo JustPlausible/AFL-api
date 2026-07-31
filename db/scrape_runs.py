@@ -15,8 +15,9 @@ from db.connection import get_db_connection
 
 STATUS_RUNNING = "running"
 STATUS_COMPLETED = "completed"
+STATUS_PARTIAL = "partial"
 STATUS_FAILED = "failed"
-STATUSES = {STATUS_RUNNING, STATUS_COMPLETED, STATUS_FAILED}
+STATUSES = {STATUS_RUNNING, STATUS_COMPLETED, STATUS_PARTIAL, STATUS_FAILED}
 
 TRIGGER_CLI = "cli"
 TRIGGER_SCHEDULER = "scheduler"
@@ -140,8 +141,11 @@ def _finish(run_id: str, status: str, *, rows_read=None, rows_written=None, erro
             db.close()
 
 
-def complete_scrape_run(run_id: str, *, rows_read: int | None = None, rows_written: int | None = None, conn: sqlite3.Connection | None = None) -> None:
-    _finish(run_id, STATUS_COMPLETED, rows_read=rows_read, rows_written=rows_written, conn=conn)
+def complete_scrape_run(run_id: str, *, rows_read: int | None = None,
+                        rows_written: int | None = None, partial: bool = False,
+                        conn: sqlite3.Connection | None = None) -> None:
+    _finish(run_id, STATUS_PARTIAL if partial else STATUS_COMPLETED,
+            rows_read=rows_read, rows_written=rows_written, conn=conn)
 
 
 def fail_scrape_run(run_id: str, exc: BaseException | str, *, conn: sqlite3.Connection | None = None) -> None:
@@ -202,7 +206,9 @@ def audited_scrape_run(scrape_type: str, *, target_type: str | None = None, targ
         raise
     else:
         if run_id is not None:
-            complete_scrape_run(run_id, rows_read=counts.get("rows_read"), rows_written=counts.get("rows_written"), conn=conn)
+            complete_scrape_run(run_id, rows_read=counts.get("rows_read"),
+                                rows_written=counts.get("rows_written"),
+                                partial=counts.get("status") == "partial", conn=conn)
     finally:
         if previous_active is None:
             os.environ.pop("AFL_SCRAPE_RUN_ACTIVE", None)

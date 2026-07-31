@@ -5,7 +5,7 @@ import pytest
 
 from db.migration_runner import migrate_database
 from db.scrape_runs import (
-    STATUS_COMPLETED, STATUS_FAILED, STATUS_RUNNING, TRIGGER_CLI,
+    STATUS_COMPLETED, STATUS_FAILED, STATUS_PARTIAL, STATUS_RUNNING, TRIGGER_CLI,
     complete_scrape_run, fail_scrape_run, recent_scrape_runs, recover_stale_running_runs,
     sanitize_error_summary, start_scrape_run,
 )
@@ -51,6 +51,16 @@ def test_fail_sanitizes_and_truncates(tmp_path):
     assert "hunter2" not in row["error_summary"]
 
 
+def test_partial_success_is_a_distinct_audit_outcome(tmp_path):
+    c = conn(tmp_path)
+    rid = start_scrape_run("injury", trigger_source=TRIGGER_CLI, conn=c)
+
+    complete_scrape_run(rid, rows_read=3, rows_written=1, partial=True, conn=c)
+
+    row = c.execute("SELECT status,rows_read,rows_written FROM scrape_runs WHERE run_id=?", (rid,)).fetchone()
+    assert tuple(row) == (STATUS_PARTIAL, 3, 1)
+
+
 def test_recover_stale_running_runs_uses_cutoff(tmp_path):
     c = conn(tmp_path)
     old = start_scrape_run("match", trigger_source=TRIGGER_CLI, conn=c)
@@ -66,7 +76,7 @@ def test_recover_stale_running_runs_uses_cutoff(tmp_path):
 
 def test_migration_is_additive_and_idempotent(tmp_path):
     db = tmp_path / "fresh.db"
-    assert migrate_database(db) == ["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010"]
+    assert migrate_database(db) == ["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011"]
     assert migrate_database(db) == []
     c = sqlite3.connect(db)
     tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
