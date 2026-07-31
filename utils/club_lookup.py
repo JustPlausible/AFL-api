@@ -46,12 +46,13 @@ def load_clubs():
 
 def get_canonical_club(identifier: str) -> dict | None:
     """Match one normalized source token against canonical club identifiers."""
-    needle = re.sub(r"[^a-z0-9]", "", identifier.casefold())
+    needle = re.sub(r"[^a-z0-9]", "", str(identifier).casefold())
     if not needle:
         return None
     for club in load_club_seed():
         identifiers = (
-            club["code"], club["abbreviation"], club["slug"],
+            club["code"], club["abbreviation"], club["slug"], club["name"],
+            club["providerId"], str(club["teamId"]),
             *club.get("aliases", []),
         )
         if any(re.sub(r"[^a-z0-9]", "", value.casefold()) == needle

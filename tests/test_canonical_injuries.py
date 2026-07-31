@@ -16,23 +16,24 @@ def database(tmp_path):
     conn = sqlite3.connect(path)
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("INSERT INTO afl_competitions VALUES (1,'CD_C014','AFL','AFL','{}','{}','now')")
-    conn.execute("INSERT INTO afl_seasons(afl_id,provider_id,competition_id,year,is_current,updated_at) VALUES (86,'CD_S2026014',1,2026,1,'now')")
+    conn.execute("INSERT INTO afl_seasons(afl_id,provider_id,competition_id,year,is_current,updated_at) VALUES (85,'CD_S2026014',1,2026,NULL,'now')")
     conn.executemany(
         "INSERT INTO afl_teams(afl_id,provider_id,season_id,name,abbreviation,updated_at) VALUES (?,?,?,?,?,'now')",
-        [(10, "CD_T10", 86, "Adelaide Crows", "ADE"),
-         (20, "CD_T20", 86, "Other Club", "OTH")],
+        [(1, "CD_T10", 85, "Adelaide Crows", "ADEL"),
+         (12, "CD_T50", 85, "Essendon Bombers", "ESS")],
     )
-    conn.executemany("INSERT INTO afl_team_seasons VALUES (86,?,'now','now')", [(10,), (20,)])
+    conn.executemany("INSERT INTO afl_team_seasons VALUES (85,?,'now','now')", [(1,), (12,)])
     conn.commit()
     yield conn
     conn.close()
 
 
-def add_player(conn, name, afl_id, *, team_id=10, provider=True):
+def add_player(conn, name, afl_id, *, team_id=1, provider=True, player_id=None,
+               season_id=85):
     given, family = name.split(" ", 1)
     cursor = conn.execute(
-        "INSERT INTO canonical_players(display_name,given_name,family_name,created_at,updated_at) VALUES (?,?,?,?,?)",
-        (name, given, family, "now", "now"),
+        "INSERT INTO canonical_players(id,display_name,given_name,family_name,created_at,updated_at) VALUES (?,?,?,?,?,?)",
+        (player_id, name, given, family, "now", "now"),
     )
     player_id = cursor.lastrowid
     if provider:
@@ -41,15 +42,14 @@ def add_player(conn, name, afl_id, *, team_id=10, provider=True):
             (player_id, "afl", str(afl_id), "now", "now"),
         )
     conn.execute(
-        "INSERT INTO competition_season_players(player_id,competition_season_id,team_id,source_provider,source_json,created_at,updated_at) VALUES (?,86,?,'champion_data','{}','now','now')",
-        (player_id, team_id),
+        "INSERT INTO competition_season_players(player_id,competition_season_id,team_id,source_provider,source_json,created_at,updated_at) VALUES (?,?,?,'champion_data','{}','now','now')",
+        (player_id, season_id, team_id),
     )
     conn.commit()
     return player_id
 
 
 @pytest.mark.parametrize(("source_name", "canonical_name", "afl_id"), [
-    ("Hugh Bond", "Hugh Bond", 1),
     ("Darcy Fogarty", "Darcy Fogarty", 2),
     ("Mitch Hinge", "Mitchell Hinge", 3),
     ("Rory Laird", "Rory Laird", 4),
@@ -68,13 +68,53 @@ def test_current_adelaide_players_resolve_without_legacy_players(
     assert database.execute("SELECT COUNT(*) FROM players").fetchone() == (0,)
 
 
+def test_hugh_bond_resolves_production_club_identifiers(database):
+    add_player(database, "Hugh Bond", 5404, player_id=248)
+
+    resolution = resolve_canonical_injury_player("Hugh Bond", "ADE", database)
+
+    assert resolution.status == "resolved"
+    assert resolution.canonical_player_id == 248
+    assert resolution.afl_id == 5404
+
+
 def test_suffix_normalisation_and_wrong_club_protection(database):
     add_player(database, "Rory Laird", 4)
-    add_player(database, "Rory Laird", 99, team_id=20)
+    add_player(database, "Rory Laird", 99, team_id=12)
 
     assert resolve_canonical_injury_player("Rory Laird Jnr.", "ADE", database).afl_id == 4
     wrong = resolve_canonical_injury_player("Rory Laird", "XXX", database)
     assert wrong.status == "unresolved" and wrong.afl_id is None
+
+
+def test_matching_source_and_afl_abbreviations_resolve(database):
+    add_player(database, "Essendon Example", 50, team_id=12)
+
+    resolution = resolve_canonical_injury_player("Essendon Example", "ESS", database)
+
+    assert resolution.status == "resolved" and resolution.afl_id == 50
+
+
+def test_newest_applicable_season_selected_when_is_current_is_null(database):
+    database.execute("INSERT INTO afl_seasons(afl_id,provider_id,competition_id,year,is_current,updated_at) VALUES (84,'CD_S2025014',1,2025,NULL,'now')")
+    database.execute("INSERT INTO afl_team_seasons VALUES (84,1,'now','now')")
+    add_player(database, "Historic Player", 2025, season_id=84)
+    add_player(database, "Historic Player", 2026, season_id=85)
+
+    resolution = resolve_canonical_injury_player("Historic Player", "ADE", database)
+
+    assert resolution.status == "resolved" and resolution.afl_id == 2026
+
+
+def test_explicitly_current_applicable_season_takes_priority(database):
+    database.execute("INSERT INTO afl_seasons(afl_id,provider_id,competition_id,year,is_current,updated_at) VALUES (87,'CD_S2024014',1,2024,1,'now')")
+    database.execute("INSERT INTO afl_team_seasons VALUES (87,1,'now','now')")
+    add_player(database, "Current Player", 2026, season_id=85)
+    add_player(database, "Current Player", 2024, season_id=87)
+
+    resolution = resolve_canonical_injury_player("Current Player", "ADE", database)
+
+    assert resolution.status == "resolved" and resolution.afl_id == 2024
 
 
 def test_ambiguous_match_is_never_assigned(database):

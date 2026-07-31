@@ -12,6 +12,7 @@ from dataclasses import dataclass
 import unicodedata
 from utils.stats_cache import ensure_leaderboard_fresh
 from utils.dictionary import KNOWN_NICKNAMES
+from utils.club_lookup import get_canonical_club
 
 def extract_club_player_id(url: str) -> int:
     match = re.search(r"/players/(\d+)", url)
@@ -139,26 +140,40 @@ def resolve_canonical_injury_player(
 ) -> InjuryPlayerResolution:
     """Resolve an injury name only among canonical members of the supplied club."""
     source_name, source_club = name.strip(), club_code.strip()
+    canonical_club = get_canonical_club(source_club)
+    if canonical_club is None:
+        return InjuryPlayerResolution(
+            "unresolved", source_name, source_club,
+            reason="source club does not resolve to a canonical club identity",
+        )
     rows = conn.execute("""
         SELECT cp.id, cp.display_name, cp.given_name, cp.family_name,
-               ppi.provider_player_id
+               ppi.provider_player_id, season.afl_id, season.year, season.is_current,
+               team.afl_id, team.provider_id, team.name, team.abbreviation
         FROM canonical_players cp
         JOIN competition_season_players csp ON csp.player_id = cp.id
         JOIN afl_seasons season ON season.afl_id = csp.competition_season_id
         JOIN afl_teams team ON team.afl_id = csp.team_id
         LEFT JOIN player_provider_ids ppi
           ON ppi.player_id = cp.id AND ppi.provider = 'afl'
-        WHERE UPPER(team.abbreviation) = UPPER(?)
-          AND season.afl_id = (
-              SELECT s.afl_id
-              FROM afl_seasons s
-              JOIN competition_season_players membership
-                ON membership.competition_season_id = s.afl_id
-              JOIN afl_teams member_team ON member_team.afl_id = membership.team_id
-              WHERE UPPER(member_team.abbreviation) = UPPER(?)
-              ORDER BY s.is_current DESC, s.year DESC, s.afl_id DESC LIMIT 1
-          )
-    """, (source_club, source_club)).fetchall()
+    """).fetchall()
+
+    def team_canonical_code(row) -> str | None:
+        resolved = {
+            club["code"] for identifier in (row[8], row[9], row[10], row[11])
+            if identifier is not None and (club := get_canonical_club(str(identifier))) is not None
+        }
+        return next(iter(resolved)) if len(resolved) == 1 else None
+
+    club_rows = [row for row in rows if team_canonical_code(row) == canonical_club["code"]]
+    if club_rows:
+        selected_season = max(
+            {(1 if row[7] == 1 else 0, row[6] if row[6] is not None else -1, row[5])
+             for row in club_rows}
+        )[2]
+        rows = [row for row in club_rows if row[5] == selected_season]
+    else:
+        rows = []
 
     wanted = _normalise_injury_name(source_name)
     matches = []
