@@ -149,9 +149,13 @@ def collect_operational(
                 from scraper.scrape_afl_injuries import scrape_injury_list, save_injuries_to_db
                 records = scrape_injury_list(conn, trigger_source=trigger_source,
                                              correlation_id=correlation_id)
-                save_injuries_to_db(records, conn)
+                summary = save_injuries_to_db(records, conn)
+                audit["rows_read"] = summary["rows_parsed"]
+                audit["rows_written"] = summary["rows_persisted"]
+                audit["status"] = summary["status"]
                 outcome = CollectionOutcome(selected.domain.value, selected.source_family,
-                    selected.collector, True, False, None, "success", len(records), len(records), target_id)
+                    selected.collector, True, False, None, summary["status"],
+                    summary["rows_parsed"], summary["rows_persisted"], target_id)
             elif selected.domain is OperationalDomain.LINEUPS:
                 if target_id is None:
                     raise ValueError("lineup collection requires an internal round ID")

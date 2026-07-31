@@ -11,7 +11,7 @@ from bs4 import BeautifulSoup, Comment
 from playwright.sync_api import sync_playwright
 
 from utils.log import setup_logger
-from merge.helpers import match_injury_player_to_db
+from merge.helpers import build_canonical_injury_player_resolver
 from utils.club_lookup import get_canonical_club, load_clubs, resolve_club_code
 from utils.dictionary import CLUB_SLUG_ALIASES
 from scraper.afl_selectors import INJURY_SELECTORS
@@ -87,7 +87,8 @@ def scrape_injury_list(db_conn, trigger_source: str | None = None, correlation_i
         audit["rows_read"] = sum(team.get("player_count", 0) for team in result.get("teams", []))
         return result
 
-def parse_injuries_html(html: str, db_conn=None, *, club_resolver=extract_and_match_club) -> list[dict]:
+def parse_injuries_html(html: str, db_conn=None, *, club_resolver=extract_and_match_club,
+                        player_resolver=None) -> list[dict]:
     """Parse rendered injury-list HTML without acquiring a browser page."""
     soup = BeautifulSoup(html, "html.parser")
     if not soup.select_one(INJURY_SELECTORS.ARTICLE_BODY):
@@ -101,6 +102,7 @@ def parse_injuries_html(html: str, db_conn=None, *, club_resolver=extract_and_ma
         )
 
     results = []
+    indexed_resolver = None
     for index, block in enumerate(team_blocks):
         comment = block.find(string=lambda text: isinstance(text, Comment))
         image_soup = BeautifulSoup(comment, "html.parser") if comment else None
@@ -123,11 +125,20 @@ def parse_injuries_html(html: str, db_conn=None, *, club_resolver=extract_and_ma
             cols = row.find_all("td")
             if len(cols) >= 3:
                 name = cols[0].get_text(" ", strip=True)
+                if player_resolver is None:
+                    if indexed_resolver is None:
+                        indexed_resolver = build_canonical_injury_player_resolver(db_conn)
+                    resolution = indexed_resolver.resolve(name, club["code"])
+                else:
+                    resolution = player_resolver(name, club["code"], db_conn)
                 players.append({
                     "name": name,
                     "injury": cols[1].get_text(" ", strip=True),
                     "return": cols[2].get_text(" ", strip=True),
-                    "afl_id": match_injury_player_to_db(name, club["code"], conn=db_conn),
+                    "afl_id": resolution.afl_id,
+                    "canonical_player_id": resolution.canonical_player_id,
+                    "resolution_status": resolution.status,
+                    "resolution_reason": resolution.reason,
                 })
             elif len(cols) == 1 and "updated:" in cols[0].get_text().lower():
                 match = re.search(r"updated:\s*(.+)", cols[0].get_text(" ", strip=True), re.I)

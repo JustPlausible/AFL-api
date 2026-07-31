@@ -75,16 +75,21 @@ def test_rendered_lineup_required_container_mutation_fails_visibly():
 def test_rendered_injuries_populated_and_empty_tables(monkeypatch):
     clubs = {"Adelaide Crows": {"code": "ADEL", "slug": "adelaide"},
              "Carlton": {"code": "CARL", "slug": "carlton"}}
-    monkeypatch.setattr("scraper.scrape_afl_injuries.match_injury_player_to_db",
-                        lambda name, club, conn=None: 9001 if name == "Jordan Example" else None)
+    from merge.helpers import InjuryPlayerResolution
+    resolver = lambda name, club, conn: InjuryPlayerResolution(
+        "resolved" if name == "Jordan Example" else "unresolved", name, club,
+        afl_id=9001 if name == "Jordan Example" else None,
+    )
     result = parse_injuries_html(
         fixture("html_rendered/injuries_round_21_populated.html"),
-        club_resolver=lambda _src, alt: clubs.get(alt),
+        club_resolver=lambda _src, alt: clubs.get(alt), player_resolver=resolver,
     )
     assert len(result) == 2
     assert result[0] == {"club": "ADEL", "updated": "July 28, 2026", "player_count": 1,
                          "players": [{"name": "Jordan Example", "injury": "Hamstring",
-                                      "return": "2-3 weeks", "afl_id": 9001}]}
+                                      "return": "2-3 weeks", "afl_id": 9001,
+                                      "canonical_player_id": None, "resolution_status": "resolved",
+                                      "resolution_reason": None}]}
     assert result[1]["club"] == "CARL" and result[1]["players"] == []
 
 
@@ -253,16 +258,21 @@ def test_rendered_lineup_required_container_mutation_fails_visibly():
 def test_rendered_injuries_populated_and_empty_tables(monkeypatch):
     clubs = {"Adelaide Crows": {"code": "ADEL", "slug": "adelaide"},
              "Carlton": {"code": "CARL", "slug": "carlton"}}
-    monkeypatch.setattr("scraper.scrape_afl_injuries.match_injury_player_to_db",
-                        lambda name, club, conn=None: 9001 if name == "Jordan Example" else None)
+    from merge.helpers import InjuryPlayerResolution
+    resolver = lambda name, club, conn: InjuryPlayerResolution(
+        "resolved" if name == "Jordan Example" else "unresolved", name, club,
+        afl_id=9001 if name == "Jordan Example" else None,
+    )
     result = parse_injuries_html(
         fixture("html_rendered/injuries_round_21_populated.html"),
-        club_resolver=lambda _src, alt: clubs.get(alt),
+        club_resolver=lambda _src, alt: clubs.get(alt), player_resolver=resolver,
     )
     assert len(result) == 2
     assert result[0] == {"club": "ADEL", "updated": "July 28, 2026", "player_count": 1,
                          "players": [{"name": "Jordan Example", "injury": "Hamstring",
-                                      "return": "2-3 weeks", "afl_id": 9001}]}
+                                      "return": "2-3 weeks", "afl_id": 9001,
+                                      "canonical_player_id": None, "resolution_status": "resolved",
+                                      "resolution_reason": None}]}
     assert result[1]["club"] == "CARL" and result[1]["players"] == []
 
 

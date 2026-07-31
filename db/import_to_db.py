@@ -231,15 +231,27 @@ def save_injuries_to_db(data: dict, conn: sqlite3.Connection):
 
     # Track all currently listed injuries
     currently_listed_ids = set()
+    summary = {"rows_parsed": 0, "rows_resolved": 0, "rows_persisted": 0,
+               "rows_unresolved": 0, "rows_ambiguous": 0, "diagnostics": []}
 
     for team in data["teams"]:
         club = team["club"]
         updated = team.get("updated", "")
         for player in team["players"]:
+            summary["rows_parsed"] += 1
             if not player["afl_id"]:
-                raise ValueError(f"Missing AFL ID for player {player['name']} from {club}")
+                status = player.get("resolution_status", "unresolved")
+                count = "rows_ambiguous" if status == "ambiguous" else "rows_unresolved"
+                summary[count] += 1
+                diagnostic = {"player_name": player["name"], "club": club,
+                              "status": status,
+                              "reason": player.get("resolution_reason") or "missing AFL identifier"}
+                summary["diagnostics"].append(diagnostic)
+                log(f"⚠️ Injury identity {status}: {diagnostic}", "WARN")
+                continue
 
             afl_id = player["afl_id"]
+            summary["rows_resolved"] += 1
             currently_listed_ids.add(afl_id)
 
             cur.execute("""
@@ -265,9 +277,10 @@ def save_injuries_to_db(data: dict, conn: sqlite3.Connection):
                 data["source"],
                 data["scraped_at"],
             ))
+            summary["rows_persisted"] += 1
 
     # Mark previous entries as no longer current
-    if currently_listed_ids:
+    if currently_listed_ids and not (summary["rows_unresolved"] or summary["rows_ambiguous"]):
         placeholders = ",".join("?" for _ in currently_listed_ids)
         cur.execute(f"""
             UPDATE injuries
@@ -276,7 +289,10 @@ def save_injuries_to_db(data: dict, conn: sqlite3.Connection):
         """, tuple(currently_listed_ids))
 
     conn.commit()
-    log(f"💾 Injury data saved for {len(data['teams'])} teams", "INFO")
+    summary["status"] = ("partial" if summary["rows_unresolved"] or summary["rows_ambiguous"]
+                         else "success")
+    log(f"💾 Injury persistence summary: {summary}", "INFO")
+    return summary
 
 def save_lineups_to_db(players: list[dict], conn: sqlite3.Connection, round_number: int):
     """

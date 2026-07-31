@@ -8,8 +8,12 @@ from utils.club_lookup import get_club_by_slug
 import sqlite3
 from db.connection import get_db_connection
 from difflib import get_close_matches
+from dataclasses import dataclass
+import unicodedata
+from collections import defaultdict
 from utils.stats_cache import ensure_leaderboard_fresh
 from utils.dictionary import KNOWN_NICKNAMES
+from utils.club_lookup import build_canonical_club_identifier_index
 
 def extract_club_player_id(url: str) -> int:
     match = re.search(r"/players/(\d+)", url)
@@ -114,6 +118,128 @@ def clean_name(name: str) -> str:
     if parts[-1].lower().strip(".") in SUFFIXES:
         parts = parts[:-1]
     return " ".join(parts)
+
+@dataclass(frozen=True, slots=True)
+class InjuryPlayerResolution:
+    status: str
+    source_name: str
+    source_club: str
+    canonical_player_id: int | None = None
+    afl_id: int | None = None
+    reason: str | None = None
+
+
+def _normalise_injury_name(name: str) -> str:
+    """Apply deterministic punctuation, whitespace, case, and suffix normalisation."""
+    value = unicodedata.normalize("NFKC", clean_name(name))
+    value = value.replace("\u2019", "'").replace("\u2018", "'")
+    return " ".join(value.split()).casefold()
+
+
+class CanonicalInjuryPlayerResolver:
+    """One-snapshot, club-scoped canonical injury identity index."""
+
+    def __init__(self, conn: sqlite3.Connection):
+        self._clubs = build_canonical_club_identifier_index()
+        rows = conn.execute("""
+        SELECT cp.id, cp.display_name, cp.given_name, cp.family_name,
+               ppi.provider_player_id, season.afl_id, season.year, season.is_current,
+               team.afl_id, team.provider_id, team.name, team.abbreviation
+        FROM canonical_players cp
+        JOIN competition_season_players csp ON csp.player_id = cp.id
+        JOIN afl_seasons season ON season.afl_id = csp.competition_season_id
+        JOIN afl_teams team ON team.afl_id = csp.team_id
+        LEFT JOIN player_provider_ids ppi
+          ON ppi.player_id = cp.id AND ppi.provider = 'afl'
+        """).fetchall()
+        by_club = defaultdict(list)
+        for row in rows:
+            resolved = {
+                club["code"] for identifier in (row[8], row[9], row[10], row[11])
+                if identifier is not None
+                and (club := self._canonical_club(identifier)) is not None
+            }
+            if len(resolved) == 1:
+                by_club[next(iter(resolved))].append(row)
+
+        self._players = {}
+        for club_code, club_rows in by_club.items():
+            selected_season = max(
+                {(1 if row[7] == 1 else 0,
+                  row[6] if row[6] is not None else -1, row[5]) for row in club_rows}
+            )[2]
+            name_index = defaultdict(list)
+            for row in club_rows:
+                if row[5] != selected_season:
+                    continue
+                stored_names = {
+                    row[1], " ".join(part for part in (row[2], row[3]) if part)
+                } - {None, ""}
+                for stored_name in stored_names:
+                    name_index[_normalise_injury_name(stored_name)].append(row)
+            self._players[club_code] = name_index
+
+    def _canonical_club(self, identifier) -> dict | None:
+        needle = re.sub(r"[^a-z0-9]", "", str(identifier).casefold())
+        return self._clubs.get(needle) if needle else None
+
+    def resolve(self, name: str, club_code: str) -> InjuryPlayerResolution:
+        source_name, source_club = name.strip(), club_code.strip()
+        canonical_club = self._canonical_club(source_club)
+        if canonical_club is None:
+            return InjuryPlayerResolution(
+                "unresolved", source_name, source_club,
+                reason="source club does not resolve to a canonical club identity",
+            )
+        wanted = _normalise_injury_name(source_name)
+        matches = self._players.get(canonical_club["code"], {}).get(wanted, [])
+        if not matches:
+            parts = clean_name(source_name).split()
+            if len(parts) > 1 and parts[0].casefold() in NICKNAME_MAP:
+                canonical_first = NICKNAME_MAP[parts[0].casefold()]
+                wanted = _normalise_injury_name(" ".join((canonical_first, *parts[1:])))
+                matches = self._players.get(canonical_club["code"], {}).get(wanted, [])
+
+        unique = {row[0]: row for row in matches}
+        if not unique:
+            return InjuryPlayerResolution(
+                "unresolved", source_name, source_club,
+                reason="no canonical player with this normalised name and current club membership",
+            )
+        if len(unique) > 1:
+            return InjuryPlayerResolution(
+                "ambiguous", source_name, source_club,
+                reason=f"{len(unique)} canonical players match this name and club",
+            )
+        row = next(iter(unique.values()))
+        if row[4] is None:
+            return InjuryPlayerResolution(
+                "unresolved", source_name, source_club, canonical_player_id=row[0],
+                reason="canonical player has no AFL provider identifier",
+            )
+        try:
+            afl_id = int(row[4])
+        except (TypeError, ValueError):
+            return InjuryPlayerResolution(
+                "unresolved", source_name, source_club, canonical_player_id=row[0],
+                reason=f"canonical player's AFL provider identifier is not numeric: {row[4]!r}",
+            )
+        return InjuryPlayerResolution(
+            "resolved", source_name, source_club, canonical_player_id=row[0], afl_id=afl_id
+        )
+
+
+def build_canonical_injury_player_resolver(
+    conn: sqlite3.Connection,
+) -> CanonicalInjuryPlayerResolver:
+    return CanonicalInjuryPlayerResolver(conn)
+
+
+def resolve_canonical_injury_player(
+    name: str, club_code: str, conn: sqlite3.Connection
+) -> InjuryPlayerResolution:
+    """Compatibility wrapper for callers resolving a single player."""
+    return build_canonical_injury_player_resolver(conn).resolve(name, club_code)
 
 def match_injury_player_to_db(name: str, club_slug: str, conn: sqlite3.Connection | None = None) -> int | None:
     """

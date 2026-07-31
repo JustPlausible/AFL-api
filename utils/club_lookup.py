@@ -44,20 +44,24 @@ def load_clubs():
     return load_club_seed()
 
 
-def get_canonical_club(identifier: str) -> dict | None:
-    """Match one normalized source token against canonical club identifiers."""
-    needle = re.sub(r"[^a-z0-9]", "", identifier.casefold())
-    if not needle:
-        return None
+def build_canonical_club_identifier_index() -> dict[str, dict]:
+    """Build a snapshot of every supported identifier for the canonical club seed."""
+    index = {}
     for club in load_club_seed():
         identifiers = (
-            club["code"], club["abbreviation"], club["slug"],
+            club["code"], club["abbreviation"], club["slug"], club["name"],
+            club["providerId"], str(club["teamId"]),
             *club.get("aliases", []),
         )
-        if any(re.sub(r"[^a-z0-9]", "", value.casefold()) == needle
-               for value in identifiers):
-            return club
-    return None
+        for value in identifiers:
+            index[re.sub(r"[^a-z0-9]", "", value.casefold())] = club
+    return index
+
+
+def get_canonical_club(identifier: str) -> dict | None:
+    """Match one normalized source token against canonical club identifiers."""
+    needle = re.sub(r"[^a-z0-9]", "", str(identifier).casefold())
+    return build_canonical_club_identifier_index().get(needle) if needle else None
 
 def get_club(identifier: str) -> dict | None:
     """
