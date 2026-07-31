@@ -62,6 +62,11 @@ rows without deleting unrelated rows. Re-running the migration/upsert produces
 the same rows. Runtime lookup, the club import CLI, and player-stat alias loading
 all use the same validated loader rather than `data/clubs.json`.
 
+Whenever a committed change to `bootstrap/clubs.json` must propagate into
+existing databases, add a new numbered migration that invokes
+`upsert_club_seed(conn)`. Do not create editable runtime copies of the seed or
+mount it from persistent application data.
+
 Migration `0009` adds `canonical_players` plus the provider-namespaced
 `player_provider_ids` crosswalk. Provider values are stored as opaque text and
 are unique inside their namespace; contradictory mappings fail instead of
