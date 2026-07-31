@@ -95,6 +95,26 @@ def test_matching_source_and_afl_abbreviations_resolve(database):
     assert resolution.status == "resolved" and resolution.afl_id == 50
 
 
+def test_archie_may_resolves_to_canonical_archer_may_at_essendon(database):
+    canonical_player_id = add_player(database, "Archer May", 51, team_id=12)
+
+    resolution = resolve_canonical_injury_player("Archie May", "ESS", database)
+
+    assert resolution.status == "resolved"
+    assert resolution.canonical_player_id == canonical_player_id
+    assert resolution.afl_id == 51
+
+
+def test_archie_may_does_not_resolve_archer_may_from_wrong_club(database):
+    add_player(database, "Archer May", 51, team_id=1)
+
+    resolution = resolve_canonical_injury_player("Archie May", "ESS", database)
+
+    assert resolution.status == "unresolved"
+    assert resolution.canonical_player_id is None
+    assert resolution.afl_id is None
+
+
 def test_newest_applicable_season_selected_when_is_current_is_null(database):
     database.execute("INSERT INTO afl_seasons(afl_id,provider_id,competition_id,year,is_current,updated_at) VALUES (84,'CD_S2025014',1,2025,NULL,'now')")
     database.execute("INSERT INTO afl_team_seasons VALUES (84,1,'now','now')")
