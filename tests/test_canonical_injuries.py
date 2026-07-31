@@ -6,7 +6,9 @@ import pytest
 
 from db.import_to_db import save_injuries_to_db
 from db.migration_runner import migrate_database
-from merge.helpers import resolve_canonical_injury_player
+from merge.helpers import (
+    build_canonical_injury_player_resolver, resolve_canonical_injury_player,
+)
 
 
 @pytest.fixture
@@ -155,6 +157,32 @@ def test_missing_afl_provider_id_is_not_fabricated(database):
     assert resolution.status == "unresolved"
     assert resolution.afl_id is None
     assert "no AFL provider identifier" in resolution.reason
+
+
+def test_index_queries_roster_once_and_resolves_multiple_clubs(database):
+    add_player(database, "Mitchell Hinge", 3)
+    add_player(database, "Rory Laird", 4)
+    add_player(database, "Archer May", 51, team_id=12)
+    add_player(database, "No Id", 0, team_id=12, provider=False)
+    statements = []
+    database.set_trace_callback(statements.append)
+
+    resolver = build_canonical_injury_player_resolver(database)
+    results = [
+        resolver.resolve("Mitch Hinge", "ADE"),
+        resolver.resolve("Rory Laird Jnr", "ADE"),
+        resolver.resolve("Archie May", "ESS"),
+        resolver.resolve("No Id", "ESS"),
+    ]
+    database.set_trace_callback(None)
+
+    roster_queries = [statement for statement in statements
+                      if "SELECT cp.id, cp.display_name" in statement]
+    assert len(roster_queries) == 1
+    assert [result.status for result in results] == [
+        "resolved", "resolved", "resolved", "unresolved",
+    ]
+    assert [result.afl_id for result in results] == [3, 4, 51, None]
 
 
 def injury(name, afl_id, status="resolved", reason=None):

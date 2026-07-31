@@ -11,7 +11,7 @@ from bs4 import BeautifulSoup, Comment
 from playwright.sync_api import sync_playwright
 
 from utils.log import setup_logger
-from merge.helpers import resolve_canonical_injury_player
+from merge.helpers import build_canonical_injury_player_resolver
 from utils.club_lookup import get_canonical_club, load_clubs, resolve_club_code
 from utils.dictionary import CLUB_SLUG_ALIASES
 from scraper.afl_selectors import INJURY_SELECTORS
@@ -88,7 +88,7 @@ def scrape_injury_list(db_conn, trigger_source: str | None = None, correlation_i
         return result
 
 def parse_injuries_html(html: str, db_conn=None, *, club_resolver=extract_and_match_club,
-                        player_resolver=resolve_canonical_injury_player) -> list[dict]:
+                        player_resolver=None) -> list[dict]:
     """Parse rendered injury-list HTML without acquiring a browser page."""
     soup = BeautifulSoup(html, "html.parser")
     if not soup.select_one(INJURY_SELECTORS.ARTICLE_BODY):
@@ -102,6 +102,7 @@ def parse_injuries_html(html: str, db_conn=None, *, club_resolver=extract_and_ma
         )
 
     results = []
+    indexed_resolver = None
     for index, block in enumerate(team_blocks):
         comment = block.find(string=lambda text: isinstance(text, Comment))
         image_soup = BeautifulSoup(comment, "html.parser") if comment else None
@@ -124,7 +125,12 @@ def parse_injuries_html(html: str, db_conn=None, *, club_resolver=extract_and_ma
             cols = row.find_all("td")
             if len(cols) >= 3:
                 name = cols[0].get_text(" ", strip=True)
-                resolution = player_resolver(name, club["code"], db_conn)
+                if player_resolver is None:
+                    if indexed_resolver is None:
+                        indexed_resolver = build_canonical_injury_player_resolver(db_conn)
+                    resolution = indexed_resolver.resolve(name, club["code"])
+                else:
+                    resolution = player_resolver(name, club["code"], db_conn)
                 players.append({
                     "name": name,
                     "injury": cols[1].get_text(" ", strip=True),
