@@ -98,6 +98,11 @@ def test_cli_persists_stats_resolves_concluded_status_and_is_idempotent(
     assert first["direct_match_detail_status"] is None
     assert first["canonical_match_refreshed"] is False
     assert second["rows_written"] == 0
+    assert first["source_family"] == "cfs_json"
+    assert first["collector"] == "MatchPlayerStatsCollector"
+    assert first["persistence_target"] == "cfs_player_stats"
+    assert first["fallback_occurred"] is False
+    assert first["fallback_reason"] is None
     conn = sqlite3.connect(cli_database)
     assert conn.execute("SELECT COUNT(*) FROM cfs_player_stats").fetchone()[0] == 2
     assert conn.execute(

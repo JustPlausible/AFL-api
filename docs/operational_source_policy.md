@@ -15,7 +15,7 @@ Issue #73 establishes `collection/source_policy.py` as the source-selection boun
 | Match status | Public match-detail JSON | Public match-detail JSON | Monotonic status persistence; complete metadata remains covered by scheduled season refresh | HTML monitor remains diagnostic only |
 | Player identity / season players | Public ID map plus CFS season players | No scheduled/Admin operation | **Read-only**; persistence is Issue #75 | HTML remains intentional for enrichment/historical gaps |
 | Match rosters / selections | CFS JSON | **HTML lineup collector for scheduler/Admin persistence**; CFS remains a CLI/read-only diagnostic | HTML writes `lineups`; CFS rosters are **read-only** | HTML is an intentional temporary operational source, not fallback; canonical CFS persistence is Issue #77 |
-| Match player statistics | CFS JSON | CFS JSON | Persists `cfs_player_stats` and reconciles match status | Match-centre HTML remains an explicit legacy CLI diagnostic, not fallback |
+| Match player statistics | CFS JSON | CFS JSON for Scheduler/Admin and `--collect-match-player-stats` | Persists `cfs_player_stats` and reconciles match status; explicit legacy `--scrape-match` writes the separate `player_stats` table | Match-centre HTML remains an explicit legacy CLI operation, not fallback or dual-writing |
 | Injuries | HTML (no proven structured source) | HTML | Persists injuries | Intentional HTML; no fallback source |
 | Player enrichment / listings | HTML until structured parity exists | HTML leaderboard/club tooling | Existing legacy persistence/export only | Intentional HTML |
 

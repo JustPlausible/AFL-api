@@ -8,6 +8,29 @@ existing authenticated CFS client:
 python cli.py --collect-match-rosters CD_R2026_18 --print-json
 ```
 
+The argument is an opaque Champion Data round provider ID and must start with
+`CD_R`. Numeric AFL round or season identifiers are rejected locally before
+authentication or network access. For example:
+
+```bash
+python -m cli --collect-match-rosters CD_R202601421
+```
+
+CLI outcomes are distinct:
+
+* an invalid identifier exits with code 2 and explains the required `CD_R...`
+  form without a traceback;
+* `unavailable` means the valid round is not yet published;
+* `empty` means the valid round returned a published empty list whose semantics
+  remain conservatively read-only;
+* `published` reports the number of selections collected; and
+* a genuine CFS authentication failure remains an authentication error and is
+  never relabelled as invalid input or permission to run HTML.
+
+The structured output identifies `source_family=cfs_json`,
+`collector=MatchRosterCollector`, a null `persistence_target`, and
+`persistence_performed=false`. Roster collection does not write lineup rows.
+
 `--afl-raw-directory PATH` enables the existing deterministic raw capture.
 Available responses are saved as their original JSON list and unpublished
 responses as JSON `null`; neither is wrapped or supplemented with request

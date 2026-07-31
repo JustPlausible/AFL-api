@@ -8,6 +8,20 @@ temporary fallback. Collect a supplied Champion Data match provider ID with:
 python cli.py --collect-match-player-stats CD_M20260140101 --print-json
 ```
 
+The argument must be an opaque Champion Data match provider ID beginning with
+`CD_M` (for example, `CD_M20260142001`). Numeric AFL match identifiers are
+rejected before any CFS authentication or request. The structured CLI summary
+identifies `source_family=cfs_json`, `collector=MatchPlayerStatsCollector`, and
+`persistence_target=cfs_player_stats` alongside `rows_written`.
+
+This differs deliberately from `python -m cli --scrape-match 8216`, which is an
+explicit legacy Playwright HTML operation and writes the separate
+`player_stats` table. Scheduler and Admin match-stat operations use CFS JSON and
+`cfs_player_stats` by default. Running the CFS command never invokes the legacy
+scraper; running `--scrape-match` is an explicit manual choice, not fallback or
+dual-writing. Reconciliation of the two table representations remains outside
+Issue #73.
+
 The CLI first looks for a matching `matches.match_provider_id` (or an optional
 `--afl-match-id`) in the configured canonical database. For manual testing, an
 explicit metadata fallback can be supplied without claiming it came from CFS:
