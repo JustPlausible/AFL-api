@@ -27,4 +27,5 @@ for the reusable release summary and upgrade cautions.
 
 ## Reviews and planning
 
+- [Post-v0.5.0 engineering status review](architecture/project_status_post_v0_5_0.md) — current baseline and candidate planning themes; not an approved v0.6.0 roadmap
 - [Architectural reviews](architecture/README.md)
