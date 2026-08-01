@@ -191,10 +191,11 @@ resolved AFL IDs. Nevertheless the public contract is legacy-shaped:
 * SQLite rows are serialized directly without stable declared response models,
   while numeric and opaque provider IDs lack one consistent resource contract.
 
-Highest practical BBBFL value would be a deliberately versioned canonical
-match-stat endpoint with explicit match/player IDs, then canonical season player
-membership and fixture/status resources. Roster API work should wait for
-persistence authority. Existing routes must not silently switch tables.
+Highest practical value for downstream consumers would be a deliberately
+versioned canonical match-stat endpoint with explicit match/player IDs, then
+canonical season player membership and fixture/status resources. Roster API work
+should wait for persistence authority. Existing routes must not silently switch
+tables.
 
 ## 8. Testing and source-contract protection
 
@@ -327,7 +328,7 @@ collector framework without repeated concrete need.
 
 These are options, not an approved v0.6.0 roadmap.
 
-### A. Canonical read API for BBBFL tools
+### A. Canonical read API for downstream consumers
 
 * **Value:** exposes authoritative CFS stats and canonical identity without DB
   access or legacy ambiguity.
@@ -347,15 +348,16 @@ These are options, not an approved v0.6.0 roadmap.
 * **Fit/scope:** good, but deliberately design-first; migration, adapter, policy,
   entry-point parity, reconciliation and tests.
 * **Risks:** premature schema and destructive treatment of unpublished data.
-* **Sequence:** before lineup-dependent BBBFL behavior.
+* **Sequence:** before lineup-dependent behavior in downstream applications.
 
-### C. BBBFL scoring and fantasy-league domain
+### C. External scoring and fantasy-league applications
 
 * **Value:** turns ingestion into league scoring/eligibility/roster outcomes.
 * **Prerequisites:** product rules, canonical CFS read model, identity
   completeness, correction/recomputation semantics, and lineups only if needed.
-* **Fit/scope:** new domain layer over authority—not collectors/legacy tables;
-  rules, entities, deterministic scoring, audit, API and workflows.
+* **Fit/scope:** normally a separate consumer application over the canonical API,
+  not a domain layer in AFL-api; its rules, league entities, deterministic
+  scoring, audit, presentation and workflows remain consumer concerns.
 * **Risks:** larger scope and volatile business rules.
 * **Sequence:** after a narrow canonical read slice unless concrete product
   acceptance criteria lead first.
@@ -377,8 +379,8 @@ accepted theme rather than become disconnected milestones.
 
 ## 14. Recommended planning process
 
-1. Confirm product goals, BBBFL users/operators and wishlist; rank data access,
-   fantasy behavior and unattended reliability.
+1. Confirm product goals, downstream users/operators and wishlist; rank canonical
+   data access, consumer needs and unattended reliability.
 2. Choose one primary theme and explicitly record exclusions.
 3. Validate authority/identity prerequisites on representative fixtures/data.
 4. Convert only accepted recommendations into issues; do not recreate closed

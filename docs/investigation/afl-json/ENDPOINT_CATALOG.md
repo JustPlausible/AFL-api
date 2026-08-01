@@ -236,7 +236,7 @@ Do not derive relationships by parsing the characters inside `CD_*` identifiers.
   - `*.player.jumperNumber`
   - `*.player.photoURL`
 - Important statistic path: `*.playerStats.stats`
-- Core BBBFL fields:
+- Core canonical AFL statistic fields:
   - `goals`
   - `behinds`
   - `kicks`
@@ -359,7 +359,7 @@ Raw payload retention can be configurable, but payload hashes and collection log
 
 1. **Verify complete playerStats field paths.** Capture and store representative pre-match, live and concluded responses. Confirm whether nesting remains stable and whether time-on-ground is present under another path.
 2. **Define ID persistence.** Decide whether current numeric `afl_id` remains the database conflict key or whether `CD_I...` becomes the primary external identity with AFL numeric ID as a cross-reference.
-3. **Confirm fantasy score semantics.** Verify that `dreamTeamPoints` is the value expected for `af_score`, and document whether BBBFL scoring is calculated independently.
+3. **Confirm fantasy score semantics.** Verify that `dreamTeamPoints` is the value expected for `af_score`, and document that any consumer-defined scoring is calculated independently by downstream applications.
 4. **Define null versus zero policy.** Especially for unpublished, not-applicable and not-yet-updated statistics.
 5. **Define live-to-final reconciliation.** Specify when a match record is considered final and how later provider corrections are applied.
 

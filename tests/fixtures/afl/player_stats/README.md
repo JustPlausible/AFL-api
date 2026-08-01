@@ -183,7 +183,7 @@ Tests using the completed fixture should verify:
 * Champion Data IDs are extracted from headshot filenames;
 * team membership is resolved correctly;
 * header labels map to the correct statistic values;
-* required BBBFL statistics are present;
+* required canonical AFL statistics are present;
 * additional recognised statistics are preserved;
 * row and header length mismatches produce diagnostics;
 * unknown columns do not shift known statistic mappings.
