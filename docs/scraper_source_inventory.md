@@ -321,9 +321,13 @@ skipped explicitly by the importer.
   skipped independently.
 * **Requirements/coverage:** Playwright remains required for this explicit legacy
   path because repository policy treats the match-centre table as rendered until
-  a fixture proves otherwise; no HTML auth. Parser has no golden HTML fixture;
-  CLI, audit and selector wiring have tests. Scheduler/Admin routing tests instead
-  verify the operational CFS JSON path.
+  plain-HTTP parity is proven; no HTML auth. The rendered-HTML golden fixture
+  `tests/fixtures/afl_sources/html_rendered/player_stats_match_8216_live_partial.html`
+  drives offline regression coverage in `tests/test_afl_golden_fixtures.py` for
+  live-status detection, player/team identity and partial statistic mapping, plus
+  visible failures when the required table or header-row contract changes. CLI,
+  audit and selector wiring have additional tests. Scheduler/Admin routing tests
+  instead verify the operational CFS JSON path.
 * **Fragility/risk/verified:** header abbreviations/order, missing player/headshot,
   image ID convention, alias CSS class, live publication and status vocabulary.
   Repository verified 2026-07-28; live HTML blocked.
