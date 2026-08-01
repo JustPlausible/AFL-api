@@ -91,10 +91,9 @@ A useful general pattern is:
 
 The direct command is intended for experienced operators, development, testing, scripts, and later automation.
 
-Proposed form:
-
-```bash
-python cli.py --sync-afl-season 2026
+```text
+Proposed command:
+  --sync-afl-season YEAR
 ```
 
 The exact parser structure may follow existing CLI conventions, but the command must be non-interactive when the required year is supplied.
@@ -116,10 +115,9 @@ The full discovered season is the default scope. `--through-round` is the only r
 
 The guided command is intended for a new installation or an operator who does not yet know the available season identifiers.
 
-Proposed form:
-
-```bash
-python cli.py --aflapi-first-run
+```text
+Proposed command:
+  --aflapi-first-run
 ```
 
 The guided flow must:
