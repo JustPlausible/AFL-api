@@ -1,0 +1,14 @@
+{
+  "compSeasons": [
+    {
+      "id": 85,
+      "providerId": "CD_S2026014",
+      "name": "2026 Toyota AFL Premiership"
+    }
+  ],
+  "pagination": {
+    "pageNum": 1,
+    "totalPages": 1,
+    "totalResults": 1
+  }
+}

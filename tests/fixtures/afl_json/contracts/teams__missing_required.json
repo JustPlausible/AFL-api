@@ -1,0 +1,13 @@
+{
+  "teams": [
+    {
+      "id": 999,
+      "name": "Reduced record with providerId removed"
+    }
+  ],
+  "pagination": {
+    "pageNum": 1,
+    "totalPages": 1,
+    "totalResults": 1
+  }
+}
