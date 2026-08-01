@@ -15,10 +15,9 @@ if __name__ == "__main__" and sys.argv[1:] == ["--version"]:
 
 from utils.log import log
 from scraper.scrape_afl_clubs import save_club_players_to_json
-from scraper.scrape_afl_injuries import scrape_injury_list, save_injuries_to_db
 from scraper.scrape_afl_lineups import scrape_team_lineups
 from scraper import scrape_afl_matches
-from db.scrape_runs import audited_scrape_run
+from db.scrape_runs import audited_scrape_run, TRIGGER_CLI
 from merge.helpers import resolve_players_for_club
 from utils.club_lookup import load_clubs, get_club
 from db.import_to_db import import_players, save_lineups_to_db
@@ -93,19 +92,10 @@ def enrich_all_clubs(skip_existing=False):
         resolve_players_for_club(club_name)
 
 def scrape_injuries_to_db(print_json=False):
-    conn = get_db_connection()
-    conn.row_factory = sqlite3.Row
-    with audited_scrape_run("injury", target_type="injury_list", conn=conn) as audit:
-        data = scrape_injury_list(conn)
-        audit["rows_read"] = sum(team.get("player_count", 0) for team in data.get("teams", []))
-        summary = save_injuries_to_db(data, conn)
-        audit["rows_written"] = summary["rows_persisted"]
-        audit["status"] = summary["status"]
-        if print_json:
-            print(json.dumps({**data, "summary": summary}, indent=2))
-        else:
-            print(json.dumps(summary))
-    conn.close()
+    from collection.source_policy import OperationalDomain, collect_operational
+    outcome = collect_operational(OperationalDomain.INJURIES, trigger_source=TRIGGER_CLI)
+    displayed = outcome if print_json else outcome.details
+    print(json.dumps(displayed, default=_json_default, indent=2 if print_json else None))
 
 def scrape_lineups_to_db(round_number: int, print_json: bool = False):
     conn = get_db_connection()

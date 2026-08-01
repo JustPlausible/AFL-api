@@ -8,13 +8,13 @@ from db.scrape_runs import audited_scrape_run
 from db.connection import get_db_connection
 
 from bs4 import BeautifulSoup, Comment
-from playwright.sync_api import sync_playwright
 
 from utils.log import setup_logger
 from merge.helpers import build_canonical_injury_player_resolver
 from utils.club_lookup import get_canonical_club, load_clubs, resolve_club_code
 from utils.dictionary import CLUB_SLUG_ALIASES
 from scraper.afl_selectors import INJURY_SELECTORS
+from scraper.injuries.acquisition import InjuryAcquirer
 
 log = setup_logger("injury_scraper", "scrape_afl_injuries.log")
 
@@ -152,22 +152,11 @@ def parse_injuries_html(html: str, db_conn=None, *, club_resolver=extract_and_ma
     return results
 
 def _scrape_injury_list(db_conn) -> dict:
-    url = "https://www.afl.com.au/matches/injury-list"
-    log.info(f"🌐 Fetching injury list from: {url}")
-
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
-        page.goto(url, timeout=60000)
-        page.wait_for_selector(INJURY_SELECTORS.ARTICLE_BODY, timeout=15000)
-        html = page.content()
-        results = parse_injuries_html(html, db_conn)
-
-        browser.close()
-
+    document = InjuryAcquirer().acquire()
+    results = parse_injuries_html(document.html, db_conn)
     return {
-        "source": url,
-        "scraped_at": datetime.now(timezone.utc).isoformat(),
+        "source": document.source_url,
+        "scraped_at": document.acquired_at,
         "teams": results
     }
 
