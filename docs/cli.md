@@ -114,6 +114,8 @@ player-stat jobs use `MatchPlayerStatsCollector` over CFS JSON and write
 `cfs_player_stats`, matching `--collect-match-player-stats`. Conversely, the
 explicit manual `--scrape-match` HTML path writes `player_stats` only. The two
 tables have different writers and are neither interchangeable nor dual-written.
+See the [player-stat storage contract](architecture/player_stats_storage_contract.md)
+before adding a reader, report, scoring path, or migration involving either table.
 Scheduler/Admin injuries and operational lineups intentionally use the same HTML
 source families as `--scrape-injuries` and `--scrape-lineups`; those selections
 are policy choices, not fallback after a JSON failure.

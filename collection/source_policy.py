@@ -72,6 +72,7 @@ SOURCE_POLICY = {
     OperationalDomain.MATCH_PLAYER_STATS: SourcePolicy(
         OperationalDomain.MATCH_PLAYER_STATS, "cfs_json", "MatchPlayerStatsCollector", True, False,
         "scraper.scrape_afl_player_stats",
+        "Persists only authoritative cfs_player_stats; legacy HTML is explicit and never fallback.",
     ),
     OperationalDomain.INJURIES: SourcePolicy(
         OperationalDomain.INJURIES, "html", "scraper.scrape_afl_injuries", True, False, None,

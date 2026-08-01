@@ -1,5 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
+
+from collection.player_stats_storage import LEGACY_SCRAPER_PLAYER_STATS_TABLE
 from auth import verify_api_key
 from utils.log import log
 from db.connection import get_db_connection
@@ -248,7 +250,15 @@ def get_match_by_id(
 
     return JSONResponse(content=dict(row))
 
-@router.get("/api/player-stats", summary="Get player stats", description="Returns player statistics filtered by match ID, round ID, or AFL ID. At least one filter is required.")
+@router.get(
+    "/api/player-stats",
+    summary="Get legacy HTML-scraped player stats",
+    description=(
+        "Compatibility endpoint over the legacy player_stats table, filtered by "
+        "numeric AFL match, round, or player ID. It does not expose authoritative "
+        "CFS player statistics. At least one filter is required."
+    ),
+)
 def get_player_stats(
     match_id: int = Query(None, description="Filter by match ID"),
     round_id: int = Query(None, description="Filter by round ID"),
@@ -276,7 +286,11 @@ def get_player_stats(
         conn.close()
         raise HTTPException(status_code=400, detail="At least one filter is required (match_id, round_id, or afl_id)")
 
-    query = f"SELECT * FROM player_stats WHERE {' AND '.join(filters)} ORDER BY match_id, afl_id"
+    # This existing route intentionally preserves its legacy numeric-ID response
+    # contract. New player-stat read features must use cfs_player_stats instead;
+    # see docs/architecture/player_stats_storage_contract.md.
+    query = (f"SELECT * FROM {LEGACY_SCRAPER_PLAYER_STATS_TABLE} "
+             f"WHERE {' AND '.join(filters)} ORDER BY match_id, afl_id")
     rows = conn.execute(query, tuple(values)).fetchall()
     conn.close()
 

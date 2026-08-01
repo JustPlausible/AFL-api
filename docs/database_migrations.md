@@ -76,6 +76,9 @@ to `afl_team_seasons`. The minimal team-season table prevents historical player
 membership from depending on the mutable `afl_teams.season_id` compatibility
 column. Existing `players`, `player_stats`, and `cfs_player_stats` behavior is
 preserved; CFS statistic observations gain a nullable canonical-player link.
+The tables are deliberately not migrated into one another. Their distinct keys,
+provenance, authority, and future-migration requirements are defined by the
+[player-stat storage contract](architecture/player_stats_storage_contract.md).
 
 ## Creating a migration
 

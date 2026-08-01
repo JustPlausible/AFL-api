@@ -43,6 +43,10 @@ persistence is not lost. The separate legacy `player_stats` and operational
 `cfs_player_stats` representations are not reconciled or dual-written by this
 policy.
 
+The [player-stat storage contract](architecture/player_stats_storage_contract.md)
+is authoritative for table ownership, readers, identifiers, lifecycle states,
+compatibility behavior, and future migration work.
+
 ## Fixture and lineup regression boundary
 
 Before Issue #73, the scheduled lineup subprocess acquired HTML records but its module entry point did not call `save_lineups_to_db`; only the unified CLI performed that write. The shared operational path now deliberately runs the same HTML acquisition and the existing lineup writer, so scheduler and Admin jobs report success only after the records have been stored. CFS roster collection remains separately available as read-only evidence and is not represented as a persistent operation.

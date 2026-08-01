@@ -135,6 +135,8 @@ and write `cfs_player_stats`. The explicit CLI command
 `--collect-match-player-stats` uses that path too; the separate manual
 `--scrape-match` command renders HTML and writes only the legacy `player_stats`
 table. The tables are not interchangeable and these workflows do not dual-write.
+The complete identifier, reader, lifecycle, fallback, and migration rules are in
+the **[player-stat storage contract](docs/architecture/player_stats_storage_contract.md)**.
 Injuries and operational lineups deliberately remain rendered-HTML sources:
 Scheduler and Admin persist them through the shared policy, while the CLI exposes
 `--scrape-injuries` and `--scrape-lineups` explicitly. Injury rows are persisted
@@ -210,14 +212,18 @@ Diagnostic header echoing at `/api/echo-headers` requires a valid API key and re
 | GET    | `/api/matches?round_id=1155` | Matches for a specific round             |
 | GET    | `/api/matches/{match_id}`    | Details of a single match                |
 
-📊 Player Stats Endpoints
+📊 Legacy Player Stats Compatibility Endpoint
 | Method | Endpoint                                     | Description                               |
 | ------ | -------------------------------------------- | ----------------------------------------- |
-| GET    | `/api/player-stats?match_id=7043`            | Player stats for a match                  |
-| GET    | `/api/player-stats?round_id=1155`            | Player stats for a round                  |
-| GET    | `/api/player-stats?afl_id=145`               | All player stats for an individual player |
-| GET    | `/api/player-stats?round_id=1155&afl_id=145` | Player stats for a player across a round  |
-| GET    | `/api/player-stats?match_id=7043&afl_id=145` | Single player’s stats in a specific match |
+| GET    | `/api/player-stats?match_id=7043`            | Legacy HTML-scraped stats for a match                  |
+| GET    | `/api/player-stats?round_id=1155`            | Legacy HTML-scraped stats for a round                  |
+| GET    | `/api/player-stats?afl_id=145`               | Legacy HTML-scraped stats for an individual player |
+| GET    | `/api/player-stats?round_id=1155&afl_id=145` | Legacy HTML-scraped stats for a player across a round  |
+| GET    | `/api/player-stats?match_id=7043&afl_id=145` | One legacy HTML-scraped player/match row |
+
+This compatibility route reads `player_stats`; it is not an authoritative CFS
+read API. New API and scoring work must follow the [player-stat storage
+contract](docs/architecture/player_stats_storage_contract.md).
 
 ---
 
