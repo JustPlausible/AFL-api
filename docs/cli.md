@@ -10,7 +10,13 @@ Run commands from the repository root in the configured project environment:
 
 ```bash
 python cli.py --help
+python cli.py --version
 ```
+
+`--version` prints only the bare, script-friendly version number and exits
+without loading the database, application, browser, or collector stack. The
+authoritative declaration lives in [`version.py`](../version.py); see the
+[v0.5.0 release notes](releases/v0.5.0.md) for release detail.
 
 The interface is flag-based rather than subcommand-based. Consequently,
 `python cli.py --collect-afl-metadata --help` displays the same complete help;

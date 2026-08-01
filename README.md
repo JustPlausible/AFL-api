@@ -2,6 +2,11 @@
 
 This project scrapes, enriches, and serves AFL player data across all clubs. It provides a FastAPI-powered JSON API and supports data persistence via SQLite for players, injuries, team line-ups, and API key data.
 
+**Current version: 0.5.0.** See the [v0.5.0 release notes](docs/releases/v0.5.0.md),
+[upgrade runbook](docs/operations/release_runbook_v0_5_0.md), and
+[operational source policy](docs/operational_source_policy.md). Runtime code
+reads the authoritative declaration in [`version.py`](version.py).
+
 ---
 
 ## 📦 Features

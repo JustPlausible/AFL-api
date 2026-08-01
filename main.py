@@ -3,9 +3,10 @@ from fastapi import FastAPI
 from db.migration_runner import migrate_database
 from api.routes import router as api_router
 from health import router as health_router
+from version import __version__
 
 migrate_database()
 
-app = FastAPI()
+app = FastAPI(title="AFL-api", version=__version__)
 app.include_router(health_router)
 app.include_router(api_router)
