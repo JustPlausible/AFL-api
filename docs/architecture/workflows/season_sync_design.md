@@ -86,6 +86,7 @@ A useful general pattern is:
 > Discover → Plan → Persist foundations → Collect bounded units → Reconcile outcomes → Report
 
 ## 5. Entry points
+Note: Command names shown in this document describe the proposed interface for Issue #106. They are architectural design targets and are not yet implemented.
 
 ### 5.1 Direct season synchronisation
 
