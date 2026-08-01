@@ -1,8 +1,18 @@
-import json
 import argparse
+import json
 import re
 import sqlite3
+import sys
 from pathlib import Path
+from version import __version__
+
+# Keep the conventional version probe independent of the operational CLI's
+# scraper, browser, configuration, and database imports below.  The argparse
+# action remains registered as well so generated help documents the surface.
+if __name__ == "__main__" and sys.argv[1:] == ["--version"]:
+    print(__version__)
+    raise SystemExit(0)
+
 from utils.log import log
 from scraper.scrape_afl_clubs import save_club_players_to_json
 from scraper.scrape_afl_injuries import scrape_injury_list, save_injuries_to_db
@@ -119,6 +129,8 @@ def create_parser() -> argparse.ArgumentParser:
         description=("AFL operator CLI: preferred AFL/CFS JSON collection and "
                      "explicit legacy HTML tools")
     )
+    parser.add_argument("--version", action="version", version=__version__,
+                        help="Print the AFL-api version and exit")
 
     # 🔹 Club-related arguments
     club_group = parser.add_argument_group("Club import, export, HTML scrape, and enrichment")
