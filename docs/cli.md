@@ -46,7 +46,10 @@ python cli.py --bootstrap-afl-season 2026
 
 This collects public metadata, persists the canonical competition hierarchy,
 then collects authenticated CFS season players and persists canonical players,
-provider mappings, and season membership. The value is a season selector
+provider mappings, team links where the collected team resolves, and season
+membership in one transactional player batch. This implemented bootstrap is the
+supported canonical player-persistence path; it is not a Scheduler or Admin
+player-refresh job. The value is a season selector
 (normally a four-digit year), not a round ID. It requires a migrated database
 and CFS authentication for the player phase.
 
@@ -91,7 +94,7 @@ python cli.py --scrape-match 8216
 
 | Flag | Identifier | Behavior |
 | --- | --- | --- |
-| `--scrape-injuries` | none | Collects HTML injury data and persists injuries. |
+| `--scrape-injuries` | none | Collects HTML injury data, resolves players to canonical AFL IDs, and persists resolved current/history injury records; unresolved or ambiguous rows are reported rather than assigned guessed identities. |
 | `--scrape-lineups ROUND` | AFL round number, such as `9` | Collects HTML lineups and persists legacy lineup tables. |
 | `--scrape-round ROUND_ID` | Database/AFL numeric `round_id`, such as `1155` | Collects HTML match cards and persists legacy match data; this is not a round number. |
 | `--scrape-all-rounds` | none | Reads rounds already in the database and runs the legacy HTML match collector for all of them. |
@@ -99,6 +102,15 @@ python cli.py --scrape-match 8216
 
 The direct scraper modules are implementation/diagnostic entry points rather
 than the release-facing operator interface. Prefer the `cli.py` forms above.
+
+Scheduler and Admin do not invoke `--scrape-match`: their operational
+player-stat jobs use `MatchPlayerStatsCollector` over CFS JSON and write
+`cfs_player_stats`, matching `--collect-match-player-stats`. Conversely, the
+explicit manual `--scrape-match` HTML path writes `player_stats` only. The two
+tables have different writers and are neither interchangeable nor dual-written.
+Scheduler/Admin injuries and operational lineups intentionally use the same HTML
+source families as `--scrape-injuries` and `--scrape-lineups`; those selections
+are policy choices, not fallback after a JSON failure.
 
 ## Club import, export, scrape, and enrichment
 

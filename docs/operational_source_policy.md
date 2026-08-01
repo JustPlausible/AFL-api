@@ -9,14 +9,14 @@ Issue #73 establishes `collection/source_policy.py` as the source-selection boun
 | Domain | Architecturally preferred source | Current operational source | Persistence boundary | Intentional legacy / permitted fallback |
 | --- | --- | --- | --- | --- |
 | Competitions and competition seasons | Public JSON | Public JSON season refresh | Persists canonical hierarchy | Fixture HTML retained only for explicit diagnostics; not an automatic fallback |
-| Clubs/teams | Public JSON for canonical metadata | Public JSON metadata; HTML for player enrichment | Public team metadata persists; CFS player listings are read-only | HTML is intentional for enrichment gaps, not a metadata fallback |
+| Clubs/teams | Public JSON for canonical metadata | Public JSON metadata; HTML for player enrichment | Public team metadata persists; the season bootstrap persists CFS player listings into the canonical player model | HTML is intentional for enrichment gaps, not a metadata fallback |
 | Rounds | Public JSON | Public JSON season refresh | Persists rounds and corrections | Match/fixture HTML remains explicit diagnostic only |
 | Fixtures/matches | Public JSON | Public JSON season refresh daily; public match detail during match day | Full metadata refresh persists times, venue, round relationships, new/corrected fixtures, status and scores; targeted detail reconciles lifecycle status | HTML is not an automatic fallback |
 | Match status | Public match-detail JSON | Public match-detail JSON | Monotonic status persistence; complete metadata remains covered by scheduled season refresh | HTML monitor remains diagnostic only |
-| Player identity / season players | Public ID map plus CFS season players | No scheduled/Admin operation | **Read-only**; persistence is Issue #75 | HTML remains intentional for enrichment/historical gaps |
+| Player identity / season players | Public ID map plus CFS season players | CLI `--bootstrap-afl-season`; no scheduled/Admin player-bootstrap operation | Persists canonical players, AFL/Champion Data provider mappings, team links where resolvable, and competition-season membership transactionally | HTML remains intentional for enrichment/historical gaps |
 | Match rosters / selections | CFS JSON | **HTML lineup collector for scheduler/Admin persistence**; CFS remains a CLI/read-only diagnostic | HTML writes `lineups`; CFS rosters are **read-only** | HTML is an intentional temporary operational source, not fallback; canonical CFS persistence is Issue #77 |
 | Match player statistics | CFS JSON | CFS JSON for Scheduler/Admin and `--collect-match-player-stats` | Persists `cfs_player_stats` and reconciles match status; explicit legacy `--scrape-match` writes the separate `player_stats` table | Match-centre HTML remains an explicit legacy CLI operation, not fallback or dual-writing |
-| Injuries | HTML (no proven structured source) | HTML | Persists injuries | Intentional HTML; no fallback source |
+| Injuries | HTML (no proven structured source) | HTML for Scheduler, Admin, and CLI `--scrape-injuries` | Resolves scraped names to canonical AFL player IDs; persists resolved current/history records to `injuries` and reports unresolved or ambiguous rows without inventing identities | Intentional HTML; no fallback source |
 | Player enrichment / listings | HTML until structured parity exists | HTML leaderboard/club tooling | Existing legacy persistence/export only | Intentional HTML |
 
 
@@ -32,7 +32,16 @@ Every policy run writes the existing scrape-run audit with domain, target, trigg
 
 ## Explicit release boundaries
 
-Canonical player identity and player-season persistence remain Issue #75. Canonical CFS roster persistence is not invented here: CFS roster collection remains visibly read-only, while scheduled and Admin lineup operations deliberately retain the HTML writer so lineup persistence is not lost. Broader CLI restructuring and fresh-install documentation remain Issue #76. Roster persistence/parity and any later controlled HTML fallback remain Issue #77. The separate legacy and CFS player-stat representations are not reconciled or dual-written by this policy.
+Canonical player identity and player-season persistence are implemented by the
+CLI season bootstrap: `--bootstrap-afl-season` first persists public metadata,
+then persists the collected CFS players, provider mappings, team links where
+available, and season membership. This is a bootstrap operation, not a scheduled
+or Admin player refresh, and it does not imply that CFS match-roster persistence
+exists. CFS roster collection remains visibly read-only, while scheduled and
+Admin lineup operations deliberately retain the HTML writer so lineup
+persistence is not lost. The separate legacy `player_stats` and operational
+`cfs_player_stats` representations are not reconciled or dual-written by this
+policy.
 
 ## Fixture and lineup regression boundary
 

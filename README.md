@@ -125,6 +125,16 @@ never silently falls back from JSON to HTML. Club tools, persistence behavior,
 identifier formats, diagnostics, prerequisites, and every legacy command are
 documented in the **[operator CLI guide](docs/cli.md)**.
 
+Scheduler and Admin player-stat jobs use the same operational CFS JSON collector
+and write `cfs_player_stats`. The explicit CLI command
+`--collect-match-player-stats` uses that path too; the separate manual
+`--scrape-match` command renders HTML and writes only the legacy `player_stats`
+table. The tables are not interchangeable and these workflows do not dual-write.
+Injuries and operational lineups deliberately remain rendered-HTML sources:
+Scheduler and Admin persist them through the shared policy, while the CLI exposes
+`--scrape-injuries` and `--scrape-lineups` explicitly. Injury rows are persisted
+only after canonical AFL player-ID resolution.
+
 ## 🔐 API Key Authentication
 
 All API routes require an `x-api-key` header. Full API keys are shown only when created or renewed; SQLite stores only a non-reversible hash plus a short administrative prefix. Existing plaintext keys are migrated in place during database initialisation as described in [`docs/api_key_migration.md`](docs/api_key_migration.md).
