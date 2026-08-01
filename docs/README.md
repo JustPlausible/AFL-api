@@ -4,6 +4,7 @@ This directory contains active project documentation for operating, developing, 
 
 ## Operational and development guides
 
+- [AFL-api v0.5.0 operator release, backup, restore, and rollback runbook](operations/release_runbook_v0_5_0.md)
 - [Operator CLI command reference](cli.md)
 - [Operational AFL source policy and source matrix](operational_source_policy.md)
 
