@@ -32,10 +32,10 @@ that canonical model safely. The full offline suite is green, a clean database
 passes migration, foreign-key, integrity and idempotency checks, and a bounded
 live public-metadata read succeeded.
 
-The remaining hold is substantially smaller and documentation/release-process
-only. Release-facing documentation still contains statements made obsolete by
-the fixes (notably that canonical player persistence is read-only/Issue #75 and
-that Scheduler/Admin stats still use HTML), and there is no single complete
+At the time of this review, the remaining hold was substantially smaller and
+documentation/release-process only. Release-facing documentation contained
+obsolete canonical-persistence and operational player-stat source descriptions,
+and there was no single complete
 operator release/runbook covering bootstrap verification, backup **and restore
 rollback**. No repository version declaration or release notes/changelog for
 v0.5.0 were found. The smallest path to release is to correct those documents,
@@ -188,10 +188,9 @@ functions.
 * Single-action behavior is documented but not rejected by argparse; this is a
   v0.5.1 usability improvement, not an application release blocker by itself.
 
-The remaining documentation inconsistency is release-significant because
-`docs/operational_source_policy.md` still says canonical player persistence is
-Issue #75/read-only, and parts of `docs/scraper_source_inventory.md` still say
-Scheduler/Admin match statistics use HTML. Those statements are no longer true.
+The documentation inconsistency identified during this review was corrected by
+Issue #93: the operational policy and scraper inventory now describe canonical
+player bootstrap persistence and Scheduler/Admin CFS player-stat collection.
 
 ## 9. Clean-install and migration validation
 

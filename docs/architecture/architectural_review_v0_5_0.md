@@ -9,6 +9,14 @@
 > **Scope:** Current implementation, documentation, tests, operational interfaces, and all six open GitHub Issues.
 > **Repository changes during review:** None. In accordance with the original request, the review itself made no implementation changes and did not modify GitHub Issues.
 
+> **Historical snapshot:** Findings below describe revision `4273e61`, before the
+> v0.5.0 source-policy and canonical-persistence work landed. For current
+> behavior, use `docs/operational_source_policy.md` and
+> `docs/scraper_source_inventory.md`: canonical player bootstrap is persistent,
+> Scheduler/Admin player statistics use CFS JSON and `cfs_player_stats`, explicit
+> legacy/manual HTML statistics write `player_stats`, and operational lineups and
+> injuries deliberately remain HTML-backed.
+
 ## 1. Executive summary
 AFL-api has made a substantial architectural advance since the v0.4.0 review. The new `afl_json` subsystem establishes a credible long-term collection foundation:
 
@@ -38,11 +46,11 @@ The repository is not yet uniformly operating on that architecture, however. It 
 
 That coexistence is reasonable during migration, but it produces operational and model inconsistencies:
 
-- Scheduled and Admin-triggered collection still primarily invokes legacy HTML collectors.
+- At the reviewed revision, scheduled and Admin-triggered collection primarily invoked legacy HTML collectors; this was subsequently replaced by shared source-policy routing.
 
 - The CLI exposes new JSON functionality, but not as a complete orchestrated pipeline.
 
-- Player identities and season associations are normalised in memory but are not yet persisted as a canonical seasonal model.
+- At the reviewed revision, player identities and season associations were normalised only in memory; canonical bootstrap persistence was subsequently implemented.
 
 - Match rosters have no canonical persistence layer.
 
@@ -169,7 +177,7 @@ CLI, bootstrap and persistence adapters
 database
 ```
 
-The largest exception is operational orchestration. The CLI, scheduler, and Admin interface frequently depend directly on concrete scraper modules rather than a shared collector application service. This makes swapping an HTML collector for its JSON equivalent an entry-point-by-entry-point exercise.
+At the reviewed revision, the largest exception was operational orchestration: the CLI, scheduler, and Admin interface frequently depended directly on concrete scraper modules. Scheduler and Admin operational collection now share `SOURCE_POLICY`; the CLI still intentionally exposes distinct operational JSON and legacy/manual HTML commands.
 
 ### 2.6 Architectural debt that can wait until after v0.5.0
 The following should be treated as intentional post-release debt rather than reasons for a broad pre-release rewrite:
@@ -471,9 +479,11 @@ The new collector improves the in-memory design by splitting:
 
 - Player-season association.
 
-However, there is no corresponding canonical player-season persistence migration. As a result, the best conceptual player model currently exists only in collector output.
-
-This is one of the clearest remaining canonical-model gaps.
+At the reviewed revision there was no corresponding canonical player-season
+persistence migration. Migration `0009` and the CLI season bootstrap subsequently
+implemented transactional canonical player, provider-map, team-link, and
+competition-season membership persistence; this correction does not add roster
+persistence.
 
 ### 6.5 Match rosters
 The roster collector has a thoughtful normalized representation and stable comparison behavior, but there is no canonical roster/selection persistence table. It is currently a diagnostic and compatibility-capable collector rather than a complete database integration.
@@ -671,9 +681,10 @@ Admin-only convenience
 - Authenticated web access without shell availability.
 
 ### 8.3 Architectural mismatch
-The Admin manual player-stat trigger invokes the legacy HTML scraper, not MatchPlayerStatsCollector. The scheduler’s regular player-stat jobs likewise invoke the legacy path.
-
-This is the most significant Admin/CLI divergence: an operator using Admin and an operator using the new CFS CLI command are not necessarily exercising the same source, validation, or persistence semantics.
+This mismatch existed at the reviewed revision. Admin manual and Scheduler
+operational player-stat jobs now invoke `MatchPlayerStatsCollector` through
+`SOURCE_POLICY`, matching the CFS CLI workflow and writing `cfs_player_stats`.
+Only explicit legacy/manual HTML commands write `player_stats`.
 
 There is also terminology risk: the lineup round trigger submits round_id, but the target function passes it as round_number.
 
@@ -794,7 +805,7 @@ The test suite is already a release strength; the principal concern is source-st
 | Tests | Strong, especially for new JSON subsystem |
 ### 12.2 Major risks before release
 ### Risk 1: Operational source ambiguity
-The repository declares JSON/CFS as preferred but schedules and Admin-triggers legacy HTML collectors. This can produce different behavior, tables, diagnostics, and failure modes depending on entry point.
+At the reviewed revision, the repository declared JSON/CFS preferred while Scheduler and Admin still selected legacy HTML player statistics. Shared policy routing subsequently resolved this for player statistics; operational lineups and injuries remain deliberate HTML selections.
 
 **Release treatment:** Document the intended v0.5.0 source matrix explicitly.
 
@@ -804,7 +815,7 @@ Several active HTML modules still connect directly to `data/afl_players.db`. A s
 **Release treatment:** Either resolve Issue #51 or clearly limit the supported deployment configuration.
 
 ### Risk 3: Incomplete canonical persistence
-Player-season associations and rosters are not persisted, while team-season history is modeled as a single mutable season reference.
+At the reviewed revision, player-season associations and rosters were not persisted. Canonical player-season associations are now persisted by bootstrap; match rosters remain read-only.
 
 **Release treatment:** State that v0.5.0’s canonical persistence scope is metadata hierarchy plus current CFS match statistics, not the complete discovered AFL domain.
 
@@ -814,7 +825,7 @@ New users following the README’s first CLI examples will encounter invalid arg
 **Release treatment:** Correct release-facing usage documentation before tagging.
 
 ### Risk 5: Dual player-stat models
-Legacy player_stats and new cfs_player_stats coexist, and Admin/scheduler versus new CLI paths populate different systems.
+Legacy `player_stats` and `cfs_player_stats` still coexist, but not as interchangeable writers: Scheduler/Admin and operational CFS CLI collection populate `cfs_player_stats`; explicit legacy/manual HTML commands populate `player_stats`.
 
 **Release treatment:** Document which API/operation reads each table and which is authoritative.
 

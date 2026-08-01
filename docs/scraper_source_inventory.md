@@ -1,8 +1,7 @@
 # AFL scraper source inventory and page contracts
 
-**Repository revision investigated:** `880e5d6` (the `main` revision supplied for
-Issue #47)<br>
-**Last verified:** 2026-07-28<br>
+**Repository revision investigated:** `6c738e6`<br>
+**Last verified:** 2026-08-01<br>
 **Scope:** documentation and investigation only; no runtime scraper, selector,
 model, schema, scheduler, Admin action, or acquisition-routing change is made here.
 
@@ -63,15 +62,15 @@ by the maintained JSON collectors.
 
 | Module | Status and callers |
 |---|---|
-| `scraper/scrape_afl_fixtures.py` | **Scheduled production:** `scheduler.scheduled_tasks.daily_fixture_scrape`; direct module. Imported by `scheduler/api.py`, although the API refresh route only re-registers jobs. |
-| `scraper/scrape_afl_matches.py` | **Scheduled production:** daily and five-minute match refreshes in `scheduler/scheduled_tasks.py` and `scheduler/schedule_match_scrapes.py`; **Admin:** `fixtures_round` via `admin.py` → `scheduler/manual_triggers.py`; **CLI:** `cli.py --scrape-round/--scrape-all-rounds`; direct module. |
+| `scraper/scrape_afl_fixtures.py` | **Explicit legacy/manual HTML:** direct module. Imported by `scheduler/api.py`, although the API refresh route only re-registers jobs; scheduled metadata collection selects public JSON through `SOURCE_POLICY`. |
+| `scraper/scrape_afl_matches.py` | **Explicit legacy/manual HTML:** CLI `--scrape-round`/`--scrape-all-rounds` and direct module. Scheduler match metadata/status and Admin fixture refreshes select public JSON through `SOURCE_POLICY`. |
 | `scraper/monitor_match_status.py` | **Manual diagnostic only:** hard-coded match/round constants and direct module execution; no scheduler, Admin, or CLI caller. |
 | `scraper/scrape_afl_lineups.py` | **Scheduled production:** `scheduler/schedule_lineup_scrapes.py`; **Admin:** round/match paths; **CLI:** module `--round/--match` and `cli.py --scrape-lineups`. |
 | `scraper/scrape_afl_injuries.py` | **Scheduled production:** daily job; **Admin:** injuries path; **CLI/direct module:** `--scrape-injuries`. |
 | `scraper/scrape_afl_clubs.py` | **CLI production tool:** `--scrape-club`, `--scrape-clubs`, and enrichment workflow; not scheduled/Admin-triggered. |
 | `scraper/scrape_afl_players.py` | **Scheduled production tool:** five-day refresh in `scheduler/schedule_refresh_jobs.py`; direct module. |
 | `scraper/scrape_afl_players_with_stats.py` | **Manual export tool:** direct module only; not persistence, scheduler, Admin, or unified CLI. |
-| `scraper/scrape_afl_player_stats.py` | **Scheduled production:** per-match/live jobs; **Admin:** player-stats match; **CLI/direct module:** `--scrape-match`, `--match-id`, `--round-id`. |
+| `scraper/scrape_afl_player_stats.py` | **Explicit legacy/manual HTML only:** unified CLI `--scrape-match`; direct module `--match-id`/`--round-id`. Scheduler and Admin player-stat jobs do not call this module; they select CFS JSON through `SOURCE_POLICY`. |
 | `scraper/scrape_afl_lineups-early2025.py` | **Historical/unused legacy:** no import or current caller, uses inline selectors, and is excluded from active implementations. Retained only as historical evidence. |
 
 The shared symbolic definitions for every active HTML parser are in
@@ -305,7 +304,7 @@ skipped explicitly by the importer.
   `https://www.afl.com.au/afl/matches/{afl_match_id}#player-stats`, e.g.
   `https://www.afl.com.au/afl/matches/7043#player-stats`.
 * **Fetch/parser:** Playwright helper with retries; Beautiful Soup. Continuous
-  mode polls until completed; Admin/CLI `once` mode fetches once.
+  direct-module mode polls until completed; CLI `--scrape-match` fetches once.
 * **Selectors/data:** every `PLAYER_STATS_SELECTORS` symbol. Profile link supplies
   AFL player ID; headshot URL supplies Champion Data ID; jumper CSS class supplies
   team alias. Table headings are dynamically mapped.
@@ -320,10 +319,15 @@ skipped explicitly by the importer.
   completed. Unknown/missing status defaults to `LIVE`, which can cause continued
   polling. Postponed/cancelled are not explicitly handled; malformed rows are
   skipped independently.
-* **Requirements/coverage:** Playwright remains required because repository
-  policy explicitly treats the match-centre table as rendered until a fixture
-  proves otherwise; no HTML auth. Parser has no golden HTML fixture; scheduler,
-  CLI, Admin, audit and selector wiring have tests.
+* **Requirements/coverage:** Playwright remains required for this explicit legacy
+  path because repository policy treats the match-centre table as rendered until
+  plain-HTTP parity is proven; no HTML auth. The rendered-HTML golden fixture
+  `tests/fixtures/afl_sources/html_rendered/player_stats_match_8216_live_partial.html`
+  drives offline regression coverage in `tests/test_afl_golden_fixtures.py` for
+  live-status detection, player/team identity and partial statistic mapping, plus
+  visible failures when the required table or header-row contract changes. CLI,
+  audit and selector wiring have additional tests. Scheduler/Admin routing tests
+  instead verify the operational CFS JSON path.
 * **Fragility/risk/verified:** header abbreviations/order, missing player/headshot,
   image ID convention, alias CSS class, live publication and status vocabulary.
   Repository verified 2026-07-28; live HTML blocked.
@@ -360,11 +364,11 @@ browser observation:
 
 | Collector | Contract and fields | Activity |
 |---|---|---|
-| `afl_json.collectors.PublicAflCollector` | Public `competitions`, `competition_seasons`, `rounds`, `teams`, `matches`, and direct `match_detail`; normalises numeric and provider IDs, names/codes, round number, match teams/venue/start/status/scores while retaining `source`. | `cli.py --collect-afl-metadata` is manual read-only; `--bootstrap-afl-season` persists the hierarchy. Not used by current HTML schedules/Admin actions. |
-| `PublicAflCollector.season_players` / `.collect_players` / `.player_id_map` | Authenticated CFS `/players?seasonId=...` supplies season listings and provider identity; public `/players/idmap` supplies validated Champion Data-to-AFL numeric crosswalk. | Implemented and fixture-tested; reached as part of metadata collection APIs, but no scheduler/Admin route. |
+| `afl_json.collectors.PublicAflCollector` | Public `competitions`, `competition_seasons`, `rounds`, `teams`, `matches`, and direct `match_detail`; normalises numeric and provider IDs, names/codes, round number, match teams/venue/start/status/scores while retaining `source`. | `cli.py --collect-afl-metadata` is manual read-only; `--bootstrap-afl-season` persists the hierarchy. Scheduler/Admin metadata operations also use public JSON through `SOURCE_POLICY`. |
+| `PublicAflCollector.season_players` / `.collect_players` / `.player_id_map` | Authenticated CFS `/players?seasonId=...` supplies season listings and provider identity; public `/players/idmap` supplies validated Champion Data-to-AFL numeric crosswalk. | Implemented and fixture-tested. CLI `--bootstrap-afl-season` persists canonical players, provider mappings, team links where resolvable, and competition-season membership; there is no scheduler/Admin player-bootstrap route. |
 | `afl_json.rosters.MatchRosterCollector` | Authenticated CFS `/matchRosters/round/{round_provider_id}`; selection/roster state, provider timestamps/version and Champion Data IDs. Explicit unpublished/malformed/change states. | `cli.py --collect-match-rosters`; not scheduled/Admin production routing. |
-| `afl_json.player_stats.MatchPlayerStatsCollector` | Authenticated CFS `/playerStats/match/{match_provider_id}`; canonical mapping preserves extra stats and source/status provenance, with concluded/live-partial/unpublished/malformed fixtures. | `cli.py --collect-match-player-stats` can persist; not selected by scheduler/Admin, which still call HTML. |
-| `afl_json.match_status.reconcile_match_status` | Public direct match detail reconciles `SCHEDULED`, `LIVE`, `POSTGAME`, `CONCLUDED` monotonically against stored status. | Used by the CFS stats CLI path, not the HTML match scheduler. |
+| `afl_json.player_stats.MatchPlayerStatsCollector` | Authenticated CFS `/playerStats/match/{match_provider_id}`; canonical mapping preserves extra stats and source/status provenance, with concluded/live-partial/unpublished/malformed fixtures. | Selected for Scheduler and Admin operational player-stat jobs and CLI `--collect-match-player-stats`; all three persist through `upsert_player_stats` to `cfs_player_stats`. |
+| `afl_json.match_status.reconcile_match_status` | Public direct match detail reconciles `SCHEDULED`, `LIVE`, `POSTGAME`, `CONCLUDED` monotonically against stored status. | Used by operational Scheduler/Admin and CLI CFS player-stat collection, and by match-status policy operations. |
 
 Endpoint URL templates, methods, required parameters, authentication, collection
 paths, pagination, and known unverified fields live in
@@ -379,9 +383,10 @@ be captured.
 * **Fixtures, rounds, teams, match metadata and status:** public JSON is the best
   maintained structured source and is covered by repository JSON fixtures and
   collector/bootstrapping tests. Plain HTTP sufficiency is supported for the
-  public API by the live HTTP 200 check above, not by an HTML-page claim. HTML
-  remains the currently scheduled path and a candidate diagnostic/historical-gap
-  comparison only until canonical parity and routing are deliberately changed.
+  public API by the live HTTP 200 check above, not by an HTML-page claim.
+  Scheduler/Admin metadata and match-status operations now select public JSON;
+  fixture/match HTML remains an explicit legacy/manual diagnostic path, not an
+  automatic fallback.
 * **Lineups:** CFS match rosters are the best maintained structured alternative
   and specifically model unavailable, changed and completed states. Positions,
   `teamPlayers` relationships, and late-change timing remain marked unverified in
@@ -406,11 +411,12 @@ be captured.
   totals/averages contract. No maintained GraphQL/REST/hydration source exists in
   this repository. **Investigation incomplete**; browser remains safest for that
   manual export, while scheduled identity refresh should be evaluated for CFS.
-* **Match player statistics:** authenticated CFS is a maintained, extensively
-  fixture-tested canonical collector and the recommended preferred source. The
-  HTML table is still the actual scheduler/Admin source and should initially be
-  diagnostic or explicitly eligible historical-gap coverage, not a silent
-  fallback, until field/status parity is demonstrated.
+* **Match player statistics:** authenticated CFS is the maintained,
+  fixture-tested operational source for Scheduler and Admin and for CLI
+  `--collect-match-player-stats`; these paths persist only to `cfs_player_stats`.
+  The HTML table remains a separately invoked legacy/manual source via CLI
+  `--scrape-match` or the scraper module, whose confirmed writer targets only
+  `player_stats`. Neither path falls back to or dual-writes the other table.
 
 No undocumented endpoint observed once is recommended for production. Stable
 DOM `data-*` attributes are documented above; no scraper consumes embedded JSON,
@@ -423,15 +429,16 @@ to the recommendation; the current method column separately records reality.
 
 | Domain | Current production source | Current acquisition | Best structured alternative | Recommended preferred source | Recommended fallback source | Fallback purpose | Auth required | Browser required | Confidence | Evidence | Follow-up |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| Competitions/seasons/rounds | Fixture HTML | Playwright HTML | Public competitions/seasons/rounds | **Public JSON preferred** | Fixture HTML | **Diagnostic comparison only**; possible **Historical-gap fallback only** after parity | No | No | High | Public collector contracts, JSON fixtures/tests, live public HTTP 200 | Route only after persistence parity; define bye/round semantics |
+| Competitions/seasons/rounds | Public JSON | Plain HTTP JSON | Public competitions/seasons/rounds | **Public JSON** | Fixture HTML | Explicit legacy diagnostics only; no automatic fallback | No | No | High | `SOURCE_POLICY`, public collector contracts, JSON fixtures/tests, live public HTTP 200 | Define bye/round semantics |
 | Teams/clubs | Club squad HTML plus configured club DB | Playwright HTML | Public teams; CFS season players | **Public JSON preferred** for team metadata | Club HTML | **HTML fallback only** for proven enrichment gaps | CFS only for players | No for canonical team metadata | Medium | Public team collector tests; squad enrichment differs | Define team-vs-club and enrichment contract |
-| Match metadata/details | Fixture cards | Playwright HTML | Public matches/match detail | **Public JSON preferred** | Fixture HTML | **Diagnostic comparison only** / historical gap after parity | No | No | High | Normalisers, bootstrap and fixtures/tests | Compare start/status/score and special-round behavior |
-| Match status | Fixture cards/monitor; monitor manual only | Playwright HTML | Public match detail | **Public JSON preferred** | Fixture HTML | **Diagnostic comparison only** | No | No | High | Monotonic status reconciler and tests | Unify HTML vocabulary including postponed/cancelled |
-| Lineups/team selections | Team-lineups page | Interactive Playwright HTML | Authenticated CFS match rosters | **Authenticated CFS preferred** after output parity | Team-lineups HTML | **HTML fallback only**, explicitly configured | Yes for preferred | No for preferred; yes fallback | Medium | Roster contract/change/unpublished fixtures; CFS semantics partly unverified | Map IDs, positions, late changes; golden HTML fixture |
+| Match metadata/details | Public JSON | Plain HTTP JSON | Public matches/match detail | **Public JSON** | Fixture HTML | Explicit legacy diagnostics only; no automatic fallback | No | No | High | `SOURCE_POLICY`, normalisers, bootstrap and fixtures/tests | Compare start/status/score and special-round behavior |
+| Match status | Public match-detail JSON | Plain HTTP JSON | Public match detail | **Public JSON** | Fixture HTML | Explicit manual diagnostic only; no automatic fallback | No | No | High | `SOURCE_POLICY`, monotonic status reconciler and tests | Unify HTML vocabulary including postponed/cancelled |
+| Operational lineups/team selections | Team-lineups HTML | Interactive Playwright HTML | Authenticated CFS match rosters | **Playwright HTML intentionally selected for persistence** | None | Not a fallback; CFS roster collection is a separate read-only CLI path | No for operational HTML; yes for CFS diagnostic | Yes for operational path | Medium | `SOURCE_POLICY`, scheduler/Admin routing and persistence tests | Map IDs, positions and late changes before canonical CFS persistence |
 | Injuries | Injury-list article | Playwright HTML | None maintained | **Playwright HTML required** / **Further investigation required** | None identified | Not applicable | No known | Yes, safest current | Medium-low | Only active implementation waits for rendered article; live inspection blocked | Capture safe network evidence and add empty/partial fixtures |
-| Season players / player IDs | Leaderboard and club squad HTML | Interactive Playwright HTML | CFS season players + public ID map | **Authenticated CFS preferred** for season listings; public map for crosswalk | Squad/leader HTML | **HTML fallback only** for proven enrichment or historical gap | Yes for season list | No for canonical IDs | High for identity; medium enrichment | Pagination/crosswalk diagnostics and fixtures | Reconcile names, jumper, position, images and persistence |
+| Season players / player IDs | CFS season players + public ID map during CLI bootstrap | Plain authenticated/public JSON | Same implemented sources | **CFS season players plus public ID map** | Squad/leader HTML | Separate enrichment/historical-gap tools only; no automatic fallback | Yes for season list | No for canonical bootstrap | High for identity; medium enrichment | Persistence adapter, bootstrap and crosswalk tests | Keep enrichment parity distinct from canonical persistence |
 | Leaderboard totals/averages export | Stats leaders HTML (manual only) | Interactive Playwright HTML | None with proven field parity | **Playwright HTML required** / **Further investigation required** | None | Manual diagnostic/export only | No known | Yes currently | Low | Repository parser only; no fixture/live response | Investigate maintained stats endpoint; add heading fixture |
-| Match player statistics | Match-centre HTML | Polling Playwright HTML | Authenticated CFS player stats | **Authenticated CFS preferred** | Match-centre HTML | **Diagnostic comparison only** initially; **Historical-gap fallback only** if evidenced | Yes for preferred | No for preferred | High for CFS; medium fallback parity | Canonical mapping, status/provenance and partial/unpublished fixtures | Compare canonical columns; then change routing in separate issue |
+| Operational match player statistics | Authenticated CFS player stats | Plain authenticated JSON | Same implemented source | **Authenticated CFS JSON** | None | No automatic fallback; persists `cfs_player_stats` | Yes | No | High | `SOURCE_POLICY`, Scheduler/Admin/CLI routing and persistence tests | Reconcile the parallel models separately |
+| Legacy/manual match player statistics | Match-centre HTML | Polling/rendered Playwright HTML | CFS is the operational source, not a fallback for this explicit command | **Explicit legacy/manual HTML only** | None | CLI `--scrape-match` and direct module persist `player_stats` only | No HTML auth | Yes | Medium | Legacy scraper and `save_player_stats_to_db` | Preserve explicit support until separately retired |
 
 The injury conclusion is deliberately conservative: it remains HTML-sourced
 because no maintained structured injury endpoint or collector exists in this
@@ -501,9 +508,9 @@ No issues are created by this document. Suggested titles/scopes are:
 * **Unclear fallback semantics — “Define observable fallback failure classes.”**
   Specify not-published, auth, transport, validation and contract-break behavior;
   prohibit silent catch-all fallback.
-* **Scheduler/Admin ambiguity — “Align scheduler and Admin source routing.”** Both
-  currently select legacy HTML for lineups/stats while structured collectors are
-  CLI-only; make policy selection explicit in later runtime work.
+* **Scheduler/Admin source routing:** now aligned through `SOURCE_POLICY`: player
+  statistics use CFS JSON, while lineups deliberately use the persistent HTML
+  writer. Keep this distinction covered when adding entry points.
 * **Provenance gaps — “Persist acquisition provenance and comparison
   diagnostics.”** Record source/contract version and fallback decisions without
   secrets or raw personal data.
