@@ -1,0 +1,14 @@
+{
+  "teams": [
+    {
+      "id": 1,
+      "providerId": "CD_T10",
+      "name": "Cats"
+    }
+  ],
+  "pagination": {
+    "pageNum": 1,
+    "totalPages": 1,
+    "totalResults": 1
+  }
+}

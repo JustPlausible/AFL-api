@@ -1,0 +1,1059 @@
+{
+  "schema_version": 1,
+  "corpus": "AFL JSON contract fixtures",
+  "fixtures_root": "tests/fixtures/afl_json",
+  "metadata_required": [
+    "endpoint_family",
+    "source_url_pattern",
+    "capture_date",
+    "scenario",
+    "full",
+    "sanitisation",
+    "reduction"
+  ],
+  "authentication_policy": "Payload bodies only. No tokens, cookies, request headers or reusable authentication material are permitted.",
+  "endpoint_families": [
+    {
+      "name": "competitions",
+      "production_module": "afl_json.collectors.PublicAflCollector",
+      "fixture_directory": "tests/fixtures/afl_json",
+      "covered_scenarios": [
+        "empty",
+        "malformed_record",
+        "missing_optional",
+        "missing_required",
+        "normal",
+        "paginated_page_1",
+        "paginated_page_2"
+      ],
+      "contract_test_module": "tests/test_afl_json_fixture_contracts.py",
+      "intentionally_unsupported": "CFS authentication/unpublished and match-stat lifecycle states do not apply to this public catalogue."
+    },
+    {
+      "name": "competition_seasons",
+      "production_module": "afl_json.collectors.PublicAflCollector",
+      "fixture_directory": "tests/fixtures/afl_json",
+      "covered_scenarios": [
+        "empty",
+        "malformed_record",
+        "missing_optional",
+        "missing_required",
+        "normal"
+      ],
+      "contract_test_module": "tests/test_afl_json_fixture_contracts.py",
+      "intentionally_unsupported": "CFS authentication/unpublished and match-stat lifecycle states do not apply to this public catalogue."
+    },
+    {
+      "name": "rounds",
+      "production_module": "afl_json.collectors.PublicAflCollector",
+      "fixture_directory": "tests/fixtures/afl_json",
+      "covered_scenarios": [
+        "empty",
+        "malformed_record",
+        "missing_optional",
+        "missing_required",
+        "normal"
+      ],
+      "contract_test_module": "tests/test_afl_json_fixture_contracts.py",
+      "intentionally_unsupported": "CFS authentication/unpublished and match-stat lifecycle states do not apply to this public catalogue."
+    },
+    {
+      "name": "teams",
+      "production_module": "afl_json.collectors.PublicAflCollector",
+      "fixture_directory": "tests/fixtures/afl_json",
+      "covered_scenarios": [
+        "empty",
+        "malformed_record",
+        "missing_optional",
+        "missing_required",
+        "normal"
+      ],
+      "contract_test_module": "tests/test_afl_json_fixture_contracts.py",
+      "intentionally_unsupported": "CFS authentication/unpublished and match-stat lifecycle states do not apply to this public catalogue."
+    },
+    {
+      "name": "matches",
+      "production_module": "afl_json.collectors.PublicAflCollector",
+      "fixture_directory": "tests/fixtures/afl_json",
+      "covered_scenarios": [
+        "empty",
+        "malformed_record",
+        "missing_optional",
+        "missing_required",
+        "normal_concluded",
+        "normal_scheduled"
+      ],
+      "contract_test_module": "tests/test_afl_json_fixture_contracts.py",
+      "intentionally_unsupported": "CFS authentication/unpublished states do not apply; live/concluded detail is retained in match records rather than player-stat arrays."
+    },
+    {
+      "name": "match_detail",
+      "production_module": "afl_json.collectors.PublicAflCollector",
+      "fixture_directory": "tests/fixtures/afl_json",
+      "covered_scenarios": [
+        "concluded",
+        "empty",
+        "malformed_record",
+        "missing_optional",
+        "missing_required"
+      ],
+      "contract_test_module": "tests/test_afl_json_fixture_contracts.py",
+      "intentionally_unsupported": "Pagination does not apply to an identifier-addressed detail endpoint; CFS errors do not apply."
+    },
+    {
+      "name": "player_id_map",
+      "production_module": "afl_json.collectors.PublicAflCollector",
+      "fixture_directory": "tests/fixtures/afl_json",
+      "covered_scenarios": [
+        "empty",
+        "malformed_record",
+        "missing_required",
+        "normal"
+      ],
+      "contract_test_module": "tests/test_afl_json_fixture_contracts.py",
+      "intentionally_unsupported": "Pagination is not exposed by this endpoint; optional display fields and match lifecycle states do not exist in its scalar crosswalk."
+    },
+    {
+      "name": "season_players",
+      "production_module": "afl_json.collectors.PublicAflCollector",
+      "fixture_directory": "tests/fixtures/afl_json",
+      "covered_scenarios": [
+        "empty",
+        "missing_optional",
+        "missing_required",
+        "normal_complete",
+        "paginated_page_1",
+        "paginated_page_2",
+        "paginated_probe"
+      ],
+      "contract_test_module": "tests/test_afl_json_fixture_contracts.py",
+      "intentionally_unsupported": "Live/concluded match states do not apply. CFSSDS001 is classified at the shared CFS transport boundary."
+    },
+    {
+      "name": "match_rosters",
+      "production_module": "afl_json.rosters.MatchRosterCollector",
+      "fixture_directory": "tests/fixtures/afl_json",
+      "covered_scenarios": [
+        "concluded",
+        "empty",
+        "empty_unpublished",
+        "live_changed",
+        "malformed_record",
+        "normal_published"
+      ],
+      "contract_test_module": "tests/test_afl_json_fixture_contracts.py",
+      "intentionally_unsupported": "Pagination metadata is not part of the verified round-roster response. HTTP 401 and CFSSDS001 use shared CFS error fixtures."
+    },
+    {
+      "name": "match_player_statistics",
+      "production_module": "afl_json.player_stats.MatchPlayerStatsCollector",
+      "fixture_directory": "tests/fixtures/afl_json",
+      "covered_scenarios": [
+        "concluded",
+        "empty_unpublished",
+        "live_partial_missing_optional",
+        "malformed_record"
+      ],
+      "contract_test_module": "tests/test_afl_json_fixture_contracts.py",
+      "intentionally_unsupported": "Pagination is not part of the verified match-scoped response. HTTP 401 and CFSSDS001 use shared CFS error fixtures."
+    }
+  ],
+  "fixtures": [
+    {
+      "id": "competitions",
+      "path": "competitions.json",
+      "endpoint_family": "competitions",
+      "source_url_pattern": "https://aflapi.afl.com.au/afl/v2/competitions?pageSize={page_size}&pageNum={page_number}",
+      "capture_date": "2026-07-28",
+      "scenario": "normal",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "contracts--cfs-unpublished-resource",
+      "path": "contracts/cfs_unpublished_resource.json",
+      "endpoint_family": "cfs_error",
+      "source_url_pattern": "https://api.afl.com.au/cfs/afl/{protected_resource}",
+      "capture_date": "2026-07-28",
+      "scenario": "cfssds001_unpublished_resource",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.client.AflJsonClient"
+    },
+    {
+      "id": "contracts--competition-seasons--empty",
+      "path": "contracts/competition_seasons__empty.json",
+      "endpoint_family": "competition_seasons",
+      "source_url_pattern": "https://aflapi.afl.com.au/afl/v2/competitions/{competition_id}/compseasons?pageSize={page_size}&pageNum={page_number}",
+      "capture_date": "2026-07-28",
+      "scenario": "empty",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "contracts--competition-seasons--malformed-record",
+      "path": "contracts/competition_seasons__malformed_record.json",
+      "endpoint_family": "competition_seasons",
+      "source_url_pattern": "https://aflapi.afl.com.au/afl/v2/competitions/{competition_id}/compseasons?pageSize={page_size}&pageNum={page_number}",
+      "capture_date": "2026-07-28",
+      "scenario": "malformed_record",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "contracts--competition-seasons--missing-optional",
+      "path": "contracts/competition_seasons__missing_optional.json",
+      "endpoint_family": "competition_seasons",
+      "source_url_pattern": "https://aflapi.afl.com.au/afl/v2/competitions/{competition_id}/compseasons?pageSize={page_size}&pageNum={page_number}",
+      "capture_date": "2026-07-28",
+      "scenario": "missing_optional",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "contracts--competition-seasons--missing-required",
+      "path": "contracts/competition_seasons__missing_required.json",
+      "endpoint_family": "competition_seasons",
+      "source_url_pattern": "https://aflapi.afl.com.au/afl/v2/competitions/{competition_id}/compseasons?pageSize={page_size}&pageNum={page_number}",
+      "capture_date": "2026-07-28",
+      "scenario": "missing_required",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "contracts--competitions--empty",
+      "path": "contracts/competitions__empty.json",
+      "endpoint_family": "competitions",
+      "source_url_pattern": "https://aflapi.afl.com.au/afl/v2/competitions?pageSize={page_size}&pageNum={page_number}",
+      "capture_date": "2026-07-28",
+      "scenario": "empty",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "contracts--competitions--malformed-record",
+      "path": "contracts/competitions__malformed_record.json",
+      "endpoint_family": "competitions",
+      "source_url_pattern": "https://aflapi.afl.com.au/afl/v2/competitions?pageSize={page_size}&pageNum={page_number}",
+      "capture_date": "2026-07-28",
+      "scenario": "malformed_record",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "contracts--competitions--missing-optional",
+      "path": "contracts/competitions__missing_optional.json",
+      "endpoint_family": "competitions",
+      "source_url_pattern": "https://aflapi.afl.com.au/afl/v2/competitions?pageSize={page_size}&pageNum={page_number}",
+      "capture_date": "2026-07-28",
+      "scenario": "missing_optional",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "contracts--competitions--missing-required",
+      "path": "contracts/competitions__missing_required.json",
+      "endpoint_family": "competitions",
+      "source_url_pattern": "https://aflapi.afl.com.au/afl/v2/competitions?pageSize={page_size}&pageNum={page_number}",
+      "capture_date": "2026-07-28",
+      "scenario": "missing_required",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "contracts--competitions--paginated-page-1",
+      "path": "contracts/competitions__paginated_page_1.json",
+      "endpoint_family": "competitions",
+      "source_url_pattern": "https://aflapi.afl.com.au/afl/v2/competitions?pageSize={page_size}&pageNum={page_number}",
+      "capture_date": "2026-07-28",
+      "scenario": "paginated_page_1",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "contracts--competitions--paginated-page-2",
+      "path": "contracts/competitions__paginated_page_2.json",
+      "endpoint_family": "competitions",
+      "source_url_pattern": "https://aflapi.afl.com.au/afl/v2/competitions?pageSize={page_size}&pageNum={page_number}",
+      "capture_date": "2026-07-28",
+      "scenario": "paginated_page_2",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "contracts--http-401-authentication-failure",
+      "path": "contracts/http_401_authentication_failure.json",
+      "endpoint_family": "cfs_error",
+      "source_url_pattern": "https://api.afl.com.au/cfs/afl/{protected_resource}",
+      "capture_date": "2026-07-28",
+      "scenario": "http_401_authentication_failure",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.client.AflJsonClient"
+    },
+    {
+      "id": "contracts--match-detail--empty",
+      "path": "contracts/match_detail__empty.json",
+      "endpoint_family": "match_detail",
+      "source_url_pattern": "https://aflapi.afl.com.au/afl/v2/matches/{match_id}",
+      "capture_date": "2026-07-28",
+      "scenario": "empty",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "contracts--match-detail--malformed-record",
+      "path": "contracts/match_detail__malformed_record.json",
+      "endpoint_family": "match_detail",
+      "source_url_pattern": "https://aflapi.afl.com.au/afl/v2/matches/{match_id}",
+      "capture_date": "2026-07-28",
+      "scenario": "malformed_record",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "contracts--match-detail--missing-optional",
+      "path": "contracts/match_detail__missing_optional.json",
+      "endpoint_family": "match_detail",
+      "source_url_pattern": "https://aflapi.afl.com.au/afl/v2/matches/{match_id}",
+      "capture_date": "2026-07-28",
+      "scenario": "missing_optional",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "contracts--match-detail--missing-required",
+      "path": "contracts/match_detail__missing_required.json",
+      "endpoint_family": "match_detail",
+      "source_url_pattern": "https://aflapi.afl.com.au/afl/v2/matches/{match_id}",
+      "capture_date": "2026-07-28",
+      "scenario": "missing_required",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "contracts--match-rosters--empty",
+      "path": "contracts/match_rosters__empty.json",
+      "endpoint_family": "match_rosters",
+      "source_url_pattern": "https://api.afl.com.au/cfs/afl/matchRosters/round/{round_provider_id}",
+      "capture_date": "2026-07-28",
+      "scenario": "empty",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.rosters.MatchRosterCollector"
+    },
+    {
+      "id": "contracts--matches--empty",
+      "path": "contracts/matches__empty.json",
+      "endpoint_family": "matches",
+      "source_url_pattern": "https://aflapi.afl.com.au/afl/v2/matches?competitionId={competition_id}&compSeasonId={season_id}&roundNumber={round_number}&pageSize={page_size}&pageNum={page_number}",
+      "capture_date": "2026-07-28",
+      "scenario": "empty",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "contracts--matches--malformed-record",
+      "path": "contracts/matches__malformed_record.json",
+      "endpoint_family": "matches",
+      "source_url_pattern": "https://aflapi.afl.com.au/afl/v2/matches?competitionId={competition_id}&compSeasonId={season_id}&roundNumber={round_number}&pageSize={page_size}&pageNum={page_number}",
+      "capture_date": "2026-07-28",
+      "scenario": "malformed_record",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "contracts--matches--missing-optional",
+      "path": "contracts/matches__missing_optional.json",
+      "endpoint_family": "matches",
+      "source_url_pattern": "https://aflapi.afl.com.au/afl/v2/matches?competitionId={competition_id}&compSeasonId={season_id}&roundNumber={round_number}&pageSize={page_size}&pageNum={page_number}",
+      "capture_date": "2026-07-28",
+      "scenario": "missing_optional",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "contracts--matches--missing-required",
+      "path": "contracts/matches__missing_required.json",
+      "endpoint_family": "matches",
+      "source_url_pattern": "https://aflapi.afl.com.au/afl/v2/matches?competitionId={competition_id}&compSeasonId={season_id}&roundNumber={round_number}&pageSize={page_size}&pageNum={page_number}",
+      "capture_date": "2026-07-28",
+      "scenario": "missing_required",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "contracts--player-id-map--empty",
+      "path": "contracts/player_id_map__empty.json",
+      "endpoint_family": "player_id_map",
+      "source_url_pattern": "https://aflapi.afl.com.au/afl/v2/players/idmap",
+      "capture_date": "2026-07-28",
+      "scenario": "empty",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "contracts--player-id-map--malformed-record",
+      "path": "contracts/player_id_map__malformed_record.json",
+      "endpoint_family": "player_id_map",
+      "source_url_pattern": "https://aflapi.afl.com.au/afl/v2/players/idmap",
+      "capture_date": "2026-07-28",
+      "scenario": "malformed_record",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "contracts--player-id-map--missing-required",
+      "path": "contracts/player_id_map__missing_required.json",
+      "endpoint_family": "player_id_map",
+      "source_url_pattern": "https://aflapi.afl.com.au/afl/v2/players/idmap",
+      "capture_date": "2026-07-28",
+      "scenario": "missing_required",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "contracts--rounds--empty",
+      "path": "contracts/rounds__empty.json",
+      "endpoint_family": "rounds",
+      "source_url_pattern": "https://aflapi.afl.com.au/afl/v2/compseasons/{season_id}/rounds?pageSize={page_size}&pageNum={page_number}",
+      "capture_date": "2026-07-28",
+      "scenario": "empty",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "contracts--rounds--malformed-record",
+      "path": "contracts/rounds__malformed_record.json",
+      "endpoint_family": "rounds",
+      "source_url_pattern": "https://aflapi.afl.com.au/afl/v2/compseasons/{season_id}/rounds?pageSize={page_size}&pageNum={page_number}",
+      "capture_date": "2026-07-28",
+      "scenario": "malformed_record",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "contracts--rounds--missing-optional",
+      "path": "contracts/rounds__missing_optional.json",
+      "endpoint_family": "rounds",
+      "source_url_pattern": "https://aflapi.afl.com.au/afl/v2/compseasons/{season_id}/rounds?pageSize={page_size}&pageNum={page_number}",
+      "capture_date": "2026-07-28",
+      "scenario": "missing_optional",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "contracts--rounds--missing-required",
+      "path": "contracts/rounds__missing_required.json",
+      "endpoint_family": "rounds",
+      "source_url_pattern": "https://aflapi.afl.com.au/afl/v2/compseasons/{season_id}/rounds?pageSize={page_size}&pageNum={page_number}",
+      "capture_date": "2026-07-28",
+      "scenario": "missing_required",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "contracts--season-players--empty",
+      "path": "contracts/season_players__empty.json",
+      "endpoint_family": "season_players",
+      "source_url_pattern": "https://api.afl.com.au/cfs/afl/players?seasonId={season_provider_id}&pageSize={page_size}&pageNum={page_number}",
+      "capture_date": "2026-07-28",
+      "scenario": "empty",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "contracts--season-players--missing-optional",
+      "path": "contracts/season_players__missing_optional.json",
+      "endpoint_family": "season_players",
+      "source_url_pattern": "https://api.afl.com.au/cfs/afl/players?seasonId={season_provider_id}&pageSize={page_size}&pageNum={page_number}",
+      "capture_date": "2026-07-28",
+      "scenario": "missing_optional",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "contracts--season-players--missing-required",
+      "path": "contracts/season_players__missing_required.json",
+      "endpoint_family": "season_players",
+      "source_url_pattern": "https://api.afl.com.au/cfs/afl/players?seasonId={season_provider_id}&pageSize={page_size}&pageNum={page_number}",
+      "capture_date": "2026-07-28",
+      "scenario": "missing_required",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "contracts--season-players--paginated-page-1",
+      "path": "contracts/season_players__paginated_page_1.json",
+      "endpoint_family": "season_players",
+      "source_url_pattern": "https://api.afl.com.au/cfs/afl/players?seasonId={season_provider_id}&pageSize={page_size}&pageNum={page_number}",
+      "capture_date": "2026-07-28",
+      "scenario": "paginated_page_1",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "contracts--season-players--paginated-page-2",
+      "path": "contracts/season_players__paginated_page_2.json",
+      "endpoint_family": "season_players",
+      "source_url_pattern": "https://api.afl.com.au/cfs/afl/players?seasonId={season_provider_id}&pageSize={page_size}&pageNum={page_number}",
+      "capture_date": "2026-07-28",
+      "scenario": "paginated_page_2",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "contracts--season-players--paginated-probe",
+      "path": "contracts/season_players__paginated_probe.json",
+      "endpoint_family": "season_players",
+      "source_url_pattern": "https://api.afl.com.au/cfs/afl/players?seasonId={season_provider_id}&pageSize={page_size}&pageNum={page_number}",
+      "capture_date": "2026-07-28",
+      "scenario": "paginated_probe",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "contracts--teams--empty",
+      "path": "contracts/teams__empty.json",
+      "endpoint_family": "teams",
+      "source_url_pattern": "https://aflapi.afl.com.au/afl/v2/teams?compSeasonId={season_id}&pageSize={page_size}&pageNum={page_number}",
+      "capture_date": "2026-07-28",
+      "scenario": "empty",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "contracts--teams--malformed-record",
+      "path": "contracts/teams__malformed_record.json",
+      "endpoint_family": "teams",
+      "source_url_pattern": "https://aflapi.afl.com.au/afl/v2/teams?compSeasonId={season_id}&pageSize={page_size}&pageNum={page_number}",
+      "capture_date": "2026-07-28",
+      "scenario": "malformed_record",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "contracts--teams--missing-optional",
+      "path": "contracts/teams__missing_optional.json",
+      "endpoint_family": "teams",
+      "source_url_pattern": "https://aflapi.afl.com.au/afl/v2/teams?compSeasonId={season_id}&pageSize={page_size}&pageNum={page_number}",
+      "capture_date": "2026-07-28",
+      "scenario": "missing_optional",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "contracts--teams--missing-required",
+      "path": "contracts/teams__missing_required.json",
+      "endpoint_family": "teams",
+      "source_url_pattern": "https://aflapi.afl.com.au/afl/v2/teams?compSeasonId={season_id}&pageSize={page_size}&pageNum={page_number}",
+      "capture_date": "2026-07-28",
+      "scenario": "missing_required",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "match-detail-concluded",
+      "path": "match_detail_concluded.json",
+      "endpoint_family": "match_detail",
+      "source_url_pattern": "https://aflapi.afl.com.au/afl/v2/matches/{match_id}",
+      "capture_date": "2026-07-28",
+      "scenario": "concluded",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "match-player-stats-concluded",
+      "path": "match_player_stats_concluded.json",
+      "endpoint_family": "match_player_statistics",
+      "source_url_pattern": "https://api.afl.com.au/cfs/afl/playerStats/match/{match_provider_id}",
+      "capture_date": "2026-07-28",
+      "scenario": "concluded",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.player_stats.MatchPlayerStatsCollector"
+    },
+    {
+      "id": "match-player-stats-live-partial",
+      "path": "match_player_stats_live_partial.json",
+      "endpoint_family": "match_player_statistics",
+      "source_url_pattern": "https://api.afl.com.au/cfs/afl/playerStats/match/{match_provider_id}",
+      "capture_date": "2026-07-28",
+      "scenario": "live_partial_missing_optional",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.player_stats.MatchPlayerStatsCollector"
+    },
+    {
+      "id": "match-player-stats-malformed",
+      "path": "match_player_stats_malformed.json",
+      "endpoint_family": "match_player_statistics",
+      "source_url_pattern": "https://api.afl.com.au/cfs/afl/playerStats/match/{match_provider_id}",
+      "capture_date": "2026-07-28",
+      "scenario": "malformed_record",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.player_stats.MatchPlayerStatsCollector"
+    },
+    {
+      "id": "match-player-stats-unpublished",
+      "path": "match_player_stats_unpublished.json",
+      "endpoint_family": "match_player_statistics",
+      "source_url_pattern": "https://api.afl.com.au/cfs/afl/playerStats/match/{match_provider_id}",
+      "capture_date": "2026-07-28",
+      "scenario": "empty_unpublished",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.player_stats.MatchPlayerStatsCollector"
+    },
+    {
+      "id": "match-rosters-available",
+      "path": "match_rosters_available.json",
+      "endpoint_family": "match_rosters",
+      "source_url_pattern": "https://api.afl.com.au/cfs/afl/matchRosters/round/{round_provider_id}",
+      "capture_date": "2026-07-28",
+      "scenario": "normal_published",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.rosters.MatchRosterCollector"
+    },
+    {
+      "id": "match-rosters-changed",
+      "path": "match_rosters_changed.json",
+      "endpoint_family": "match_rosters",
+      "source_url_pattern": "https://api.afl.com.au/cfs/afl/matchRosters/round/{round_provider_id}",
+      "capture_date": "2026-07-28",
+      "scenario": "live_changed",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.rosters.MatchRosterCollector"
+    },
+    {
+      "id": "match-rosters-completed",
+      "path": "match_rosters_completed.json",
+      "endpoint_family": "match_rosters",
+      "source_url_pattern": "https://api.afl.com.au/cfs/afl/matchRosters/round/{round_provider_id}",
+      "capture_date": "2026-07-28",
+      "scenario": "concluded",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.rosters.MatchRosterCollector"
+    },
+    {
+      "id": "match-rosters-malformed",
+      "path": "match_rosters_malformed.json",
+      "endpoint_family": "match_rosters",
+      "source_url_pattern": "https://api.afl.com.au/cfs/afl/matchRosters/round/{round_provider_id}",
+      "capture_date": "2026-07-28",
+      "scenario": "malformed_record",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.rosters.MatchRosterCollector"
+    },
+    {
+      "id": "match-rosters-unpublished",
+      "path": "match_rosters_unpublished.json",
+      "endpoint_family": "match_rosters",
+      "source_url_pattern": "https://api.afl.com.au/cfs/afl/matchRosters/round/{round_provider_id}",
+      "capture_date": "2026-07-28",
+      "scenario": "empty_unpublished",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.rosters.MatchRosterCollector"
+    },
+    {
+      "id": "matches-round-0",
+      "path": "matches_round_0.json",
+      "endpoint_family": "matches",
+      "source_url_pattern": "https://aflapi.afl.com.au/afl/v2/matches?competitionId={competition_id}&compSeasonId={season_id}&roundNumber={round_number}&pageSize={page_size}&pageNum={page_number}",
+      "capture_date": "2026-07-28",
+      "scenario": "normal_scheduled",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "matches-round-1",
+      "path": "matches_round_1.json",
+      "endpoint_family": "matches",
+      "source_url_pattern": "https://aflapi.afl.com.au/afl/v2/matches?competitionId={competition_id}&compSeasonId={season_id}&roundNumber={round_number}&pageSize={page_size}&pageNum={page_number}",
+      "capture_date": "2026-07-28",
+      "scenario": "normal_concluded",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "player-id-map",
+      "path": "player_id_map.json",
+      "endpoint_family": "player_id_map",
+      "source_url_pattern": "https://aflapi.afl.com.au/afl/v2/players/idmap",
+      "capture_date": "2026-07-28",
+      "scenario": "normal",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "rounds",
+      "path": "rounds.json",
+      "endpoint_family": "rounds",
+      "source_url_pattern": "https://aflapi.afl.com.au/afl/v2/compseasons/{season_id}/rounds?pageSize={page_size}&pageNum={page_number}",
+      "capture_date": "2026-07-28",
+      "scenario": "normal",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "season-players-complete",
+      "path": "season_players_complete.json",
+      "endpoint_family": "season_players",
+      "source_url_pattern": "https://api.afl.com.au/cfs/afl/players?seasonId={season_provider_id}&pageSize={page_size}&pageNum={page_number}",
+      "capture_date": "2026-07-28",
+      "scenario": "normal_complete",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "seasons",
+      "path": "seasons.json",
+      "endpoint_family": "competition_seasons",
+      "source_url_pattern": "https://aflapi.afl.com.au/afl/v2/competitions/{competition_id}/compseasons?pageSize={page_size}&pageNum={page_number}",
+      "capture_date": "2026-07-28",
+      "scenario": "normal",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "id": "teams",
+      "path": "teams.json",
+      "endpoint_family": "teams",
+      "source_url_pattern": "https://aflapi.afl.com.au/afl/v2/teams?compSeasonId={season_id}&pageSize={page_size}&pageNum={page_number}",
+      "capture_date": "2026-07-28",
+      "scenario": "normal",
+      "full": false,
+      "sanitisation": [
+        "removed tokens, cookies and request headers",
+        "replaced player and match identifiers with deterministic examples",
+        "removed fields unrelated to the represented contract"
+      ],
+      "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
+      "production_module": "afl_json.collectors.PublicAflCollector"
+    }
+  ]
+}

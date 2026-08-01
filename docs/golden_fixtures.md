@@ -47,3 +47,10 @@ reviewed as such before new output is accepted.
 Run the corpus alone with `pytest tests/test_afl_golden_fixtures.py`, then run `pytest`. Corpus tests
 block sockets/common HTTP entry points and real sleeping, and require neither AFL credentials nor
 a live browser.
+
+## JSON contract corpus
+
+Issue #60's endpoint-by-endpoint JSON metadata and offline replay rules are documented in
+[`json_contract_fixtures.md`](json_contract_fixtures.md). The shared golden-source manifest remains
+in place for Issue #48's mixed HTML/source coverage; the JSON-specific manifest adds stricter
+file-level completeness without removing or duplicating those fixtures.

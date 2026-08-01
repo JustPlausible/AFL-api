@@ -1,0 +1,10 @@
+{
+  "matches": [
+    "not-an-object"
+  ],
+  "pagination": {
+    "pageNum": 1,
+    "totalPages": 1,
+    "totalResults": 1
+  }
+}

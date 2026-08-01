@@ -155,7 +155,8 @@ def test_pagination_uses_metadata_deduplicates_overlap_and_ignores_requested_siz
 
 
 @pytest.mark.parametrize("payload, message", [
-    ({"competitions": [{"id": 1}], "pagination": {"pageNum": 1, "nextPage": 1}}, "did not progress"),
+    ({"competitions": [{"id": 1, "providerId": "CD_C014"}],
+      "pagination": {"pageNum": 1, "nextPage": 1}}, "did not progress"),
     ({"competitions": [], "pagination": {"pageNum": 1, "totalResults": 2}}, "empty page"),
 ])
 def test_pagination_detects_non_progressing_responses(payload, message):

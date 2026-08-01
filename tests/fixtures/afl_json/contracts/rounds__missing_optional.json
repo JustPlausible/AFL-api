@@ -1,0 +1,15 @@
+{
+  "rounds": [
+    {
+      "id": 1301,
+      "providerId": "CD_R1",
+      "name": "Round 1",
+      "roundNumber": 1
+    }
+  ],
+  "pagination": {
+    "pageNum": 1,
+    "totalPages": 1,
+    "totalResults": 1
+  }
+}

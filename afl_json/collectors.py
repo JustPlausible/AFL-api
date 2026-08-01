@@ -125,9 +125,18 @@ class PublicAflCollector:
                 self.raw_writer.write(endpoint, payload, scope=scope, page=page)
             page_records = _extract_collection(payload, definition.collection_paths, endpoint)
             added = 0
-            for record in page_records:
+            for record_index, record in enumerate(page_records):
                 if not isinstance(record, dict):
                     raise CollectionError(f"{endpoint} collection contains a non-object record")
+                missing_fields = [
+                    field for field in definition.required_record_fields
+                    if field not in record or record[field] is None
+                ]
+                if missing_fields:
+                    raise CollectionError(
+                        f"{endpoint} record {record_index} is missing required field(s): "
+                        f"{', '.join(missing_fields)}"
+                    )
                 identity = _record_identity(record, definition.identifier_type)
                 if identity in seen:
                     continue

@@ -22,6 +22,7 @@ for the reusable release summary and upgrade cautions.
 - [Public AFL metadata collection](public_afl_metadata.md)
 - [Match roster collection](match_rosters.md)
 - [Match player-stat collection](match_player_stats.md)
+- [JSON payload fixtures and offline contract regression tests](json_contract_fixtures.md)
 
 ## Reviews and planning
 

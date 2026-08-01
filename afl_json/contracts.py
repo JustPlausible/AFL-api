@@ -56,6 +56,7 @@ class EndpointDefinition:
     pagination: Pagination = Pagination.NONE
     verified: bool = True
     unverified_fields: tuple[str, ...] = ()
+    required_record_fields: tuple[str, ...] = ()
 
     @property
     def base_url(self) -> str:
@@ -67,6 +68,8 @@ class EndpointDefinition:
 
 
 def _endpoint(name: str, path: str, entity: str, **values: object) -> EndpointDefinition:
+    if values.get("source") is SourceSystem.PUBLIC and entity != "player_id_map":
+        values.setdefault("required_record_fields", ("providerId",))
     return EndpointDefinition(name=name, path_template=path, entity_type=entity, **values)  # type: ignore[arg-type]
 
 

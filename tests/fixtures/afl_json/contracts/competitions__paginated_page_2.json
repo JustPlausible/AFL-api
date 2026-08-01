@@ -1,0 +1,15 @@
+{
+  "competitions": [
+    {
+      "id": 1,
+      "providerId": "CD_C014",
+      "code": "AFL",
+      "name": "AFL Premiership"
+    }
+  ],
+  "pagination": {
+    "pageNum": 2,
+    "totalPages": 2,
+    "totalResults": 2
+  }
+}
