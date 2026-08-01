@@ -93,6 +93,7 @@ class CollectionOutcome:
     rows_read: int = 0
     rows_written: int = 0
     target: str | int | None = None
+    details: dict | None = None
 
 
 def policy_for(domain: OperationalDomain | str) -> SourcePolicy:
@@ -142,22 +143,29 @@ def collect_operational(
         else "match"
     )
     try:
+        if selected.domain is OperationalDomain.INJURIES:
+            from scraper.injuries.orchestration import collect_injuries
+            injury = collect_injuries(
+                conn, trigger_source=trigger_source, correlation_id=correlation_id
+            )
+            return CollectionOutcome(
+                selected.domain.value, selected.source_family, selected.collector,
+                True, False, None, injury.status, injury.rows_parsed,
+                injury.rows_persisted, target_id, {
+                    "rows_parsed": injury.rows_parsed,
+                    "rows_resolved": injury.rows_resolved,
+                    "rows_persisted": injury.rows_persisted,
+                    "rows_unresolved": injury.rows_unresolved,
+                    "rows_ambiguous": injury.rows_ambiguous,
+                    "status": injury.status,
+                    "diagnostics": list(injury.diagnostics),
+                },
+            )
         with audited_scrape_run(
             selected.domain.value, target_type=target_type, target_identifier=target_id,
             trigger_source=trigger_source, correlation_id=correlation_id, conn=conn,
         ) as audit:
-            if selected.domain is OperationalDomain.INJURIES:
-                from scraper.scrape_afl_injuries import scrape_injury_list, save_injuries_to_db
-                records = scrape_injury_list(conn, trigger_source=trigger_source,
-                                             correlation_id=correlation_id)
-                summary = save_injuries_to_db(records, conn)
-                audit["rows_read"] = summary["rows_parsed"]
-                audit["rows_written"] = summary["rows_persisted"]
-                audit["status"] = summary["status"]
-                outcome = CollectionOutcome(selected.domain.value, selected.source_family,
-                    selected.collector, True, False, None, summary["status"],
-                    summary["rows_parsed"], summary["rows_persisted"], target_id)
-            elif selected.domain is OperationalDomain.LINEUPS:
+            if selected.domain is OperationalDomain.LINEUPS:
                 if target_id is None:
                     raise ValueError("lineup collection requires an internal round ID")
                 from db.import_to_db import save_lineups_to_db

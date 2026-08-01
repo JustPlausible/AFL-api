@@ -186,26 +186,31 @@ the downstream database necessarily accepts every shape.
 
 #### Injuries
 
-* **Domain/module/entry:** `scraper/scrape_afl_injuries.py` →
-  `scrape_injury_list`, `_scrape_injury_list`, `extract_and_match_club`.
+* **Domain/module/entry:** production stages are `scraper/injuries/acquisition.py`,
+  `parser.py`, `resolution.py`, `persistence.py`, and `orchestration.py`;
+  `collect_injuries` is called by `collection.source_policy`. Functions in
+  `scraper/scrape_afl_injuries.py` remain compatibility entry points.
 * **URL/example:** fixed
   `https://www.afl.com.au/matches/injury-list`.
-* **Fetch/parser:** direct Playwright; Beautiful Soup over rendered content.
+* **Fetch/parser:** `InjuryAcquirer` alone uses Playwright and returns raw HTML
+  plus metadata. Pure `scraper.injuries.parser.parse_injuries_html` uses
+  Beautiful Soup over supplied content; identity matching occurs later.
 * **Selectors/data:** `INJURY_SELECTORS.ARTICLE_BODY`, `.TEAM_BLOCKS`, and
   `.PROMO_IMAGE_CLASS`; additionally, the parser contract uses a commented promo
   image, its `src`/`alt`, the following sibling `div.table`, `table`, header row,
   and rows of at least three `td` cells. No JSON/hydration is consumed.
-* **Output:** team `club`, `updated`, `player_count`, and `players`; player
-  required fields are `name`, `injury`, and `return`; matched `afl_id` is optional.
-  Source URL and UTC `scraped_at` are enrichment.
+* **Output:** typed acquisition, parse, resolution, persistence and collection
+  results preserve raw source values and report parsed, resolved, persisted,
+  unresolved and ambiguous counts.
 * **States:** an empty club table is a valid empty injury list; an “Updated:”
   one-cell row supplies optional update text. Missing/unmatched club image,
   missing sibling/table, short row, or unmatched player produces partial output,
   not a whole-page exception.
 * **Requirements/coverage:** Playwright is the safest current method because the
   parser waits for rendered `ARTICLE_BODY` and no maintained structured injury
-  endpoint exists. No auth. Audit/Admin wiring tests exist, but no injury HTML
-  fixture or parser contract test.
+  endpoint exists. No auth. Acquisition is mock-tested; parsing uses offline
+  rendered fixtures; resolution/persistence and unified CLI/Scheduler/Admin
+  policy dispatch are deterministic tests. Orchestration owns audit state.
 * **Fragility/risk/verified:** club identity hidden in an HTML comment/image,
   sibling adjacency, unvalidated headings/order (`name`, injury description,
   return estimate), Indigenous Round names/logos, and editorial redesign.
