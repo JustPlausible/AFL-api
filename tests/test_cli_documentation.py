@@ -64,6 +64,28 @@ def test_documented_cfs_examples_use_provider_identifier_families():
                 assert not identifier.isdigit(), f"{path}: {line}"
 
 
+def test_player_stat_storage_contract_names_current_commands_and_tables():
+    contract = (REPOSITORY / "docs/architecture/player_stats_storage_contract.md").read_text()
+    for required in (
+        "--collect-match-player-stats CD_M20260142001",
+        "--scrape-match 8216",
+        "cfs_player_stats",
+        "player_stats",
+        "GET /api/player-stats",
+        "fallback_occurred=false",
+    ):
+        assert required in contract
+
+
+def test_authoritative_player_stat_table_is_cfs_not_legacy():
+    from collection.player_stats_storage import (
+        LEGACY_SCRAPER_PLAYER_STATS_TABLE, authoritative_player_stats_table,
+    )
+
+    assert authoritative_player_stats_table() == "cfs_player_stats"
+    assert authoritative_player_stats_table() != LEGACY_SCRAPER_PLAYER_STATS_TABLE
+
+
 @pytest.mark.parametrize("option", ["--source-status", "--afl-match-id"])
 def test_player_stat_diagnostic_options_require_cfs_stat_collection(monkeypatch, option):
     value = "CONCLUDED" if option == "--source-status" else "8216"
