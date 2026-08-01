@@ -29,6 +29,52 @@ default `data/afl_players.db`) and require an initialized, migrated database.
 
 ## Preferred AFL public JSON commands
 
+### Database-free pipeline collection
+
+`--collect-afl-data` composes the maintained public AFL and authenticated CFS
+collectors into a file-only run. It **never opens or writes the application
+database**; `--no-database` may be supplied as an explicit operator assertion,
+but is not a switch that changes the command's inherently database-free mode.
+
+```bash
+python cli.py --collect-afl-data --afl-season 2026 --collection-round 1 --collection-match 8001 --collection-endpoints fixtures,rosters,lineups,player-stats --collection-output collection-runs/2026-round-1-match-8001 --no-database
+```
+
+This small match-scoped form is suitable for manual endpoint validation.
+`--afl-season` accepts the same year, numeric AFL ID, provider ID, or exact name
+as metadata collection. Repeat `--collection-round ROUND` and
+`--collection-match MATCH` to select multiple resources; a match accepts either
+its numeric AFL ID or opaque `CD_M...` provider ID. `--collection-endpoints`
+accepts comma-separated `metadata`, `players`, `fixtures`, `rosters`, `lineups`,
+and `player-stats`. Recognised but unimplemented `injuries`, `commentary`, and
+`interchange` families are recorded as unsupported/skipped rather than reported
+as successes.
+
+The deterministic output set is:
+
+```text
+OUTPUT/
+  request.json
+  summary.json
+  raw/ENDPOINT/ENDPOINT__sorted-scope__page-NNNN.json
+  normalised/ENDPOINT_FAMILY/RESOURCE_ID.json
+```
+
+Raw files preserve provider JSON. Normalised files contain a safe request/source
+metadata envelope and normalised data; `request.json` records filters and source
+contracts, while `summary.json` groups successful, skipped, and failed resources
+by type. Credentials, WMC tokens, cookies, response headers, and provider bodies
+from exceptions are never included in these files.
+
+By default a non-empty output directory is rejected. Use
+`--collection-overwrite` to atomically replace deterministic files, or
+`--collection-resume` to safely complete/refresh an incomplete set. Individual
+files are written to a temporary sibling and atomically replaced, so interruption
+cannot leave partial JSON. Unsupported families do not fail the batch; a
+required hierarchy failure or any resource collection failure produces a failed
+summary and process exit status `1`. A complete batch, including one with clear
+unsupported skips, exits `0`.
+
 ### Read-only metadata collection
 
 ```bash

@@ -26,6 +26,7 @@ from db.connection import get_db_connection
 from db.club_seed import upsert_club_seed
 from afl_json import (
     AflJsonClient, MatchPlayerStatsCollector, MatchRosterCollector, PublicAflCollector,
+    BatchCollectionError, CollectionOrchestrator, CollectionRequest,
     later_match_status, persist_afl_metadata, persist_player_seasons,
     reconcile_match_status, upsert_player_stats,
 )
@@ -152,6 +153,8 @@ def create_parser() -> argparse.ArgumentParser:
     metadata_group = parser.add_argument_group("Preferred AFL public JSON")
     metadata_group.add_argument("--collect-afl-metadata", action="store_true",
                                 help="Collect competition, season, rounds, teams and matches without database writes")
+    metadata_group.add_argument("--collect-afl-data", action="store_true",
+                                help="Run the full modular JSON pipeline to files only (never writes the database)")
     metadata_group.add_argument("--bootstrap-afl-season", metavar="SEASON",
                                 help="Persist AFL metadata plus CFS players and season membership")
     metadata_group.add_argument("--afl-season", default=AFL_SEASON_YEAR, metavar="SEASON",
@@ -177,6 +180,21 @@ def create_parser() -> argparse.ArgumentParser:
                               help="Print full collected/normalised JSON; does not disable persistence")
     output_group.add_argument("--afl-raw-directory", type=Path, metavar="PATH",
                               help="Retain original JSON responses below PATH; never stores credentials")
+    output_group.add_argument("--collection-output", type=Path, metavar="PATH",
+                              help="Output directory required by --collect-afl-data")
+    output_group.add_argument("--collection-round", type=int, action="append", default=[], metavar="ROUND",
+                              help="With --collect-afl-data: select a round number (repeatable)")
+    output_group.add_argument("--collection-match", action="append", default=[], metavar="MATCH",
+                              help="With --collect-afl-data: select an AFL numeric or CD_M provider match ID")
+    output_group.add_argument("--collection-endpoints", metavar="FAMILIES",
+                              help="With --collect-afl-data: comma-separated endpoint families")
+    collection_mode = output_group.add_mutually_exclusive_group()
+    collection_mode.add_argument("--collection-overwrite", action="store_true",
+                                 help="Atomically replace deterministic files in an existing output set")
+    collection_mode.add_argument("--collection-resume", action="store_true",
+                                 help="Safely complete or refresh an incomplete deterministic output set")
+    output_group.add_argument("--no-database", action="store_true",
+                              help="Explicit assertion for --collect-afl-data (the command is always database-free)")
 
     # 🔹 Backup and restore
     db_group = parser.add_argument_group("Club database tools")
@@ -191,12 +209,40 @@ def handle_args():
     args = parser.parse_args()
     if (args.source_status or args.afl_match_id is not None) and not args.collect_match_player_stats:
         parser.error("--source-status and --afl-match-id require --collect-match-player-stats CD_M...")
+    collection_options = (args.collection_output is not None or args.collection_round
+                          or args.collection_match or args.collection_endpoints
+                          or args.collection_overwrite or args.collection_resume or args.no_database)
+    if collection_options and not args.collect_afl_data:
+        parser.error("collection output/filter options require --collect-afl-data")
+    if args.collect_afl_data and args.collection_output is None:
+        parser.error("--collect-afl-data requires --collection-output PATH")
     return args
 
 def main():
     args = handle_args()
 
-    if args.scrape_club:
+    if args.collect_afl_data:
+        families = (tuple(item.strip() for item in args.collection_endpoints.split(",") if item.strip())
+                    if args.collection_endpoints else
+                    ("metadata", "players", "fixtures", "rosters", "lineups", "player-stats"))
+        mode = "overwrite" if args.collection_overwrite else ("resume" if args.collection_resume else "new")
+        request = CollectionRequest(
+            season=args.afl_season, output=args.collection_output,
+            rounds=tuple(args.collection_round), matches=tuple(args.collection_match),
+            endpoint_families=families, competition_code=args.afl_competition_code,
+            competition_provider_id=args.afl_competition_provider_id, mode=mode,
+        )
+        try:
+            with AflJsonClient() as client:
+                summary = CollectionOrchestrator(client).run(request)
+        except (BatchCollectionError, FileExistsError, ValueError) as exc:
+            print(json.dumps({"status": "failed", "error": str(exc)}), file=sys.stderr)
+            raise SystemExit(1) from None
+        print(json.dumps(summary, default=_json_default))
+        if summary["status"] == "failed":
+            raise SystemExit(1)
+
+    elif args.scrape_club:
         club = get_club(args.scrape_club.lower())
         if club:
             save_club_players_to_json(club)
