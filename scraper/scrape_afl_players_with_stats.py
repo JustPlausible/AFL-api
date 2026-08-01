@@ -9,14 +9,14 @@ from pathlib import Path
 from scraper.afl_selectors import STATS_LEADERS_SELECTORS
 from scraper.afl_selectors import STATS_LEADERS_SELECTORS
 
-log = setup_logger("bbbffl_stats_scraper", "scrape_afl_players_with_stats.log")
+log = setup_logger("afl_stats_scraper", "scrape_afl_players_with_stats.log")
 
 OUTPUT_FILE = Path("data/bbbffl_player_stats.csv")
 
 TOTALS_URL = "https://www.afl.com.au/stats/leaders?dataType=totals"
 AVERAGES_URL = "https://www.afl.com.au/stats/leaders?dataType=averages"
 
-BBBFFL_STATS = ["Goals", "Disposals", "Hitouts", "Marks", "Tackles"]
+CANONICAL_STATS = ["Goals", "Disposals", "Hitouts", "Marks", "Tackles"]
 
 
 def load_all_rows(page):
@@ -52,10 +52,10 @@ def scrape_table(page):
                 match = re.match(r".*: ([^.]+)\.", title)
                 if match:
                     stat_name = match.group(1).strip()
-                    if stat_name in BBBFFL_STATS:
+                    if stat_name in CANONICAL_STATS:
                         stats[stat_name] = btn.inner_text().strip()
 
-            if len(stats) < len(BBBFFL_STATS):
+            if len(stats) < len(CANONICAL_STATS):
                 continue
 
             players[afl_id] = {
@@ -94,7 +94,7 @@ def scrape_afl_stats():
             "AFL ID": afl_id,
             "Champion Data ID": total_data.get("Champion Data ID")
         }
-        for stat in BBBFFL_STATS:
+        for stat in CANONICAL_STATS:
             try:
                 total = float(total_data.get(stat, 0))
                 avg = float(avg_data.get(stat, 0))

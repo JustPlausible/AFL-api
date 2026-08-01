@@ -2,6 +2,19 @@
 
 This project scrapes, enriches, and serves AFL player data across all clubs. It provides a FastAPI-powered JSON API and supports data persistence via SQLite for players, injuries, team line-ups, and API key data.
 
+## Project scope and design intent
+
+AFL-api originated from a need to supply AFL data to external reporting and
+fantasy-football tools. FastAPI makes the collected, normalised data simple to
+consume from clients such as Google Apps Script as well as other applications.
+
+The service itself remains consumer-neutral: it collects AFL data from supported
+sources, validates and normalises it, maintains canonical identities and source
+authority, persists supported data safely, and exposes stable, documented APIs
+or exports. Consumer-specific scoring rules, fantasy-league management,
+presentation, and client workflows belong in separate downstream applications,
+not in this repository.
+
 **Current version: 0.5.0.** See the [v0.5.0 release notes](docs/releases/v0.5.0.md),
 [upgrade runbook](docs/operations/release_runbook_v0_5_0.md), and
 [operational source policy](docs/operational_source_policy.md). Runtime code

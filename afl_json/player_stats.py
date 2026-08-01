@@ -19,8 +19,9 @@ from .match_status import MatchLifecycle, later_match_status, normalise_match_st
 ENDPOINT_NAME = "match_player_statistics"
 SOURCE_ENDPOINT = "/cfs/afl/playerStats/match/{matchProviderId}"
 
-# Observed source names are deliberately centralised. Adding a confirmed BBBFL
-# field should require changing this mapping, the record, and persistence only.
+# Observed source names are deliberately centralised. Adding a confirmed
+# canonical AFL field should require changing this mapping, the record, and
+# persistence only.
 CANONICAL_STAT_FIELDS: Mapping[str, str] = {
     "goals": "goals", "behinds": "behinds", "kicks": "kicks",
     "handballs": "handballs", "disposals": "disposals", "marks": "marks",

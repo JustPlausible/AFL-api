@@ -294,7 +294,9 @@ skipped explicitly by the importer.
   `.STAT_BUTTONS`. Link supplies AFL ID; no embedded JSON is consumed.
 * **Output:** player name/ID with totals and averages for `Goals`, `Disposals`,
   `Hitouts`, `Marks`, and `Tackles`, written to
-  `data/bbbffl_player_stats.csv`; absent/malformed values are partial.
+  the legacy-compatible `data/bbbffl_player_stats.csv` export; absent/malformed
+  values are partial. The filename is retained for compatibility and does not
+  define the service's consumer scope.
 * **States/requirements/coverage:** manual-only, browser currently required, no
   auth, no dedicated tests or fixtures. Header/order changes, show-more limits,
   season filters and stat-button order are fragile. Repository verified

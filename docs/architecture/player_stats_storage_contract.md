@@ -81,9 +81,10 @@ future mapping does not erase source evidence.
 
 ## Read contract
 
-New APIs, BBBFL scoring, reports, exports, Admin views, and other application
-features **must read `cfs_player_stats`** and use CFS provider/canonical identity
-explicitly. Code can use `authoritative_player_stats_table()` from
+New downstream APIs, external scoring applications, reports, exports, Admin
+views, and other application features **must read `cfs_player_stats`** and use
+CFS provider/canonical identity explicitly. Code can use
+`authoritative_player_stats_table()` from
 `collection.player_stats_storage` when it needs the named authority boundary.
 Do not implement “whichever table has rows,” unions, implicit preference, or
 silent legacy fallback.
@@ -94,9 +95,9 @@ legacy numeric IDs/columns. It must be described as a legacy compatibility API,
 not evidence that `player_stats` is authoritative. Changing it to CFS requires a
 separate versioned response/identity compatibility design.
 
-No repository API, BBBFL scoring implementation, report, or other production
-database-access path currently reads `cfs_player_stats`. New work must not copy
-the legacy route's table choice.
+No repository API, downstream scoring or reporting integration, export, or other
+production database-access path currently reads `cfs_player_stats`. New work
+must not copy the legacy route's table choice.
 
 ## Operator verification queries
 
