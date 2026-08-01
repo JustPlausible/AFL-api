@@ -60,6 +60,10 @@ from .bootstrap import BootstrapSummary, persist_afl_metadata
 from .player_persistence import (
     PlayerIdentityConflict, PlayerPersistenceSummary, persist_player_seasons,
 )
+from .orchestration import (
+    ALL_FAMILIES, SUPPORTED_FAMILIES, UNSUPPORTED_FAMILIES,
+    BatchCollectionError, CollectionOrchestrator, CollectionRequest,
+)
 
 __all__ = [
     "CFS_ERROR_AUTH",
@@ -115,4 +119,10 @@ __all__ = [
     "PlayerIdentityConflict",
     "PlayerPersistenceSummary",
     "persist_player_seasons",
+    "ALL_FAMILIES",
+    "SUPPORTED_FAMILIES",
+    "UNSUPPORTED_FAMILIES",
+    "BatchCollectionError",
+    "CollectionOrchestrator",
+    "CollectionRequest",
 ]
