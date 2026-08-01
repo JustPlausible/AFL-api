@@ -125,7 +125,7 @@ for label, sql in queries.items():
     print(label, conn.execute(sql, args).fetchone()[0])
 print("provider_namespace_collisions", conn.execute("""
     SELECT COUNT(*) FROM player_provider_ids a
-    JOIN player_provider_ids c ON c.canonical_player_id=a.canonical_player_id
+    JOIN player_provider_ids c ON c.player_id=a.player_id
     WHERE a.provider='afl' AND c.provider='champion_data'
       AND a.provider_player_id=c.provider_player_id
 """).fetchone()[0])
