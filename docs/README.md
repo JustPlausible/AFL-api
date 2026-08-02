@@ -10,7 +10,7 @@ for the reusable release summary and upgrade cautions.
 
 - [AFL-api v0.5.0 operator release, backup, restore, and rollback runbook](operations/release_runbook_v0_5_0.md)
 - [v0.5.0 release notes](releases/v0.5.0.md)
-- [Operator CLI command reference](cli.md)
+- [Operator command selector and supported first-run sequence](cli.md#which-command-should-i-run) — the authoritative answer to “what command should I run?”
 - [Operational AFL source policy and source matrix](operational_source_policy.md)
 
 - [Administrator CSRF protection](admin_csrf.md)

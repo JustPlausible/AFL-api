@@ -3,6 +3,11 @@
 This is the authoritative operator sequence for v0.5.0. Complete it in order and
 retain the release record in section 21.
 
+For day-to-day command selection and the concise clean-install sequence, start
+with the [operator command guide](../cli.md#which-command-should-i-run). This
+runbook remains authoritative for production backup, migration, release,
+verification, restore, and rollback gates.
+
 ## 1. Purpose and scope
 
 This runbook releases AFL-api v0.5.0 as the API and Scheduler processes backed
