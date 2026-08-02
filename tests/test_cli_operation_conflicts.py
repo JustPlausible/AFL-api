@@ -19,12 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
     ["--scrape-clubs", "--scrape-injuries", "--import-clubs"],
 ])
 def test_conflicting_operations_exit_before_runtime_or_dispatch(monkeypatch, capsys, arguments):
-    runtime_loader = Mock()
-    handlers = [Mock(), Mock(), Mock()]
-    monkeypatch.setattr(cli, "_load_runtime_components", runtime_loader)
-    monkeypatch.setattr(cli, "scrape_all_clubs", handlers[0])
-    monkeypatch.setattr(cli, "scrape_injuries_to_db", handlers[1])
-    monkeypatch.setattr(cli, "import_clubs_to_db", handlers[2])
+    sys.modules.pop("cli_runtime", None)
 
     with pytest.raises(SystemExit, match="2"):
         cli.main(arguments)
@@ -33,9 +28,7 @@ def test_conflicting_operations_exit_before_runtime_or_dispatch(monkeypatch, cap
     expected = [flag for flag in cli.OPERATION_FLAGS.values() if flag in arguments]
     assert "Only one operation may be selected per invocation." in error
     assert f"Conflicting operations: {', '.join(expected)}" in error
-    runtime_loader.assert_not_called()
-    for handler in handlers:
-        handler.assert_not_called()
+    assert "cli_runtime" not in sys.modules
 
 
 def test_conflict_order_is_authoritative_not_argv_order(capsys):
@@ -93,18 +86,49 @@ def test_no_operation_remains_valid():
     assert cli.selected_operation_flags(cli.handle_args([])) == []
 
 
+def test_zero_legacy_match_id_preserves_no_operation_behavior():
+    result = subprocess.run(
+        [sys.executable, "cli.py", "--scrape-match", "0"], cwd=ROOT,
+        capture_output=True, text=True, check=False,
+    )
+    probe = subprocess.run(
+        [sys.executable, "-c", (
+            "import json, sys, cli; cli.main(['--scrape-match', '0']); "
+            "print(json.dumps(sorted({'cli_runtime', "
+            "'scraper.scrape_afl_player_stats'} & set(sys.modules))))"
+        )], cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == ""
+    assert "No valid argument supplied. Use --help for options." in result.stderr
+    assert probe.returncode == 0
+    assert probe.stdout == "[]\n"
+
+
+def test_nonzero_legacy_match_id_dispatches_selected_handler(monkeypatch):
+    import cli_runtime
+
+    handler = Mock()
+    monkeypatch.setitem(cli_runtime.HANDLERS, "scrape_match", handler)
+
+    cli.main(["--scrape-match", "8216"])
+
+    handler.assert_called_once()
+    assert handler.call_args.args[0].scrape_match == 8216
+
+
 def test_help_remains_a_successful_parser_exit(capsys):
     with pytest.raises(SystemExit, match="0"):
         cli.handle_args(["--help"])
     assert "AFL operator CLI" in capsys.readouterr().out
 
 
-def test_version_remains_script_friendly(monkeypatch, capsys):
-    runtime_loader = Mock()
-    monkeypatch.setattr(cli, "_load_runtime_components", runtime_loader)
+def test_version_remains_script_friendly(capsys):
+    sys.modules.pop("cli_runtime", None)
     cli.main(["--version"])
     assert capsys.readouterr().out == f"{cli.__version__}\n"
-    runtime_loader.assert_not_called()
+    assert "cli_runtime" not in sys.modules
 
 
 def test_version_conflicts_with_an_operation(capsys):
@@ -114,6 +138,8 @@ def test_version_conflicts_with_an_operation(capsys):
 
 
 def test_every_authoritative_operation_is_registered_by_the_parser():
+    import cli_runtime
+
     actions = {action.dest: action for action in cli.create_parser()._actions}
     registered_operations = {
         destination for destination, action in actions.items()
@@ -122,3 +148,4 @@ def test_every_authoritative_operation_is_registered_by_the_parser():
     assert registered_operations == set(cli.OPERATION_FLAGS)
     for destination, flag in cli.OPERATION_FLAGS.items():
         assert flag in actions[destination].option_strings
+    assert set(cli_runtime.HANDLERS) == set(cli.OPERATION_FLAGS) - {"version"}

@@ -498,7 +498,7 @@ def view_logs_raw(
 
 @app.post("/clubs-diff/import")
 def do_import_clubs(request: Request, _: None = Depends(require_csrf)):
-    from cli import import_clubs_to_db
+    from cli_runtime import import_clubs_to_db
 
     import_clubs_to_db()
     request.session["message"] = "✅ Clubs imported from JSON."

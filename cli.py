@@ -1,7 +1,5 @@
 import argparse
-import json
 import re
-import sqlite3
 import sys
 from pathlib import Path
 from version import __version__
@@ -36,53 +34,6 @@ OPERATION_FLAGS = {
     "export_clubs": "--export-clubs",
 }
 
-_RUNTIME_COMPONENTS_LOADED = False
-
-
-def _load_runtime_components():
-    """Load operational dependencies only after argument validation."""
-    global _RUNTIME_COMPONENTS_LOADED
-    if _RUNTIME_COMPONENTS_LOADED:
-        return
-    global log, save_club_players_to_json, scrape_team_lineups, scrape_afl_matches
-    global audited_scrape_run, TRIGGER_CLI, resolve_players_for_club, load_clubs, get_club
-    global import_players, save_lineups_to_db, get_db_connection, upsert_club_seed
-    global AflJsonClient, MatchPlayerStatsCollector, MatchRosterCollector, PublicAflCollector
-    global BatchCollectionError, CollectionOrchestrator, CollectionRequest
-    global later_match_status, persist_afl_metadata, persist_player_seasons
-    global reconcile_match_status, upsert_player_stats, DB_PATH
-
-    from utils.log import log
-    from scraper.scrape_afl_clubs import save_club_players_to_json
-    from scraper.scrape_afl_lineups import scrape_team_lineups
-    from scraper import scrape_afl_matches
-    from db.scrape_runs import audited_scrape_run, TRIGGER_CLI
-    from merge.helpers import resolve_players_for_club
-    from utils.club_lookup import load_clubs, get_club
-    from db.import_to_db import import_players, save_lineups_to_db
-    from db.connection import get_db_connection
-    from db.club_seed import upsert_club_seed
-    from afl_json import (
-        AflJsonClient, MatchPlayerStatsCollector, MatchRosterCollector, PublicAflCollector,
-        BatchCollectionError, CollectionOrchestrator, CollectionRequest,
-        later_match_status, persist_afl_metadata, persist_player_seasons,
-        reconcile_match_status, upsert_player_stats,
-    )
-    from config import DB_PATH
-    _RUNTIME_COMPONENTS_LOADED = True
-
-
-def _json_default(value):
-    """Keep precise validated decimals printable by diagnostic commands."""
-    from dataclasses import asdict, is_dataclass
-    from decimal import Decimal
-    if isinstance(value, Decimal):
-        return str(value)
-    if is_dataclass(value):
-        return asdict(value)
-    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
-
-
 def _provider_id(value: str, *, prefix: str, label: str, example: str) -> str:
     """Validate opaque Champion Data identifiers before any CFS request."""
     candidate = value.strip()
@@ -111,57 +62,6 @@ def _add_operation_argument(container, destination, **kwargs):
     )
     action.is_top_level_operation = True
     return action
-
-def import_clubs_to_db():
-    """Load clubs from the canonical seed and import using a shared connection."""
-    conn = get_db_connection()
-    count = upsert_club_seed(conn)
-    conn.commit()
-    conn.close()
-    log(f"✅ Imported {count} canonical clubs into DB", "SUCCESS")
-
-def scrape_all_clubs(skip_existing=False):
-    clubs = load_clubs()
-    summaries = []
-
-    for club in clubs:
-        summary = save_club_players_to_json(club, skip_existing=skip_existing)
-        summaries.append(summary)
-
-    print("\n📊 Scrape Summary:")
-    print(f"{'Club':<30} {'Total':>5}  {'Missing Image':>14}  {'Missing CD ID':>15}  {'Missing Club ID':>15}")
-    print("-" * 85)
-    for s in summaries:
-        print(f"{s['club']:<30} {s['total']:>5}  {s['missing_image']:>14}  {s['missing_champion_id']:>15}  {s['missing_club_id']:>15}")
-
-def enrich_all_clubs(skip_existing=False):
-    raw_files = Path("data").glob("players-*-raw.json")
-    for path in sorted(raw_files):
-        club_name = path.stem.replace("players-", "").replace("-raw", "")
-        resolve_players_for_club(club_name)
-
-def scrape_injuries_to_db(print_json=False):
-    from collection.source_policy import OperationalDomain, collect_operational
-    outcome = collect_operational(OperationalDomain.INJURIES, trigger_source=TRIGGER_CLI)
-    displayed = outcome if print_json else outcome.details
-    print(json.dumps(displayed, default=_json_default, indent=2 if print_json else None))
-
-def scrape_lineups_to_db(round_number: int, print_json: bool = False):
-    conn = get_db_connection()
-    conn.row_factory = sqlite3.Row
-
-    log(f"🧹 Scraping and importing lineups for Round {round_number}", "INFO")
-    with audited_scrape_run("lineup", target_type="round", target_identifier=round_number, conn=conn) as audit:
-        players = scrape_team_lineups(round_number=round_number)
-        audit["rows_read"] = len(players)
-        save_lineups_to_db(players, conn, round_number)
-        audit["rows_written"] = len(players)
-
-        if print_json:
-            import json
-            print(json.dumps(players, indent=2))
-
-    conn.close()
 
 def create_parser() -> argparse.ArgumentParser:
     """Build the flag-based CLI parser without loading runtime scraper data."""
@@ -278,251 +178,19 @@ def main(argv=None):
         print(__version__)
         return
 
-    _load_runtime_components()
-
-    if args.collect_afl_data:
-        families = (tuple(item.strip() for item in args.collection_endpoints.split(",") if item.strip())
-                    if args.collection_endpoints else
-                    ("metadata", "players", "fixtures", "rosters", "lineups", "player-stats"))
-        mode = "overwrite" if args.collection_overwrite else ("resume" if args.collection_resume else "new")
-        request = CollectionRequest(
-            season=args.afl_season, output=args.collection_output,
-            rounds=tuple(args.collection_round), matches=tuple(args.collection_match),
-            endpoint_families=families, competition_code=args.afl_competition_code,
-            competition_provider_id=args.afl_competition_provider_id, mode=mode,
-        )
-        try:
-            with AflJsonClient() as client:
-                summary = CollectionOrchestrator(client).run(request)
-        except (BatchCollectionError, FileExistsError, ValueError) as exc:
-            print(json.dumps({"status": "failed", "error": str(exc)}), file=sys.stderr)
-            raise SystemExit(1) from None
-        print(json.dumps(summary, default=_json_default))
-        if summary["status"] == "failed":
-            raise SystemExit(1)
-
-    elif args.scrape_club:
-        club = get_club(args.scrape_club.lower())
-        if club:
-            save_club_players_to_json(club)
-        else:
-            log(f"❌ Unknown club: {args.scrape_club}", "ERROR")
-
-    elif args.scrape_clubs:
-        scrape_all_clubs(skip_existing=args.skip_existing)
-
-    elif args.enrich_club:
-        resolve_players_for_club(args.enrich_club.lower())
-
-    elif args.enrich_clubs:
-        enrich_all_clubs(skip_existing=args.skip_existing)
-
-    elif args.scrape_enrich_all:
-        scrape_all_clubs(skip_existing=args.skip_existing)
-        enrich_all_clubs(skip_existing=args.skip_existing)
-        import_players()
-
-    elif args.scrape_injuries:
-        scrape_injuries_to_db(print_json=args.print_json)
-
-    elif args.scrape_lineups is not None:
-        log(f"🧹 Scraping team lineups for Round {args.scrape_lineups}", "INFO")
-        scrape_lineups_to_db(round_number=args.scrape_lineups, print_json=args.print_json)
-
-    elif args.import_clubs:
-        log("📥 Importing clubs from JSON to DB...", "INFO")
-        import_clubs_to_db()
-
-    elif args.export_clubs:
-        log("📤 Exporting clubs from DB to backup JSON...", "INFO")
-        from db.import_to_db import export_clubs_from_db
-        export_clubs_from_db()
-
-    elif args.scrape_round is not None:
-        log(f"📥 Scraping match data for round_id {args.scrape_round}", "INFO")
-        scrape_afl_matches.run(round_id=args.scrape_round)
-
-    elif args.scrape_all_rounds:
-        log("📥 Scraping all match data from DB rounds...", "INFO")
-        scrape_afl_matches.run(round_id=None)
-
-    elif args.scrape_match:
-        log(
-            f"📊 Explicit legacy player-stat collection for match_id {args.scrape_match}: "
-            "source_family=html collector=scraper.scrape_afl_player_stats "
-            "persistence_target=player_stats fallback_occurred=false",
-            "INFO",
-        )
-        # This legacy scraper loads club aliases during import. Keep that
-        # runtime-data dependency out of argument parsing and unrelated CLI
-        # commands, including --help and public metadata collection.
-        from scraper import scrape_afl_player_stats
-        scrape_afl_player_stats.run_scraper(match_id=args.scrape_match, once=True)
-
-    elif args.collect_match_player_stats:
-        conn = get_db_connection()
-        try:
-            with AflJsonClient() as client:
-                reconciliation = reconcile_match_status(
-                    conn, client, match_provider_id=args.collect_match_player_stats,
-                    afl_match_id=args.afl_match_id,
-                )
-                resolved_status = later_match_status(
-                    reconciliation.resolved_status, args.source_status
-                )
-                status_resolution = ("explicit" if args.source_status == resolved_status
-                                     and args.source_status != reconciliation.resolved_status
-                                     else reconciliation.resolution_source)
-                with audited_scrape_run(
-                    "match_player_stats", target_type="match",
-                    target_identifier=args.collect_match_player_stats, conn=conn,
-                ) as audit:
-                    result = MatchPlayerStatsCollector(
-                        client, raw_directory=args.afl_raw_directory
-                    ).collect(args.collect_match_player_stats,
-                              afl_match_id=reconciliation.afl_match_id,
-                              canonical_match_status=resolved_status)
-                    # Keep persistence atomic even if a later record fails. The
-                    # audit context can then safely record the failed operation
-                    # without accidentally committing a partial snapshot.
-                    conn.execute("BEGIN")
-                    try:
-                        rows_written = upsert_player_stats(conn, result)
-                        conn.commit()
-                    except Exception:
-                        conn.rollback()
-                        raise
-                    audit["rows_read"] = len(result.records)
-                    audit["rows_written"] = rows_written
-        finally:
-            conn.close()
-        output = {
-            "source_family": "cfs_json",
-            "collector": "MatchPlayerStatsCollector",
-            "persistence_target": "cfs_player_stats",
-            "fallback_occurred": False,
-            "fallback_reason": None,
-            "match_provider_id": result.match_provider_id,
-            "status": result.status.value,
-            "endpoint_source_status": result.endpoint_source_status,
-            "stored_canonical_status": reconciliation.stored_status,
-            "direct_match_detail_status": reconciliation.direct_status,
-            "resolved_match_status": result.resolved_match_status,
-            "status_resolution": status_resolution,
-            "canonical_match_refreshed": reconciliation.canonical_refreshed,
-            "afl_match_id": reconciliation.afl_match_id,
-            "collected_at": result.collected_at,
-            "source_endpoint": result.source_endpoint,
-            "records_collected": len(result.records),
-            "rows_written": rows_written,
-            "rejected_records": result.rejected_records,
-            "diagnostics": [*reconciliation.diagnostics, *result.diagnostics],
-            "records": result.records,
-        }
-        if args.print_json:
-            print(json.dumps(output, indent=2, default=_json_default))
-        else:
-            output.pop("records")
-            output["diagnostics"] = [diagnostic.code for diagnostic in output["diagnostics"]]
-            print(json.dumps(output, default=_json_default))
-
-    elif args.collect_match_rosters:
-        with AflJsonClient() as client:
-            result = MatchRosterCollector(
-                client, raw_directory=args.afl_raw_directory
-            ).collect(args.collect_match_rosters)
-        output = {
-            "source_family": "cfs_json",
-            "collector": "MatchRosterCollector",
-            "persistence_target": None,
-            "persistence_performed": False,
-            "fallback_occurred": False,
-            "fallback_reason": None,
-            "round_provider_id": result.round_provider_id,
-            "status": result.status.value,
-            "publication_state": result.publication_state,
-            "provider_timestamp": result.provider_timestamp,
-            "provider_version": result.provider_version,
-            "rosters": result.rosters,
-            "selections": result.selections,
-        }
-        if args.print_json:
-            print(json.dumps(output, indent=2))
-        else:
-            output.pop("rosters")
-            output["selections"] = len(result.selections)
-            print(json.dumps(output))
-
-    elif args.bootstrap_afl_season:
-        with AflJsonClient() as client:
-            collector = PublicAflCollector(
-                client, raw_directory=args.afl_raw_directory
-            )
-            result = collector.collect(
-                competition_code=args.afl_competition_code,
-                competition_provider_id=args.afl_competition_provider_id,
-                season=args.bootstrap_afl_season,
-            )
-            player_result = collector.collect_players(result.season["provider_id"])
-        conn = get_db_connection()
-        try:
-            with audited_scrape_run(
-                "afl_metadata_bootstrap", target_type="season",
-                target_identifier=args.bootstrap_afl_season, conn=conn,
-            ) as audit:
-                summary = persist_afl_metadata(conn, result)
-                player_summary = persist_player_seasons(
-                    conn, player_result, provider_season_id=result.season["provider_id"]
-                )
-                audit["rows_read"] = summary.records_read + player_summary.records_read
-                audit["rows_written"] = (summary.inserted + summary.updated
-                                         + player_summary.rows_written)
-        finally:
-            conn.close()
-        print(json.dumps({
-            "competition": result.competition["name"], "season": result.season["name"],
-            "records_read": summary.records_read, "inserted": summary.inserted,
-            "updated": summary.updated, "unchanged": summary.unchanged, "failed": summary.failed,
-            "player_collection_status": player_summary.status,
-            "players_collected": player_summary.records_read,
-            "canonical_players_inserted": player_summary.players_inserted,
-            "canonical_players_updated": player_summary.players_updated,
-            "provider_mappings_inserted": player_summary.mappings_inserted,
-            "player_seasons_inserted": player_summary.associations_inserted,
-            "player_seasons_updated": player_summary.associations_updated,
-            "player_seasons_unchanged": player_summary.unchanged,
-            "missing_team_links": player_summary.missing_team_links,
-            "player_diagnostics": [diagnostic.code for diagnostic in player_result.diagnostics],
-        }))
-
-    elif args.collect_afl_metadata:
-        with AflJsonClient() as client:
-            collector = PublicAflCollector(client, raw_directory=args.afl_raw_directory)
-            result = collector.collect(
-                competition_code=args.afl_competition_code,
-                competition_provider_id=args.afl_competition_provider_id,
-                season=args.afl_season,
-            )
-        output = {
-            "competition": result.competition,
-            "season": result.season,
-            "rounds": result.rounds,
-            "teams": result.teams,
-            "matches": result.matches,
-        }
-        if args.print_json:
-            print(json.dumps(output, indent=2))
-        else:
-            print(json.dumps({"competition": result.competition["name"],
-                              "season": result.season["name"], "rounds": len(result.rounds),
-                              "teams": len(result.teams), "matches": len(result.matches)}))
-
-    else:
+    selected = selected_operation_flags(args)
+    # Preserve the legacy truthiness-based dispatch behavior for this numeric
+    # operation: argparse accepts 0, but it historically fell through to the
+    # no-operation warning rather than invoking the match scraper.
+    if not selected or args.scrape_match == 0:
+        from utils.log import log
         log("❓ No valid argument supplied. Use --help for options.", "WARN")
+        return
+
+    # This is the runtime boundary: parsing and all pure validation have
+    # completed, and exactly one operation is ready to dispatch.
+    from cli_runtime import dispatch
+    dispatch(args)
 
 if __name__ == "__main__":
     main()
-else:
-    # Preserve the importable module surface used by focused handler tests.
-    # Script execution deliberately loads these only after argument validation.
-    _load_runtime_components()

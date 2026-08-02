@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 import cli
+import afl_json
 from afl_json import AflJsonResponse
 from afl_json.orchestration import CollectionOrchestrator, CollectionRequest
 
@@ -128,8 +129,8 @@ def test_cli_returns_nonzero_for_batch_level_failure(tmp_path, monkeypatch):
             return {"status": "failed", "counts": {"successful": {}, "skipped": {},
                                                      "failed": {"player-stats": 1}}}
 
-    monkeypatch.setattr(cli, "AflJsonClient", ClientContext)
-    monkeypatch.setattr(cli, "CollectionOrchestrator", FailedOrchestrator)
+    monkeypatch.setattr(afl_json, "AflJsonClient", ClientContext)
+    monkeypatch.setattr(afl_json, "CollectionOrchestrator", FailedOrchestrator)
     monkeypatch.setattr("sys.argv", ["cli.py", "--collect-afl-data", "--afl-season", "2026",
                                      "--collection-output", str(tmp_path), "--no-database"])
     with pytest.raises(SystemExit, match="1"):
