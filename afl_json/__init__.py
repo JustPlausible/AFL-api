@@ -119,6 +119,11 @@ __all__ = [
     "PlayerIdentityConflict",
     "PlayerPersistenceSummary",
     "persist_player_seasons",
+    "SeasonBootstrapResult",
+    "SeasonSyncOptions",
+    "SeasonSyncResult",
+    "SeasonSynchronizer",
+    "bootstrap_afl_season",
     "ALL_FAMILIES",
     "SUPPORTED_FAMILIES",
     "UNSUPPORTED_FAMILIES",
@@ -126,3 +131,7 @@ __all__ = [
     "CollectionOrchestrator",
     "CollectionRequest",
 ]
+
+from .season_sync import (SeasonBootstrapResult, SeasonSynchronizer,
+                          SeasonSyncOptions, SeasonSyncResult,
+                          bootstrap_afl_season)

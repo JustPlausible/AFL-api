@@ -129,6 +129,69 @@ python cli.py --collect-afl-metadata --afl-season 2026 --print-json
 python cli.py --bootstrap-afl-season 2026
 ```
 
+### Whole-season persistent synchronisation
+
+`--bootstrap-afl-season` only establishes canonical metadata, player identity,
+provider crosswalks, and season membership. To initialise or refresh that
+foundation **and** authoritative concluded match statistics in one operation,
+use:
+
+```bash
+python cli.py --sync-afl-season 2026
+python cli.py --sync-afl-season 2026 --round 8
+python cli.py --sync-afl-season 2026 --round-from 8 --round-to 12
+python cli.py --sync-afl-season 2026 --match-id 8204
+python cli.py --sync-afl-season 2026 --refresh-complete --print-json
+```
+
+The command requires the same public AFL access and authenticated CFS/WMC
+environment used by bootstrap and single-match CFS collection. It selects
+matches from the persisted canonical season: only concluded/final matches with
+an explicit `CD_M...` mapping are collected. Existing concluded authoritative
+snapshots are skipped unless `--refresh-complete` is given. Each match is a
+separate transaction, so one failure does not undo earlier matches.
+
+Reruns use existing metadata/player upserts and CFS snapshot-authority rules:
+unchanged observations are zero-write, corrected concluded observations may be
+updated, and live, stale, empty, unavailable, or unknown responses never delete
+or downgrade concluded data. Statistics go only to `cfs_player_stats`; there is
+no rendered-HTML fallback or legacy `player_stats` dual write.
+
+The JSON result distinguishes skipped, unavailable/unpublished, empty, partial,
+unknown, failed, already-complete, and collected matches and includes correlated
+audit IDs. Default output is a concise human-readable summary; `--print-json`
+emits the complete machine-readable result, including match-level details, to
+stdout even when the command subsequently exits non-zero.
+
+Exit status `0` means all currently actionable concluded matches were collected
+or already complete; scheduled, current live/postgame, and recognised future
+placeholders may be safely skipped. Exit status `1` means material actionable or
+explicitly requested work was unavailable, empty, partial, rejected, unknown,
+missing provider identity, absent, or failed. Exit status `2` is invalid CLI
+usage. A bounded round/range returning no matches exits `1`; an unbounded season
+with no published fixtures reports `empty_unbounded` and exits `0`.
+
+Round ranges are inclusive. Repeatable `--match-id` values are deduplicated in
+first-seen order. Combining match IDs with a round or range uses intersection
+semantics, so every requested ID must also satisfy the round bound. Round `0` is
+valid, negative rounds are invalid, and match IDs must be positive.
+
+Summary units are explicit: `records_received` and
+`total_matches_discovered` count selected matches; `eligible_matches` counts
+concluded matches with provider identity, including already-complete matches;
+`collected_successfully` counts matches actually recollected; and
+`already_complete_unchanged` counts matches skipped as complete. `rows_inserted`,
+`rows_updated`, `rows_unchanged`, and `rows_written` count CFS statistic rows,
+with `rows_written` equal to inserted plus updated rows. Deeper relationship completeness and
+reconciliation reporting remains the responsibility of Issue #107.
+
+The existing commands remain deliberately distinct:
+
+* `--bootstrap-afl-season`: canonical foundation only;
+* `--sync-afl-season`: whole-season persistent foundation and CFS statistics;
+* `--collect-match-player-stats`: one explicitly identified CFS match;
+* `--collect-afl-data --no-database`: diagnostic files only, never persistence.
+
 Authenticated Champion Data/CFS commands require opaque provider IDs, not AFL
 numeric IDs. Roster collection is read-only; match player-stat collection
 persists to `cfs_player_stats`:

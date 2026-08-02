@@ -28,6 +28,7 @@ OPERATION_FLAGS = {
     "collect_afl_metadata": "--collect-afl-metadata",
     "collect_afl_data": "--collect-afl-data",
     "bootstrap_afl_season": "--bootstrap-afl-season",
+    "sync_afl_season": "--sync-afl-season",
     "collect_match_rosters": "--collect-match-rosters",
     "collect_match_player_stats": "--collect-match-player-stats",
     "import_clubs": "--import-clubs",
@@ -55,6 +56,20 @@ def cfs_match_provider_id(value: str) -> str:
                         example="CD_M20260142001")
 
 
+def non_negative_round(value: str) -> int:
+    number = int(value)
+    if number < 0:
+        raise argparse.ArgumentTypeError("round must be zero or greater")
+    return number
+
+
+def positive_match_id(value: str) -> int:
+    number = int(value)
+    if number <= 0:
+        raise argparse.ArgumentTypeError("match ID must be a positive integer")
+    return number
+
+
 def _add_operation_argument(container, destination, **kwargs):
     """Register an operation using its authoritative public flag name."""
     action = container.add_argument(
@@ -67,7 +82,13 @@ def create_parser() -> argparse.ArgumentParser:
     """Build the flag-based CLI parser without loading runtime scraper data."""
     parser = argparse.ArgumentParser(
         description=("AFL operator CLI: preferred AFL/CFS JSON collection and "
-                     "explicit legacy HTML tools")
+                     "explicit legacy HTML tools"),
+        epilog=("Season sync exits: 0 = all currently actionable matches collected or already "
+                "complete (scheduled, live/postgame, and recognised future placeholders may "
+                "be safely skipped); 1 = requested or actionable work incomplete or failed "
+                "(unavailable, empty, partial, rejected, unknown, missing-provider, or "
+                "unsatisfied explicit/bounded selection); 2 = invalid CLI usage or argument "
+                "combination."),
     )
     _add_operation_argument(parser, "version", action="store_true",
                             help="Print the AFL-api version and exit")
@@ -96,6 +117,8 @@ def create_parser() -> argparse.ArgumentParser:
                                 help="Run the full modular JSON pipeline to files only (never writes the database)")
     _add_operation_argument(metadata_group, "bootstrap_afl_season", metavar="SEASON",
                                 help="Persist AFL metadata plus CFS players and season membership")
+    _add_operation_argument(metadata_group, "sync_afl_season", metavar="SEASON",
+                                help="Bootstrap and synchronise concluded CFS match statistics for a season")
     metadata_group.add_argument("--afl-season", default=AFL_SEASON_YEAR, metavar="SEASON",
                                 help="Select a season by year, AFL ID, provider ID or exact name")
     metadata_group.add_argument("--afl-competition-code", default=AFL_COMPETITION_CODE, metavar="CODE",
@@ -113,10 +136,24 @@ def create_parser() -> argparse.ArgumentParser:
                            help="With --collect-match-player-stats: explicit canonical status fallback")
     cfs_group.add_argument("--afl-match-id", type=int, metavar="AFL_MATCH_ID",
                            help="With --collect-match-player-stats: numeric AFL ID for canonical status resolution")
+    sync_group = parser.add_argument_group("Whole-season persistent synchronisation")
+    sync_group.add_argument("--round", type=non_negative_round, metavar="ROUND",
+                            help="With --sync-afl-season: process one round")
+    sync_group.add_argument("--round-from", type=non_negative_round, metavar="ROUND",
+                            help="With --sync-afl-season: first round in an inclusive range")
+    sync_group.add_argument("--round-to", type=non_negative_round, metavar="ROUND",
+                            help="With --sync-afl-season: last round in an inclusive range")
+    sync_group.add_argument("--match-id", type=positive_match_id, action="append", default=[], metavar="AFL_MATCH_ID",
+                            help=("With --sync-afl-season: process a canonical AFL match ID "
+                                  "(repeatable; intersects round filters)"))
+    sync_group.add_argument("--refresh-complete", action="store_true",
+                            help="With --sync-afl-season: reconsider concluded authoritative snapshots")
 
     output_group = parser.add_argument_group("Output and JSON diagnostics")
     output_group.add_argument("--print-json", action="store_true",
-                              help="Print full collected/normalised JSON; does not disable persistence")
+                              help=("With --sync-afl-season: emit the complete machine readable "
+                                    "result including match details instead of the default concise "
+                                    "human summary; persistence is unchanged"))
     output_group.add_argument("--afl-raw-directory", type=Path, metavar="PATH",
                               help="Retain original JSON responses below PATH; never stores credentials")
     output_group.add_argument("--collection-output", type=Path, metavar="PATH",
@@ -169,6 +206,17 @@ def handle_args(argv=None):
         parser.error("collection output/filter options require --collect-afl-data")
     if args.collect_afl_data and args.collection_output is None:
         parser.error("--collect-afl-data requires --collection-output PATH")
+    sync_options = (args.round is not None or args.round_from is not None
+                    or args.round_to is not None or args.match_id or args.refresh_complete)
+    if sync_options and not args.sync_afl_season:
+        parser.error("--round, --round-from/--round-to, --match-id and --refresh-complete require --sync-afl-season")
+    if args.round is not None and (args.round_from is not None or args.round_to is not None):
+        parser.error("--round cannot be combined with --round-from or --round-to")
+    if (args.round_from is None) != (args.round_to is None):
+        parser.error("--round-from and --round-to must be supplied together")
+    if args.round_from is not None and args.round_from > args.round_to:
+        parser.error("--round-from cannot be greater than --round-to")
+    args.match_id = list(dict.fromkeys(args.match_id))
     return args
 
 def main(argv=None):

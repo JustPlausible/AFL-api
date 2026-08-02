@@ -223,7 +223,13 @@ def normalise_player_stats(payload: Any, match_provider_id: str, *, collected_at
             seen[record.champion_data_player_id] = side
             records.append(record)
 
-    status = _result_status(effective_status, records, len(present) == 1)
+    structurally_incomplete = (len(present) == 1
+                               or any(payload.get(key) is None for key in present))
+    status = _result_status(
+        endpoint_source_status, effective_status, records,
+        structurally_incomplete=structurally_incomplete,
+        rejected_records=rejected,
+    )
     return PlayerStatsCollectionResult(match_provider_id, status, records, diagnostics,
                                        collected_at,
                                        endpoint_source_status=endpoint_source_status,
@@ -430,20 +436,42 @@ def _is_unavailable(status: Any) -> bool:
     return _text(status).casefold() in {"unavailable", "unpublished", "not_published"} if _text(status) else False
 
 
-def _result_status(source_status: str | None, records: list[Any], one_team: bool) -> PlayerStatsStatus:
-    folded = source_status.casefold() if source_status else ""
-    if folded in {"concluded", "completed", "final"}:
-        return PlayerStatsStatus.CONCLUDED
+def _result_status(endpoint_status: str | None, resolved_status: str | None,
+                   records: list[Any], *, structurally_incomplete: bool,
+                   rejected_records: int) -> PlayerStatsStatus:
+    """Classify snapshot authority without promoting explicit incomplete states.
+
+    Canonical lifecycle is a fallback only when the endpoint is silent.  An
+    explicit endpoint lifecycle and the response structure remain authoritative
+    for the completeness of this particular statistics snapshot.
+    """
+    endpoint_lifecycle = normalise_match_status(endpoint_status)
+    if _is_unavailable(endpoint_status):
+        return PlayerStatsStatus.UNAVAILABLE
+    if structurally_incomplete or rejected_records:
+        return PlayerStatsStatus.LIVE_PARTIAL
     if not records:
         return PlayerStatsStatus.EMPTY
-    if one_team or folded in {"live", "in_progress", "playing", "partial", "postgame"}:
+    if endpoint_status is not None:
+        if endpoint_lifecycle == "CONCLUDED":
+            return PlayerStatsStatus.CONCLUDED
+        if endpoint_lifecycle in {"SCHEDULED", "LIVE", "POSTGAME"}:
+            return PlayerStatsStatus.LIVE_PARTIAL
+        return PlayerStatsStatus.UNKNOWN
+    fallback_lifecycle = normalise_match_status(resolved_status)
+    if fallback_lifecycle == "CONCLUDED":
+        return PlayerStatsStatus.CONCLUDED
+    if fallback_lifecycle in {"SCHEDULED", "LIVE", "POSTGAME"}:
         return PlayerStatsStatus.LIVE_PARTIAL
     return PlayerStatsStatus.UNKNOWN
 
 
 def _status_class(value: str) -> PlayerStatsStatus:
     """Classify status text without using record presence as evidence."""
-    return _result_status(value, [object()], False)
+    return _result_status(
+        value, value, [object()], structurally_incomplete=False,
+        rejected_records=0,
+    )
 
 
 def _invalid(message: str) -> AflJsonInvalidResponse:

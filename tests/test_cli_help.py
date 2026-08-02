@@ -25,6 +25,25 @@ def test_cli_help_does_not_require_club_data(tmp_path):
     assert "persists to player_stats" in " ".join(result.stdout.split())
 
 
+def test_help_documents_season_sync_exit_codes_and_output_modes(tmp_path):
+    repository = Path(__file__).resolve().parents[1]
+    result = subprocess.run(
+        [sys.executable, str(repository / "cli.py"), "--help"],
+        cwd=tmp_path, capture_output=True, text=True, check=False,
+    )
+    help_text = " ".join(result.stdout.split())
+
+    assert result.returncode == 0
+    assert "Season sync exits: 0 = all currently actionable matches collected or already complete" in help_text
+    assert "scheduled, live/postgame, and recognised future placeholders may be safely skipped" in help_text
+    assert "1 = requested or actionable work incomplete or failed" in help_text
+    assert "unavailable, empty, partial, rejected, unknown, missing-provider" in help_text
+    assert "2 = invalid CLI usage or argument combination" in help_text
+    assert "the complete machine readable result including match details" in help_text
+    assert "default concise human summary" in help_text
+    assert "persistence is unchanged" in help_text
+
+
 @pytest.mark.parametrize(("flag", "value", "expected"), [
     ("--collect-match-rosters", "1365", "CD_R..."),
     ("--collect-match-rosters", "CD_M20260142001", "CD_R..."),

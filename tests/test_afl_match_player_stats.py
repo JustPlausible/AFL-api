@@ -1,6 +1,6 @@
 import json
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -98,16 +98,69 @@ def test_endpoint_status_is_retained_and_advances_canonical_metadata():
     assert all(record.resolved_match_status == "CONCLUDED" for record in result.records)
 
 
-def test_endpoint_live_cannot_downgrade_reconciled_concluded():
-    payload = fixture("match_player_stats_concluded.json")
-    payload["status"] = "LIVE"
+def test_canonical_concluded_does_not_promote_explicit_live_snapshot():
+    payload = fixture("match_player_stats_live_partial.json")
     result = normalise_player_stats(
         payload, "CD_M1", collected_at="now", canonical_match_status="CONCLUDED"
     )
-    assert result.status is PlayerStatsStatus.CONCLUDED
+    assert result.status is PlayerStatsStatus.LIVE_PARTIAL
     assert result.endpoint_source_status == "LIVE"
     assert result.resolved_match_status == "CONCLUDED"
-    assert {item.code for item in result.diagnostics} == {"endpoint_status_regression"}
+    assert {item.code for item in result.diagnostics} == {
+        "endpoint_status_regression", "null_team_array",
+    }
+
+
+def test_canonical_concluded_keeps_empty_snapshot_empty():
+    payload = fixture("match_player_stats_concluded.json")
+    payload["homeTeamPlayerStats"] = []
+    payload["awayTeamPlayerStats"] = []
+
+    result = normalise_player_stats(
+        payload, "CD_M1", collected_at="now", canonical_match_status="CONCLUDED"
+    )
+
+    assert result.status is PlayerStatsStatus.EMPTY
+    assert result.records == []
+
+
+def test_unknown_endpoint_lifecycle_is_not_promoted_by_canonical_concluded():
+    payload = fixture("match_player_stats_concluded.json")
+    payload["status"] = "MYSTERY"
+
+    result = normalise_player_stats(
+        payload, "CD_M1", collected_at="now", canonical_match_status="CONCLUDED"
+    )
+
+    assert result.status is PlayerStatsStatus.UNKNOWN
+    assert "unrecognised_endpoint_status" in {item.code for item in result.diagnostics}
+
+
+@pytest.mark.parametrize("change", ["missing", "null"])
+def test_canonical_concluded_keeps_incomplete_team_arrays_partial(change):
+    payload = fixture("match_player_stats_concluded.json")
+    if change == "missing":
+        del payload["awayTeamPlayerStats"]
+    else:
+        payload["awayTeamPlayerStats"] = None
+
+    result = normalise_player_stats(
+        payload, "CD_M1", collected_at="now", canonical_match_status="CONCLUDED"
+    )
+
+    assert result.status is PlayerStatsStatus.LIVE_PARTIAL
+
+
+def test_concluded_response_with_rejected_records_is_partial():
+    payload = fixture("match_player_stats_concluded.json")
+    payload["homeTeamPlayerStats"].append({"playerStats": {"stats": {"goals": 1}}})
+
+    result = normalise_player_stats(
+        payload, "CD_M1", collected_at="now", canonical_match_status="CONCLUDED"
+    )
+
+    assert result.status is PlayerStatsStatus.LIVE_PARTIAL
+    assert result.rejected_records == 1
 
 
 @pytest.mark.parametrize("metadata_status, expected", [
@@ -212,6 +265,30 @@ def test_later_postgame_observation_cannot_overwrite_concluded_rows():
     assert upsert_player_stats(conn, postgame) == 0
     assert conn.execute(
         "SELECT goals, snapshot_authority FROM cfs_player_stats WHERE champion_data_player_id='CD_I1'"
+    ).fetchone() == (2, 2)
+
+
+def test_partial_refresh_cannot_overwrite_existing_concluded_snapshot():
+    conn = sqlite3.connect(":memory:")
+    _schema(conn)
+    final = normalise_player_stats(
+        fixture("match_player_stats_concluded.json"), "CD_M1",
+        collected_at="2026-07-25T12:00:00+00:00",
+        canonical_match_status="CONCLUDED",
+    )
+    partial_payload = fixture("match_player_stats_live_partial.json")
+    partial_payload["homeTeamPlayerStats"][0]["playerStats"]["stats"]["goals"] = 99
+    partial = normalise_player_stats(
+        partial_payload, "CD_M1", collected_at="2026-07-25T13:00:00+00:00",
+        canonical_match_status="CONCLUDED",
+    )
+
+    assert upsert_player_stats(conn, final) == 2
+    assert partial.status is PlayerStatsStatus.LIVE_PARTIAL
+    assert upsert_player_stats(conn, partial) == 0
+    assert conn.execute(
+        "SELECT goals,snapshot_authority FROM cfs_player_stats "
+        "WHERE champion_data_player_id='CD_I1'"
     ).fetchone() == (2, 2)
 
 
