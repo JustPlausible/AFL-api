@@ -177,6 +177,8 @@ class SeasonCompletenessReporter:
             "concluded_matches_with_partial_stats": 0,
             "concluded_matches_with_suspicious_player_count": 0,
             "authoritative_stat_rows": 0, "legacy_stat_rows": 0,
+            "authoritative_stat_rows_with_unavailable_team_context": 0,
+            "matches_with_unavailable_team_context": 0,
             "season_memberships": 0, "memberships_without_team": 0,
         }
 
@@ -324,36 +326,48 @@ class SeasonCompletenessReporter:
 
     def _team_context_checks(self, result: SeasonReport, season_id: int) -> None:
         contexts = self.conn.execute(
-            "SELECT m.match_id,s.side,s.team_provider_id,"
-            "CASE s.side WHEN 'home' THEN ht.provider_id ELSE at.provider_id END expected_provider_id,"
-            "COUNT(*) rows FROM cfs_player_stats s "
+            "SELECT m.match_id,MAX(ht.provider_id) home_provider_id,"
+            "MAX(at.provider_id) away_provider_id,"
+            "SUM(s.team_provider_id IS NULL OR "
+            "CASE s.side WHEN 'home' THEN ht.provider_id ELSE at.provider_id END IS NULL) unavailable_rows,"
+            "SUM(s.side='home' AND (s.team_provider_id IS NULL OR ht.provider_id IS NULL)) unavailable_home_rows,"
+            "SUM(s.side='away' AND (s.team_provider_id IS NULL OR at.provider_id IS NULL)) unavailable_away_rows,"
+            "SUM(s.side='home' AND s.team_provider_id IS NOT NULL AND ht.provider_id IS NOT NULL "
+            "AND s.team_provider_id!=ht.provider_id) mismatch_home_rows,"
+            "SUM(s.side='away' AND s.team_provider_id IS NOT NULL AND at.provider_id IS NOT NULL "
+            "AND s.team_provider_id!=at.provider_id) mismatch_away_rows "
+            "FROM cfs_player_stats s "
             "JOIN matches m ON m.match_provider_id=s.match_provider_id "
             "LEFT JOIN afl_teams ht ON ht.afl_id=m.home_team_id "
             "LEFT JOIN afl_teams at ON at.afl_id=m.away_team_id "
             "WHERE m.season_id=? AND s.snapshot_authority=2 "
-            "GROUP BY m.match_id,s.side,s.team_provider_id,expected_provider_id "
-            "ORDER BY m.match_id,s.side,s.team_provider_id", (season_id,),
+            "GROUP BY m.match_id ORDER BY m.match_id", (season_id,),
         ).fetchall()
+        unavailable_rows = sum(context["unavailable_rows"] for context in contexts)
+        result.aggregates["authoritative_stat_rows_with_unavailable_team_context"] = unavailable_rows
+        result.aggregates["matches_with_unavailable_team_context"] = sum(
+            context["unavailable_rows"] > 0 for context in contexts)
         for context in contexts:
-            if (context["team_provider_id"] is None
-                    or context["expected_provider_id"] is None):
+            if context["unavailable_rows"] > 0:
                 self._add(result, "stats.team_provider_unavailable", Severity.INFO, "statistics",
                           "Statistic team context cannot be compared without both provider identities.",
                           match_id=context["match_id"],
-                          expected=context["expected_provider_id"],
-                          observed={"side": context["side"],
-                                    "team_provider_id": context["team_provider_id"],
-                                    "rows": context["rows"]},
+                          expected={"home_team_provider_id": context["home_provider_id"],
+                                    "away_team_provider_id": context["away_provider_id"]},
+                          observed={"unavailable_rows": context["unavailable_rows"],
+                                    "home": context["unavailable_home_rows"],
+                                    "away": context["unavailable_away_rows"]},
                           evidence_source="cfs_player_stats JOIN matches JOIN afl_teams")
-            elif context["team_provider_id"] != context["expected_provider_id"]:
+            mismatch_rows = context["mismatch_home_rows"] + context["mismatch_away_rows"]
+            if mismatch_rows:
                 self._add(result, "stats.team_participant_mismatch", Severity.ERROR, "statistics",
                           "Statistic team provider identity contradicts the stored match participant.",
-                          match_id=context["match_id"], expected={
-                              "side": context["side"],
-                              "team_provider_id": context["expected_provider_id"],
-                          }, observed={"side": context["side"],
-                                       "team_provider_id": context["team_provider_id"],
-                                       "rows": context["rows"]},
+                          match_id=context["match_id"],
+                          expected={"home_team_provider_id": context["home_provider_id"],
+                                    "away_team_provider_id": context["away_provider_id"]},
+                          observed={"mismatch_rows": mismatch_rows,
+                                    "home": context["mismatch_home_rows"],
+                                    "away": context["mismatch_away_rows"]},
                           evidence_source="cfs_player_stats JOIN matches JOIN afl_teams")
 
     def _identity_checks(self, result: SeasonReport, season_id: int,
@@ -406,17 +420,6 @@ class SeasonCompletenessReporter:
                           "Statistic crosswalk contradicts the canonical provider mapping.",
                           player_id=row["canonical_player_id"], expected=row["mapped_player_id"],
                           observed=row["canonical_player_id"], evidence_source="cfs_player_stats JOIN player_provider_ids")
-        outside = self.conn.execute(
-            "SELECT DISTINCT cps.player_id,s.match_provider_id FROM competition_season_players cps "
-            "JOIN cfs_player_stats s ON s.canonical_player_id=cps.player_id "
-            "LEFT JOIN matches m ON m.match_provider_id=s.match_provider_id AND m.season_id=? "
-            "WHERE cps.competition_season_id=? AND m.match_id IS NULL", (season_id, season_id)
-        ).fetchall()
-        for row in outside:
-            self._add(result, "stats.match_outside_season", Severity.WARNING, "statistics",
-                      "A season player's statistic row is attached outside the selected season.",
-                      player_id=row["player_id"], observed=row["match_provider_id"],
-                      evidence_source="competition_season_players JOIN cfs_player_stats LEFT JOIN matches")
         missing_memberships = self.conn.execute(
             "SELECT DISTINCT s.canonical_player_id,m.match_id,s.match_provider_id "
             "FROM cfs_player_stats s JOIN matches m ON m.match_provider_id=s.match_provider_id "

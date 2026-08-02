@@ -570,12 +570,22 @@ For authority-2 rows, `side=home` must carry the stored home participant's team
 provider ID and `side=away` must carry the away participant's provider ID.
 `stats.team_participant_mismatch` is an unsafe contradiction (`invalid`);
 `stats.team_provider_unavailable` is informational when either identity is null,
-because the report does not infer a missing identity. A known canonical player
-in requested-season authoritative statistics without a matching
+because the report does not infer a missing identity. The CFS normaliser reads
+`teamId` from each player context and the writer persists it unchanged, but the
+field is optional in the current source/persistence contract and real concluded
+responses may omit it for every row. The report therefore retains aggregate
+counts of unavailable authority-2 rows and emits at most one structured
+informational finding per match, with home and away counts, rather than one per
+side or player. When supplied, CFS `CD_T...` values and canonical
+`afl_teams.provider_id` share the Champion Data team namespace and can be
+compared safely. A known canonical player in requested-season authoritative
+statistics without a matching
 `competition_season_players` row produces
-`stats.player_missing_season_membership` and makes the report `incomplete`. This
-is the inverse of `stats.match_outside_season`, which starts with a season member
-and finds that player's statistic rows outside the requested match set.
+`stats.player_missing_season_membership` and makes the report `incomplete`.
+Statistic season scope is derived only through the persisted statistic-to-match
+provider join and the match's `season_id`; player membership is never used to
+infer the intended season of a statistic. Consequently, legitimate historical
+statistics for a continuing player are not findings in a later-season report.
 
 `match.duplicate_provider_id` is an `error` and makes the report `invalid`.
 Healthy migrated databases normally prevent it through the partial unique
