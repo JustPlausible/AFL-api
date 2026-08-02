@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import sqlite3
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 
 from db.scrape_runs import (TRIGGER_CLI, complete_scrape_run, fail_scrape_run,
                             sanitize_error_summary, start_scrape_run)
@@ -196,6 +196,23 @@ class SeasonSynchronizer:
                        summary: SeasonSyncResult) -> None:
         match_id, provider_id, round_number = row["match_id"], row["match_provider_id"], row["round_number"]
         lifecycle = normalise_match_status(row["status"])
+        if provider_id and (lifecycle is None or lifecycle in {"LIVE", "POSTGAME"}):
+            try:
+                resolution = reconcile_match_status(
+                    self.conn, self.client, match_provider_id=provider_id,
+                    afl_match_id=match_id,
+                )
+                lifecycle = resolution.resolved_status
+                if resolution.canonical_refreshed:
+                    self.conn.commit()
+            except Exception as exc:
+                self.conn.rollback()
+                summary.failed += 1
+                summary.matches.append(MatchSyncResult(
+                    match_id, provider_id, round_number, "failed", lifecycle,
+                    error=sanitize_error_summary(exc),
+                ))
+                return
         if lifecycle != "CONCLUDED":
             outcome = "unknown_lifecycle" if lifecycle is None else (
                 "partial_lifecycle" if lifecycle in {"LIVE", "POSTGAME"} else "not_concluded")
@@ -214,20 +231,28 @@ class SeasonSynchronizer:
                                                     "missing_provider_identity", lifecycle))
             return
         summary.eligible_matches += 1
-        complete = self.conn.execute(
+        concluded_rows = self.conn.execute(
             "SELECT COUNT(*) FROM cfs_player_stats WHERE match_provider_id=? AND snapshot_authority=2",
             (provider_id,),
         ).fetchone()[0]
+        completed_audit = self.conn.execute(
+            "SELECT rows_read FROM scrape_runs WHERE scrape_type='season_match_player_stats' "
+            "AND target_type='match' AND target_identifier=? AND status='completed' "
+            "ORDER BY started_at DESC LIMIT 1",
+            (provider_id,),
+        ).fetchone()
+        complete = bool(concluded_rows and completed_audit
+                        and completed_audit[0] == concluded_rows)
         if complete and not options.refresh_complete:
             summary.already_complete_unchanged += 1
-            summary.statistic_rows_unchanged += complete
+            summary.statistic_rows_unchanged += concluded_rows
             summary.matches.append(MatchSyncResult(match_id, provider_id, round_number,
                                                     "already_complete", lifecycle,
-                                                    rows_unchanged=complete))
+                                                    rows_unchanged=concluded_rows))
             return
 
         audit_id = start_scrape_run(
-            "match_player_stats", target_type="match", target_identifier=provider_id,
+            "season_match_player_stats", target_type="match", target_identifier=provider_id,
             trigger_source=TRIGGER_CLI, correlation_id=summary.correlation_id, conn=self.conn,
         )
         try:
@@ -235,6 +260,8 @@ class SeasonSynchronizer:
                 self.conn, self.client, match_provider_id=provider_id, afl_match_id=match_id)
             result = collector.collect(provider_id, afl_match_id=match_id,
                                        canonical_match_status=reconciliation.resolved_status)
+            if result.rejected_records and result.status is PlayerStatsStatus.CONCLUDED:
+                result = replace(result, status=PlayerStatsStatus.LIVE_PARTIAL)
             before = {r[0] for r in self.conn.execute(
                 "SELECT champion_data_player_id FROM cfs_player_stats WHERE match_provider_id=?",
                 (provider_id,),

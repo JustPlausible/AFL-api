@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import replace
+from types import SimpleNamespace
 
 from afl_json import (CollectionResult, PlayerPersistenceSummary,
                       PlayerStatsStatus, normalise_player_stats, persist_afl_metadata)
 from afl_json.season_sync import (SeasonBootstrapResult, SeasonSynchronizer,
                                   SeasonSyncOptions)
 from db.migration_runner import migrate_database
+from db.scrape_runs import complete_scrape_run, start_scrape_run
 
 
 def metadata(statuses=("CONCLUDED", "SCHEDULED", "CONCLUDED"), *, missing_provider=True):
@@ -46,17 +48,20 @@ def concluded(provider="CD_M1", goals=1, collected_at="2026-01-01T00:00:00+00:00
 
 class Collector:
     results = {}
+    calls = []
 
     def __init__(self, _client, **_kwargs): pass
 
     def collect(self, provider, **_kwargs):
+        self.calls.append(provider)
         value = self.results.get(provider, concluded(provider))
         if isinstance(value, Exception):
             raise value
         return value
 
 
-def setup(tmp_path, statuses=("CONCLUDED", "SCHEDULED", "CONCLUDED"), *, missing_provider=True):
+def setup(tmp_path, statuses=("CONCLUDED", "SCHEDULED", "CONCLUDED"), *,
+          missing_provider=True, client=None):
     path = tmp_path / "sync.db"
     migrate_database(path)
     conn = sqlite3.connect(path)
@@ -67,7 +72,8 @@ def setup(tmp_path, statuses=("CONCLUDED", "SCHEDULED", "CONCLUDED"), *, missing
         players = PlayerPersistenceSummary("published", 0, 0, 0, 0, 0, 0, 0, 0)
         return SeasonBootstrapResult(1, "CD_C1", 85, "CD_S85", summary, players)
 
-    return conn, SeasonSynchronizer(object(), conn, bootstrap=bootstrap,
+    Collector.calls = []
+    return conn, SeasonSynchronizer(client or object(), conn, bootstrap=bootstrap,
                                     collector_factory=Collector)
 
 
@@ -122,3 +128,76 @@ def test_unavailable_empty_partial_unknown_and_failure_are_isolated(tmp_path):
         (result.correlation_id,),
     ).fetchone()[0]
     assert correlations == 1
+
+
+def test_incomplete_authority_two_subset_is_recollected(tmp_path):
+    conn, sync = setup(tmp_path, ("CONCLUDED",))
+    full = concluded()
+    second = replace(full.records[0], champion_data_player_id="CD_I2", side="away")
+    full = replace(full, records=[*full.records, second])
+    conn.execute(
+        "INSERT INTO cfs_player_stats(match_provider_id,champion_data_player_id,afl_match_id,"
+        "team_provider_id,side,collected_at,source_endpoint,endpoint_source_status,"
+        "resolved_match_status,snapshot_authority,extra_stats_json,raw_player_json) "
+        "VALUES ('CD_M1','CD_I1','8001','CD_T1','home','2025-01-01','source',"
+        "'CONCLUDED','CONCLUDED',2,'{}','{}')"
+    )
+    conn.commit()
+    historical_audit = start_scrape_run(
+        "match_player_stats", target_type="match", target_identifier="CD_M1", conn=conn
+    )
+    complete_scrape_run(historical_audit, rows_read=1, rows_written=1, conn=conn)
+    Collector.results = {"CD_M1": full}
+
+    result = sync.run(season=2026, competition_code="AFL", competition_provider_id="CD_C1")
+
+    assert Collector.calls == ["CD_M1"]
+    assert result.already_complete_unchanged == 0
+    assert conn.execute("SELECT COUNT(*) FROM cfs_player_stats").fetchone()[0] == 2
+
+
+def test_qualifying_complete_audit_allows_default_skip(tmp_path):
+    conn, sync = setup(tmp_path, ("CONCLUDED",))
+    Collector.results = {"CD_M1": concluded()}
+    sync.run(season=2026, competition_code="AFL", competition_provider_id="CD_C1")
+    Collector.calls = []
+
+    result = sync.run(season=2026, competition_code="AFL", competition_provider_id="CD_C1")
+
+    assert Collector.calls == []
+    assert result.already_complete_unchanged == 1
+    assert result.statistic_rows_unchanged == 1
+
+
+def test_rejected_concluded_result_is_materially_partial(tmp_path):
+    conn, sync = setup(tmp_path, ("CONCLUDED",))
+    Collector.results = {"CD_M1": replace(concluded(), rejected_records=1)}
+
+    result = sync.run(season=2026, competition_code="AFL", competition_provider_id="CD_C1")
+
+    assert result.outcome == "partial"
+    assert result.partial == 1
+    assert result.collected_successfully == 0
+    assert [tuple(row) for row in conn.execute(
+        "SELECT DISTINCT snapshot_authority FROM cfs_player_stats"
+    )] == [(1,)]
+
+
+class ConcludedDetailClient:
+    def get(self, endpoint, **kwargs):
+        assert endpoint == "match_detail"
+        match_id = kwargs["path_parameters"]["afl_match_id"]
+        return SimpleNamespace(data={"matches": [{
+            "id": match_id, "providerId": "CD_M1", "status": "CONCLUDED",
+        }]})
+
+
+def test_stored_postgame_advances_before_eligibility_classification(tmp_path):
+    conn, sync = setup(tmp_path, ("POSTGAME",), client=ConcludedDetailClient())
+    Collector.results = {"CD_M1": concluded()}
+
+    result = sync.run(season=2026, competition_code="AFL", competition_provider_id="CD_C1")
+
+    assert result.collected_successfully == 1
+    assert result.skipped_not_concluded == result.partial == 0
+    assert conn.execute("SELECT status FROM matches WHERE match_id=8001").fetchone()[0] == "CONCLUDED"
