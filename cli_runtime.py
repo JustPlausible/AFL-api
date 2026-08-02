@@ -321,30 +321,30 @@ def handle_collect_match_rosters(args):
 
 
 def handle_bootstrap_afl_season(args):
-    from afl_json import (AflJsonClient, PublicAflCollector, persist_afl_metadata,
-                          persist_player_seasons)
+    from afl_json import AflJsonClient
+    from afl_json.season_sync import bootstrap_afl_season
     from db.connection import get_db_connection
     from db.scrape_runs import audited_scrape_run
 
-    with AflJsonClient() as client:
-        collector = PublicAflCollector(client, raw_directory=args.afl_raw_directory)
-        result = collector.collect(competition_code=args.afl_competition_code,
-                                   competition_provider_id=args.afl_competition_provider_id,
-                                   season=args.bootstrap_afl_season)
-        player_result = collector.collect_players(result.season["provider_id"])
     conn = get_db_connection()
     try:
         with audited_scrape_run("afl_metadata_bootstrap", target_type="season",
                                 target_identifier=args.bootstrap_afl_season, conn=conn) as audit:
-            summary = persist_afl_metadata(conn, result)
-            player_summary = persist_player_seasons(
-                conn, player_result, provider_season_id=result.season["provider_id"])
+            with AflJsonClient() as client:
+                result = bootstrap_afl_season(
+                    client, conn, season=args.bootstrap_afl_season,
+                    competition_code=args.afl_competition_code,
+                    competition_provider_id=args.afl_competition_provider_id,
+                    raw_directory=args.afl_raw_directory)
+            summary, player_summary = result.metadata, result.players
             audit["rows_read"] = summary.records_read + player_summary.records_read
             audit["rows_written"] = summary.inserted + summary.updated + player_summary.rows_written
     finally:
         conn.close()
     details = {
-        "competition": result.competition["name"], "season": result.season["name"],
+        "competition": result.competition_name, "season": result.season_name,
+        "resolved_competition_id": result.competition_id,
+        "resolved_season_id": result.season_id,
         "records_read": summary.records_read, "inserted": summary.inserted,
         "updated": summary.updated, "unchanged": summary.unchanged, "failed": summary.failed,
         "player_collection_status": player_summary.status,
@@ -356,7 +356,7 @@ def handle_bootstrap_afl_season(args):
         "player_seasons_updated": player_summary.associations_updated,
         "player_seasons_unchanged": player_summary.unchanged,
         "missing_team_links": player_summary.missing_team_links,
-        "player_diagnostics": [diagnostic.code for diagnostic in player_result.diagnostics],
+        "player_diagnostics": list(result.player_diagnostics),
     }
     status = "unavailable" if player_summary.status == "unavailable" else (
         "unchanged" if summary.inserted + summary.updated + player_summary.rows_written == 0
@@ -373,10 +373,54 @@ def handle_bootstrap_afl_season(args):
         rows_written=summary.inserted + summary.updated + player_summary.rows_written,
         result_status=status, result_detail=player_summary.status,
         fallback_allowed=False, fallback_occurred=False,
-        diagnostic_count=len(player_result.diagnostics), season_id=result.season["afl_id"],
+        diagnostic_count=len(result.player_diagnostics), season_id=result.season_id,
         audit_id=audit["run_id"],
     )
     print(_diagnostic_output(diagnostic, details=details, pretty=args.print_json))
+
+
+def handle_sync_afl_season(args):
+    from afl_json import AflJsonClient
+    from afl_json.season_sync import SeasonSynchronizer, SeasonSyncOptions
+    from db.connection import get_db_connection
+
+    conn = get_db_connection()
+    try:
+        with AflJsonClient() as client:
+            result = SeasonSynchronizer(client, conn).run(
+                season=args.sync_afl_season,
+                competition_code=args.afl_competition_code,
+                competition_provider_id=args.afl_competition_provider_id,
+                raw_directory=args.afl_raw_directory,
+                options=SeasonSyncOptions(
+                    round_number=args.round, round_from=args.round_from,
+                    round_to=args.round_to, match_ids=tuple(args.match_id),
+                    refresh_complete=args.refresh_complete,
+                ),
+            )
+    finally:
+        conn.close()
+    diagnostic = CollectionDiagnostic(
+        operation="sync_afl_season", domain="season_sync",
+        source_family="public_afl_json+cfs_json",
+        collector="SeasonSynchronizer+MatchPlayerStatsCollector", mode="persistent",
+        database_opened=True,
+        persistence_target="afl_metadata,canonical_players,player_seasons,cfs_player_stats",
+        persistence_action="upsert", records_received=result.total_matches_discovered,
+        rows_inserted=result.statistic_rows_inserted,
+        rows_updated=result.statistic_rows_updated,
+        rows_unchanged=result.statistic_rows_unchanged,
+        rows_written=result.statistic_rows_inserted + result.statistic_rows_updated,
+        result_status=result.outcome, fallback_allowed=False, fallback_occurred=False,
+        season_id=result.season_id, audit_id=result.audit_id,
+        correlation_id=result.correlation_id,
+    )
+    envelope_fields = diagnostic.to_dict().keys()
+    details = {key: value for key, value in result.to_dict().items()
+               if key not in envelope_fields}
+    print(_diagnostic_output(diagnostic, details=details, pretty=args.print_json))
+    if result.outcome != "success":
+        raise SystemExit(1)
 
 
 def handle_collect_afl_metadata(args):
@@ -416,6 +460,7 @@ HANDLERS = {
     "collect_match_player_stats": handle_collect_match_player_stats,
     "collect_match_rosters": handle_collect_match_rosters,
     "bootstrap_afl_season": handle_bootstrap_afl_season,
+    "sync_afl_season": handle_sync_afl_season,
     "collect_afl_metadata": handle_collect_afl_metadata,
 }
 
