@@ -28,6 +28,7 @@ environment variable.
 | Explicitly scrape legacy statistics for one match | `python cli.py --scrape-match 8216` | Opens the database; upserts legacy `player_stats` | Explicit HTML compatibility path; not authoritative and never an automatic fallback | Outbound AFL website access |
 | Import or refresh the supported club seed | `python cli.py --import-clubs` | Opens the database; upserts canonical `bootstrap/clubs.json` rows | Local repository seed, not an arbitrary input file; migrations already seed/refresh it where applicable | Filesystem write access to `DB_PATH` |
 | Synchronise an implemented whole season | `python cli.py --sync-afl-season <SEASON_YEAR>` | Opens the database; bootstraps canonical season data and upserts concluded match snapshots in `cfs_player_stats` | Implemented idempotent AFL/CFS JSON workflow; use its documented round/match bounds for narrower work | Outbound AFL access and CFS auth |
+| Report persisted season completeness | `python cli.py --report-afl-season <SEASON_YEAR>` | Opens the existing SQLite database in query-only mode; never writes | Canonical AFL season relationships and authoritative `cfs_player_stats`; `--print-json` emits the structured result | No network or credentials |
 
 The table is a selector, not a full option reference. The sections below explain
 individual collection modes; the implemented bounds and exit behavior for season
@@ -460,3 +461,125 @@ first define canonical selection identity/replacement semantics; only then
 should it expose a persistent CFS roster command. Grouped subcommands and
 broader source-selection redesign are also intentionally outside this guide's
 scope.
+
+## Read-only season completeness report
+
+Use the report after bootstrap, after whole-season sync, during an active season,
+or when investigating a bounded match collection:
+
+```bash
+python cli.py --report-afl-season 2026
+python cli.py --report-afl-season 2026 --print-json
+```
+
+The command resolves the season from the configured stable AFL competition code
+and provider identity plus the requested year. It opens the configured `DB_PATH`
+in SQLite `mode=ro`, enables `PRAGMA query_only`, makes no HTTP requests, invokes
+no collector or migration, and creates no `scrape_runs` record. The database name
+(rather than an absolute path) is included in metadata. The initial filter is
+always `{"scope":"full_season"}`.
+
+Human and JSON modes contain the same status and findings. JSON fields include
+metadata, aggregates, status, severity counts, finding count, and the complete
+finding list. Finding automation must use `code`, not `message`. For example:
+
+```json
+{
+  "metadata": {"requested_season_year": 2026, "competition_code": "AFL", "filters": {"scope": "full_season"}},
+  "aggregates": {"matches": 207, "concluded_matches": 24},
+  "status": "incomplete",
+  "severity_counts": {"error": 0, "warning": 1, "info": 3},
+  "finding_count": 4,
+  "findings": [{"code": "match.final_without_authoritative_stats", "severity": "warning", "domain": "matches", "match_id": 8001}]
+}
+```
+
+### Severity, status, and exit policy
+
+| Severity | Meaning |
+|---|---|
+| `error` | Unsafe contradiction, broken seasonal relationship, or authority/identity conflict. |
+| `warning` | Actionable missing, unresolved, partial, or failed state. |
+| `info` | Legitimate optional, unassigned, future, unpublished, or limited-audit state. |
+
+| Overall status | Decision | Exit |
+|---|---|---:|
+| `invalid` | At least one `error`. | 1 |
+| `incomplete` | No error, but a warning with an explicitly required-data code (missing season foundations/provider identity or concluded authoritative statistics). | 1 |
+| `usable_with_warnings` | Other warnings remain, but no unsafe or explicitly incomplete condition exists. | 0 |
+| `complete` | No errors or warnings; informational findings are allowed. | 0 |
+
+This order is the precise decision table. Status is not computed only from the
+highest generic severity. Human and JSON modes use this same table and exit
+policy; there is intentionally no `--strict` option. CLI syntax errors remain
+argparse exit `2`.
+
+### Interpretation and authority
+
+A match belongs to the report through `matches.season_id = afl_seasons.afl_id`;
+its round is validated through `matches.round_id = rounds.round_id` and
+`rounds.season_id`, while its teams are validated through
+`matches.home_team_id`/`away_team_id = afl_team_seasons.team_id` for that same
+season. A player membership belongs through
+`competition_season_players.competition_season_id = afl_seasons.afl_id`; an
+optional team is validated by the composite membership relationship to
+`afl_team_seasons`. A CFS row belongs through
+`cfs_player_stats.match_provider_id = matches.match_provider_id`, followed by
+`matches.season_id`. Player reconciliation additionally uses
+`cfs_player_stats.canonical_player_id`, and Champion Data identity uses
+`player_provider_ids(provider='champion_data', provider_player_id)`.
+
+The schema enforces unique competition/season/team provider IDs, unique round
+and match provider IDs (partial indexes), one mapping per provider identity and
+one provider mapping per canonical player, one team-season pair, one
+player-season membership, and one CFS `(match_provider_id,
+champion_data_player_id)` row. Player/membership foreign keys and the composite
+membership-team foreign key exist, although SQLite enforcement depends on the
+connection's foreign-key setting. The older `matches` and `rounds` base tables
+do not have declared foreign keys for all canonical columns, so the report
+checks those application-convention relationships explicitly.
+
+Canonical match lifecycle normalization recognizes `SCHEDULED`, `LIVE`,
+`POSTGAME`, and `CONCLUDED`; `COMPLETED` and `FINAL` normalize to `CONCLUDED`.
+Cancelled, postponed, bye, and other upstream values are retained but normalize
+to unknown rather than being invented as concluded. Scheduled/future and all
+non-concluded matches are excluded from final-stat failures. Opening Round and
+finals are ordinary persisted rounds; no fixed season-match count is assumed.
+Missing venue/time is informational because upstream publication is nullable.
+
+Only `cfs_player_stats` is authoritative. Authority `1` is live/partial and `2`
+is concluded; the writer protects higher authority and only permits equal-
+authority observations with a non-older collection timestamp. Legacy
+`player_stats` is counted only as compatibility evidence and never closes a CFS
+gap. The report avoids a universal low-player threshold: without a persisted
+competition-specific expectation, one-sided observations are a conservative
+warning and row totals remain available as evidence.
+
+Canonical player crosswalks use `canonical_players`, `player_provider_ids`, and
+`cfs_player_stats.canonical_player_id`; the report never guesses or merges an
+identity. A null `competition_season_players.team_id` is legitimate when the CFS
+season-player source did not provide or could not resolve a team and is therefore
+informational. A contradictory non-null relationship is unsafe.
+
+Audit correlation is deliberately limited to `scrape_runs` records whose target
+is the exact Champion Data match ID and whose scrape type is
+`season_match_player_stats` or `match_player_stats`. Status, row counts, and
+`started_at` are reliable at that boundary. Older `scrape_log` and
+`scrape_summary`, database-free collection, read-only commands, metadata audit
+records without a reliable season target, and heuristic correlation are not
+promoted to authoritative evidence. Consequently `audit.no_successful_stat_run`
+is informational rather than proof that collection never occurred.
+
+Common remediation paths are:
+
+```bash
+python cli.py --bootstrap-afl-season 2026
+python cli.py --sync-afl-season 2026
+python cli.py --collect-match-player-stats CD_M20260142001 --afl-match-id 8001
+```
+
+Bootstrap supplies foundations; Issue #106 season sync performs bounded,
+idempotent collection; the single-match command targets one concluded gap.
+Reporting itself never repairs, backfills, collects, updates snapshot authority,
+uses HTML fallback, or writes an audit. It does not validate injuries, CFS roster
+persistence, consumer scoring, or require every season member to record a stat.

@@ -29,6 +29,7 @@ OPERATION_FLAGS = {
     "collect_afl_data": "--collect-afl-data",
     "bootstrap_afl_season": "--bootstrap-afl-season",
     "sync_afl_season": "--sync-afl-season",
+    "report_afl_season": "--report-afl-season",
     "collect_match_rosters": "--collect-match-rosters",
     "collect_match_player_stats": "--collect-match-player-stats",
     "import_clubs": "--import-clubs",
@@ -119,6 +120,8 @@ def create_parser() -> argparse.ArgumentParser:
                                 help="Persist AFL metadata plus CFS players and season membership")
     _add_operation_argument(metadata_group, "sync_afl_season", metavar="SEASON",
                                 help="Bootstrap and synchronise concluded CFS match statistics for a season")
+    _add_operation_argument(metadata_group, "report_afl_season", type=int, metavar="YEAR",
+                                help="Read-only completeness report for a persisted canonical AFL season")
     metadata_group.add_argument("--afl-season", default=AFL_SEASON_YEAR, metavar="SEASON",
                                 help="Select a season by year, AFL ID, provider ID or exact name")
     metadata_group.add_argument("--afl-competition-code", default=AFL_COMPETITION_CODE, metavar="CODE",
@@ -151,9 +154,10 @@ def create_parser() -> argparse.ArgumentParser:
 
     output_group = parser.add_argument_group("Output and JSON diagnostics")
     output_group.add_argument("--print-json", action="store_true",
-                              help=("With --sync-afl-season: emit the complete machine readable "
-                                    "result including match details instead of the default concise "
-                                    "human summary; persistence is unchanged"))
+                              help=("With --sync-afl-season: emit the complete machine readable result "
+                                    "including match details instead of the default concise human summary; "
+                                    "with --report-afl-season emit the complete structured report; "
+                                    "persistence is unchanged"))
     output_group.add_argument("--afl-raw-directory", type=Path, metavar="PATH",
                               help="Retain original JSON responses below PATH; never stores credentials")
     output_group.add_argument("--collection-output", type=Path, metavar="PATH",
