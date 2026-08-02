@@ -82,7 +82,13 @@ def create_parser() -> argparse.ArgumentParser:
     """Build the flag-based CLI parser without loading runtime scraper data."""
     parser = argparse.ArgumentParser(
         description=("AFL operator CLI: preferred AFL/CFS JSON collection and "
-                     "explicit legacy HTML tools")
+                     "explicit legacy HTML tools"),
+        epilog=("Season sync exits: 0 = all currently actionable matches collected or already "
+                "complete (scheduled, live/postgame, and recognised future placeholders may "
+                "be safely skipped); 1 = requested or actionable work incomplete or failed "
+                "(unavailable, empty, partial, rejected, unknown, missing-provider, or "
+                "unsatisfied explicit/bounded selection); 2 = invalid CLI usage or argument "
+                "combination."),
     )
     _add_operation_argument(parser, "version", action="store_true",
                             help="Print the AFL-api version and exit")
@@ -145,7 +151,9 @@ def create_parser() -> argparse.ArgumentParser:
 
     output_group = parser.add_argument_group("Output and JSON diagnostics")
     output_group.add_argument("--print-json", action="store_true",
-                              help="Print full collected/normalised JSON; does not disable persistence")
+                              help=("With --sync-afl-season: emit the complete machine readable "
+                                    "result including match details instead of the default concise "
+                                    "human summary; persistence is unchanged"))
     output_group.add_argument("--afl-raw-directory", type=Path, metavar="PATH",
                               help="Retain original JSON responses below PATH; never stores credentials")
     output_group.add_argument("--collection-output", type=Path, metavar="PATH",
