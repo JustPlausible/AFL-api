@@ -467,3 +467,84 @@ def test_ambient_transaction_is_rejected_before_any_side_effect(tmp_path):
     assert Collector.calls == []
     assert conn.execute("SELECT COUNT(*) FROM scrape_runs").fetchone()[0] == before_audits
     assert conn.execute("SELECT COUNT(*) FROM caller_work").fetchone()[0] == 1
+
+
+def decision_rows(conn):
+    return conn.execute(
+        "SELECT * FROM scrape_runs WHERE scrape_type='afl_season_sync_decision' "
+        "ORDER BY started_at,run_id"
+    ).fetchall()
+
+
+def test_safe_and_material_skips_persist_correlated_zero_write_audits(tmp_path):
+    future = "2099-01-01T00:00:00+00:00"
+    past = "2020-01-01T00:00:00+00:00"
+    conn, sync = setup(
+        tmp_path, ("SCHEDULED", "LIVE", "CONCLUDED", "MYSTERY", "MYSTERY"),
+        missing_provider=True, client=NoDetailClient(),
+        start_times=(future, future, future, future, past),
+    )
+
+    result = sync.run(season=2026, competition_code="AFL",
+                      competition_provider_id="CD_C1")
+    rows = decision_rows(conn)
+
+    assert Collector.calls == []
+    assert {row["reason_code"] for row in rows} == {
+        "scheduled", "live_or_postgame", "future_placeholder",
+        "unresolved_lifecycle", "missing_provider_identity",
+    }
+    assert len({row["run_id"] for row in rows}) == 5
+    assert {row["correlation_id"] for row in rows} == {result.correlation_id}
+    assert all((row["rows_read"], row["rows_written"]) == (0, 0) for row in rows)
+    classes = {row["reason_code"]: row["decision_class"] for row in rows}
+    assert classes == {
+        "scheduled": "safe", "live_or_postgame": "safe",
+        "future_placeholder": "safe", "unresolved_lifecycle": "material",
+        "missing_provider_identity": "material",
+    }
+    assert conn.execute("SELECT COUNT(*) FROM cfs_player_stats").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM player_stats").fetchone()[0] == 0
+
+
+def test_missing_explicit_target_has_no_fabricated_identity(tmp_path):
+    conn, sync = setup(tmp_path, (), missing_provider=False)
+    result = sync.run(
+        season=2026, competition_code="AFL", competition_provider_id="CD_C1",
+        options=SeasonSyncOptions(match_ids=(9999,)),
+    )
+
+    missing = next(row for row in decision_rows(conn)
+                   if row["reason_code"] == "requested_match_not_found")
+    returned = next(match for match in result.matches
+                    if match.reason_code == "requested_match_not_found")
+    assert missing["target_identifier"] == "9999"
+    assert missing["decision_class"] == returned.decision_class == "material"
+    assert missing["canonical_match_id"] is None
+    assert missing["provider_match_id"] is None
+    assert missing["round_identifier"] is None
+    assert returned.requested_match_id == 9999 and returned.canonical_match_id is None
+
+
+def test_already_complete_is_historical_and_collected_match_is_not_duplicated(tmp_path):
+    conn, sync = setup(tmp_path, ("CONCLUDED",), missing_provider=False)
+    Collector.results = {"CD_M1": concluded()}
+    first = sync.run(season=2026, competition_code="AFL",
+                     competition_provider_id="CD_C1")
+    second = sync.run(season=2026, competition_code="AFL",
+                      competition_provider_id="CD_C1")
+    third = sync.run(season=2026, competition_code="AFL",
+                     competition_provider_id="CD_C1")
+    rows = decision_rows(conn)
+
+    assert Collector.calls == ["CD_M1"]
+    assert not [row for row in rows if row["correlation_id"] == first.correlation_id]
+    complete = [row for row in rows if row["reason_code"] == "already_complete"]
+    assert len(complete) == 2
+    assert complete[0]["run_id"] != complete[1]["run_id"]
+    assert {row["correlation_id"] for row in complete} == {
+        second.correlation_id, third.correlation_id,
+    }
+    assert all(row["status"] == "completed" for row in complete)
+    assert conn.execute("SELECT COUNT(*) FROM cfs_player_stats").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM player_stats").fetchone()[0] == 0

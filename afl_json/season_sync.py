@@ -5,16 +5,39 @@ import sqlite3
 import uuid
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
+from enum import Enum
 from typing import Callable
 
 from db.scrape_runs import (TRIGGER_CLI, complete_scrape_run, fail_scrape_run,
-                            sanitize_error_summary, start_scrape_run)
+                            record_scrape_decision, sanitize_error_summary,
+                            start_scrape_run)
 
 from .bootstrap import BootstrapSummary, persist_afl_metadata
 from .match_status import normalise_match_status, reconcile_match_status
 from .player_persistence import PlayerPersistenceSummary, persist_player_seasons
 from .player_stats import (MatchPlayerStatsCollector, PlayerStatsStatus,
                            upsert_player_stats)
+
+
+class SeasonSyncDecisionReason(str, Enum):
+    """Stable audit vocabulary for decisions made before collection."""
+
+    ALREADY_COMPLETE = "already_complete"
+    SCHEDULED = "scheduled"
+    LIVE_OR_POSTGAME = "live_or_postgame"
+    FUTURE_PLACEHOLDER = "future_placeholder"
+    UNRESOLVED_LIFECYCLE = "unresolved_lifecycle"
+    MISSING_PROVIDER_IDENTITY = "missing_provider_identity"
+    REQUESTED_MATCH_NOT_FOUND = "requested_match_not_found"
+    BOUNDED_SELECTION_EMPTY = "bounded_selection_empty"
+
+
+SAFE_DECISION_REASONS = frozenset({
+    SeasonSyncDecisionReason.ALREADY_COMPLETE,
+    SeasonSyncDecisionReason.SCHEDULED,
+    SeasonSyncDecisionReason.LIVE_OR_POSTGAME,
+    SeasonSyncDecisionReason.FUTURE_PLACEHOLDER,
+})
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +102,10 @@ class MatchSyncResult:
     audit_error_summary: str | None = None
     correlation_id: str | None = None
     processing_continued: bool | None = None
+    reason_code: str | None = None
+    decision_class: str | None = None
+    canonical_match_id: int | None = None
+    requested_match_id: int | None = None
 
 
 @dataclass(slots=True)
@@ -110,6 +137,8 @@ class SeasonSyncResult:
     explicit_matches_unsatisfied: int = 0
     missing_requested_match_ids: list[int] = field(default_factory=list)
     selection_status: str = "selected"
+    selection_reason_code: str | None = None
+    selection_decision_class: str | None = None
     statistic_rows_inserted: int = 0
     statistic_rows_updated: int = 0
     statistic_rows_unchanged: int = 0
@@ -145,7 +174,8 @@ class SeasonSynchronizer:
     def __init__(self, client, conn: sqlite3.Connection, *, bootstrap=bootstrap_afl_season,
                  collector_factory=MatchPlayerStatsCollector,
                  clock: Callable[[], datetime] | None = None,
-                 start_audit=None, complete_audit=None, fail_audit=None):
+                 start_audit=None, complete_audit=None, fail_audit=None,
+                 decision_audit=None):
         self.client = client
         self.conn = conn
         self.bootstrap = bootstrap
@@ -154,6 +184,7 @@ class SeasonSynchronizer:
         self.start_audit = start_audit or start_scrape_run
         self.complete_audit = complete_audit or complete_scrape_run
         self.fail_audit = fail_audit or fail_scrape_run
+        self.decision_audit = decision_audit or record_scrape_decision
 
     def run(self, *, season: str | int, competition_code: str,
             competition_provider_id: str, options: SeasonSyncOptions = SeasonSyncOptions(),
@@ -199,6 +230,17 @@ class SeasonSynchronizer:
                            or options.match_ids)
             if not rows:
                 summary.selection_status = "empty_bounded" if bounded else "empty_unbounded"
+                if bounded:
+                    summary.selection_reason_code = (
+                        SeasonSyncDecisionReason.BOUNDED_SELECTION_EMPTY.value
+                    )
+                    summary.selection_decision_class = "material"
+                    self._append_decision(
+                        summary, SeasonSyncDecisionReason.BOUNDED_SELECTION_EMPTY,
+                        target_type="selection", target_identifier=season,
+                        append_match=False,
+                        diagnostic="bounded season selection matched no canonical matches",
+                    )
             collector = self.collector_factory(self.client, raw_directory=raw_directory)
             for index, row in enumerate(rows):
                 safe = self._process_match(
@@ -215,10 +257,14 @@ class SeasonSynchronizer:
                 summary.missing_requested_match_ids = [
                     match_id for match_id in options.match_ids if match_id not in found
                 ]
-                summary.matches.extend(
-                    MatchSyncResult(match_id, None, None, "missing_requested_match")
-                    for match_id in summary.missing_requested_match_ids
-                )
+                for match_id in summary.missing_requested_match_ids:
+                    self._append_decision(
+                        summary, SeasonSyncDecisionReason.REQUESTED_MATCH_NOT_FOUND,
+                        target_type="requested_match", target_identifier=match_id,
+                        requested_match_id=match_id,
+                        outcome="missing_requested_match",
+                        diagnostic="explicitly requested match was not found",
+                    )
                 requested_outcomes = {
                     match.match_id: match.outcome for match in summary.matches
                     if match.match_id in options.match_ids
@@ -316,13 +362,23 @@ class SeasonSynchronizer:
             else:
                 outcome = "unknown_lifecycle"
                 summary.unresolved_lifecycle += 1
-            summary.matches.append(MatchSyncResult(match_id, provider_id, round_number,
-                                                    outcome, lifecycle))
+            self._append_decision(
+                summary, (SeasonSyncDecisionReason.UNRESOLVED_LIFECYCLE
+                          if outcome == "unknown_lifecycle"
+                          else SeasonSyncDecisionReason(outcome)), match_id=match_id,
+                provider_id=provider_id, round_number=round_number, lifecycle=lifecycle,
+                explicit=match_id in options.match_ids,
+                outcome=outcome,
+                diagnostic=f"match lifecycle classified as {outcome}",
+            )
             return True
         if not provider_id:
             summary.skipped_missing_provider_identity += 1
-            summary.matches.append(MatchSyncResult(match_id, None, round_number,
-                                                    "missing_provider_identity", lifecycle))
+            self._append_decision(
+                summary, SeasonSyncDecisionReason.MISSING_PROVIDER_IDENTITY,
+                match_id=match_id, round_number=round_number, lifecycle=lifecycle,
+                diagnostic="concluded match has no provider identity",
+            )
             return True
         summary.eligible_matches += 1
         concluded_rows = self.conn.execute(
@@ -340,9 +396,13 @@ class SeasonSynchronizer:
         if complete and not options.refresh_complete:
             summary.already_complete_unchanged += 1
             summary.statistic_rows_unchanged += concluded_rows
-            summary.matches.append(MatchSyncResult(match_id, provider_id, round_number,
-                                                    "already_complete", lifecycle,
-                                                    rows_unchanged=concluded_rows))
+            self._append_decision(
+                summary, SeasonSyncDecisionReason.ALREADY_COMPLETE,
+                match_id=match_id, provider_id=provider_id,
+                round_number=round_number, lifecycle=lifecycle,
+                rows_unchanged=concluded_rows,
+                diagnostic="authoritative statistics are already complete",
+            )
             return True
 
         audit_id = self.start_audit(
@@ -443,6 +503,61 @@ class SeasonSynchronizer:
                 processing_continued=safe and has_later,
             ))
             return safe
+
+    def _append_decision(self, summary: SeasonSyncResult,
+                         reason: SeasonSyncDecisionReason, *,
+                         match_id: int | None = None,
+                         provider_id: str | None = None,
+                         round_number: int | None = None,
+                         lifecycle: str | None = None,
+                         target_type: str = "match",
+                         target_identifier: object | None = None,
+                         requested_match_id: int | None = None,
+                         explicit: bool = False,
+                         rows_unchanged: int = 0,
+                         outcome: str | None = None,
+                         append_match: bool = True,
+                         diagnostic: str = "") -> None:
+        """Keep decision classification separate from its compact audit write."""
+        decision_class = (
+            "safe" if reason in SAFE_DECISION_REASONS and not explicit else "material"
+        )
+        target = target_identifier if target_identifier is not None else match_id
+        audit_id = None
+        audit_outcome = "completed"
+        audit_error_class = audit_error_summary = None
+        try:
+            audit_id = self.decision_audit(
+                "afl_season_sync_decision", target_type=target_type,
+                target_identifier=target, reason_code=reason.value,
+                decision_class=decision_class,
+                correlation_id=summary.correlation_id,
+                canonical_match_id=match_id, provider_match_id=provider_id,
+                round_identifier=round_number, diagnostic_summary=diagnostic,
+                trigger_source=TRIGGER_CLI, conn=self.conn,
+            )
+        except Exception as exc:
+            usable = self._connection_usable_after_audit_failure()
+            audit_outcome = "failed"
+            audit_error_class = exc.__class__.__name__
+            audit_error_summary = sanitize_error_summary(exc)
+            summary.audit_failures += 1
+            if not usable:
+                summary.processing_stopped_for_safety = True
+        if not append_match:
+            return
+        summary.matches.append(MatchSyncResult(
+            match_id if match_id is not None else (requested_match_id or 0),
+            provider_id, round_number, outcome or reason.value, lifecycle,
+            rows_unchanged=rows_unchanged, audit_id=audit_id,
+            rows_written=0, collection_outcome="not_attempted",
+            persistence_outcome="not_attempted", audit_outcome=audit_outcome,
+            audit_error_class=audit_error_class,
+            audit_error_summary=audit_error_summary,
+            correlation_id=summary.correlation_id, reason_code=reason.value,
+            decision_class=decision_class, canonical_match_id=match_id,
+            requested_match_id=requested_match_id,
+        ))
 
     def _connection_usable_after_audit_failure(self) -> bool:
         """Clear failed audit work and conservatively verify connection usability."""
