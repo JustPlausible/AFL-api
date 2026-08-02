@@ -79,7 +79,12 @@ def test_json_operation_uses_only_selected_handler_imports(monkeypatch, tmp_path
 
     cli_runtime.handle_collect_afl_data(args)
 
-    assert json.loads(capsys.readouterr().out) == summary
+    output = json.loads(capsys.readouterr().out)
+    assert output["operation"] == "collect_afl_data"
+    assert output["result_status"] == "success"
+    assert output["mode"] == "database_free"
+    assert output["database_opened"] is False
+    assert output["persistence_target"] == "none"
     assert not ({name for name in RUNTIME_MODULES if name.startswith("scraper.")} & set(sys.modules))
     fake_afl_json.CollectionOrchestrator.assert_called_once_with(client)
 
