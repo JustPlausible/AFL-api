@@ -20,8 +20,9 @@ authoritative declaration lives in [`version.py`](../version.py); see the
 
 The interface is flag-based rather than subcommand-based. Consequently,
 `python cli.py --collect-afl-metadata --help` displays the same complete help;
-there is no command-specific help screen. Only the first operation flag is
-dispatched, so invoke one collection or database operation at a time.
+there is no command-specific help screen. Only one top-level operation flag may
+be selected per invocation; conflicting operations are rejected before runtime
+database, browser, or network components are loaded.
 
 Network collectors need outbound AFL access. CFS commands additionally require
 the configured CFS/WMC credentials. Persistent operations use `DB_PATH` (by
