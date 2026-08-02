@@ -98,8 +98,7 @@ def handle_collect_afl_data(args):
         fallback_allowed=False, fallback_occurred=False,
         season_id=args.afl_season,
     )
-    details = {key: value for key, value in summary.items() if key != "status"}
-    print(_diagnostic_output(diagnostic, details=details))
+    print(_diagnostic_output(diagnostic, details=summary))
     if summary["status"] == "failed":
         raise SystemExit(1)
 
@@ -149,9 +148,7 @@ def handle_scrape_injuries(args):
         result_status=outcome.status, fallback_allowed=False, fallback_occurred=False,
         diagnostic_count=len((outcome.details or {}).get("diagnostics", ())),
     )
-    injury_details = {key: value for key, value in (outcome.details or {}).items()
-                      if key != "status"}
-    print(_diagnostic_output(diagnostic, details=injury_details,
+    print(_diagnostic_output(diagnostic, details=outcome.details,
                              pretty=args.print_json))
 
 
@@ -402,7 +399,7 @@ def handle_collect_afl_metadata(args):
     if args.print_json:
         print(_diagnostic_output(diagnostic, details=output, pretty=True))
     else:
-        print(_diagnostic_output(diagnostic, details={"competition_name": result.competition["name"],
+        print(_diagnostic_output(diagnostic, details={"competition": result.competition["name"],
                           "season": result.season["name"], "rounds": len(result.rounds),
                           "teams": len(result.teams), "matches": len(result.matches)}))
 

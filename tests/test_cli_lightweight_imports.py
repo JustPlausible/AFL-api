@@ -82,6 +82,7 @@ def test_json_operation_uses_only_selected_handler_imports(monkeypatch, tmp_path
     output = json.loads(capsys.readouterr().out)
     assert output["operation"] == "collect_afl_data"
     assert output["result_status"] == "success"
+    assert output["status"] == "successful"
     assert output["mode"] == "database_free"
     assert output["database_opened"] is False
     assert output["persistence_target"] == "none"
