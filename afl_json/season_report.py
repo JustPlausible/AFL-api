@@ -28,7 +28,14 @@ class ReportStatus(str, Enum):
 INCOMPLETE_CODES = frozenset({
     "season.missing", "season.no_teams", "season.no_rounds", "season.no_matches",
     "match.final_without_authoritative_stats", "match.missing_provider_id",
+    "match.partial_authoritative_stats", "stats.suspicious_player_count",
+    "stats.player_missing_season_membership",
 })
+
+# A diagnostic floor, not an assumed AFL team-sheet size.  Any two-sided
+# concluded snapshot below this is plainly too small to represent a full match,
+# while leaving substantial room for competition and interchange-rule variation.
+MIN_CONCLUDED_AUTHORITATIVE_PLAYER_ROWS = 20
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,6 +174,8 @@ class SeasonCompletenessReporter:
         return {
             "teams": 0, "rounds": 0, "matches": 0, "matches_by_status": {},
             "concluded_matches": 0, "concluded_matches_with_authoritative_stats": 0,
+            "concluded_matches_with_partial_stats": 0,
+            "concluded_matches_with_suspicious_player_count": 0,
             "authoritative_stat_rows": 0, "legacy_stat_rows": 0,
             "season_memberships": 0, "memberships_without_team": 0,
         }
@@ -197,12 +206,19 @@ class SeasonCompletenessReporter:
         placeholders = ",".join("?" for _ in provider_ids)
         stats = [] if not provider_ids else self.conn.execute(
             "SELECT match_provider_id,COUNT(*) rows,COUNT(DISTINCT side) sides,"
+            "SUM(snapshot_authority=2) authoritative_rows,"
+            "COUNT(DISTINCT CASE WHEN snapshot_authority=2 THEN side END) authoritative_sides,"
+            "SUM(snapshot_authority=2 AND side='home') authoritative_home_rows,"
+            "SUM(snapshot_authority=2 AND side='away') authoritative_away_rows,"
             "MIN(snapshot_authority) min_authority,MAX(snapshot_authority) max_authority,"
             "SUM(canonical_player_id IS NULL) unresolved FROM cfs_player_stats "
             f"WHERE match_provider_id IN ({placeholders}) GROUP BY match_provider_id", provider_ids
         ).fetchall()
         stats_by_match = {row["match_provider_id"]: row for row in stats}
-        authoritative = {key: row for key, row in stats_by_match.items() if row["max_authority"] == 2}
+        authoritative = {key: row for key, row in stats_by_match.items()
+                         if row["authoritative_rows"] > 0}
+        partial_matches: set[int] = set()
+        suspicious_matches: set[int] = set()
         memberships = self.conn.execute(
             "SELECT COUNT(*) total,SUM(team_id IS NULL) missing FROM competition_season_players "
             "WHERE competition_season_id=?", (season_id,)
@@ -217,7 +233,8 @@ class SeasonCompletenessReporter:
             "concluded_matches": len(concluded),
             "concluded_matches_with_authoritative_stats": sum(
                 row["match_provider_id"] in authoritative for row in concluded),
-            "authoritative_stat_rows": sum(row["rows"] for row in authoritative.values()),
+            "authoritative_stat_rows": sum(row["authoritative_rows"]
+                                           for row in authoritative.values()),
             "legacy_stat_rows": legacy, "season_memberships": memberships["total"],
             "memberships_without_team": memberships["missing"] or 0,
         })
@@ -231,6 +248,18 @@ class SeasonCompletenessReporter:
         if not match_rows:
             self._add(result, "season.no_matches", Severity.WARNING, "foundations",
                       "Season has no matches.", expected=">0", observed=0, evidence_source="matches")
+        duplicates = self.conn.execute(
+            "SELECT match_provider_id,COUNT(*) occurrences,GROUP_CONCAT(match_id) match_ids "
+            "FROM matches WHERE season_id=? AND match_provider_id IS NOT NULL "
+            "GROUP BY match_provider_id HAVING COUNT(*)>1", (season_id,),
+        ).fetchall()
+        for duplicate in duplicates:
+            self._add(result, "match.duplicate_provider_id", Severity.ERROR, "matches",
+                      "Champion Data match provider identity is assigned to multiple matches.",
+                      expected=1, observed={"provider_id": duplicate["match_provider_id"],
+                                            "occurrences": duplicate["occurrences"],
+                                            "match_ids": duplicate["match_ids"]},
+                      evidence_source="matches(match_provider_id)")
         for row in match_rows:
             lifecycle = normalise_match_status(row["status"])
             if row["round_season"] != season_id:
@@ -252,25 +281,80 @@ class SeasonCompletenessReporter:
                           "Scheduled time or venue is not published.", match_id=row["match_id"],
                           evidence_source="matches(start_time_utc,venue)")
             stat = stats_by_match.get(row["match_provider_id"])
-            if lifecycle == "CONCLUDED" and (not stat or stat["max_authority"] != 2):
+            if lifecycle == "CONCLUDED" and (not stat or stat["authoritative_rows"] == 0):
                 self._add(result, "match.final_without_authoritative_stats", Severity.WARNING, "matches",
                           "Concluded match has no authoritative CFS snapshot.", match_id=row["match_id"],
-                          expected="snapshot_authority=2", observed=stat["max_authority"] if stat else 0,
+                          expected="snapshot_authority=2", observed=0,
                           evidence_source="matches LEFT JOIN cfs_player_stats",
                           remediation=(f"python cli.py --collect-match-player-stats {row['match_provider_id']} "
                                        f"--afl-match-id {row['match_id']}" if row["match_provider_id"] else
                                        f"python cli.py --sync-afl-season {result.metadata.requested_season_year}"))
-            elif stat and (stat["min_authority"] != stat["max_authority"] or stat["sides"] < 2):
+            elif lifecycle == "CONCLUDED" and stat and (
+                    stat["min_authority"] != stat["max_authority"]
+                    or stat["authoritative_sides"] < 2):
+                partial_matches.add(row["match_id"])
                 self._add(result, "match.partial_authoritative_stats", Severity.WARNING, "statistics",
                           "Statistic snapshot is mixed-authority or one-sided.", match_id=row["match_id"],
-                          expected="two sides at one authority", observed={"rows": stat["rows"], "sides": stat["sides"]},
+                          expected="two sides at concluded authority", observed={
+                              "total": stat["authoritative_rows"],
+                              "home": stat["authoritative_home_rows"],
+                              "away": stat["authoritative_away_rows"],
+                          },
+                          evidence_source="cfs_player_stats")
+            elif (lifecycle == "CONCLUDED" and stat
+                  and stat["authoritative_rows"] < MIN_CONCLUDED_AUTHORITATIVE_PLAYER_ROWS):
+                suspicious_matches.add(row["match_id"])
+                self._add(result, "stats.suspicious_player_count", Severity.WARNING, "statistics",
+                          "Two-sided concluded snapshot has implausibly few player rows.",
+                          match_id=row["match_id"],
+                          expected={"minimum_total": MIN_CONCLUDED_AUTHORITATIVE_PLAYER_ROWS},
+                          observed={"total": stat["authoritative_rows"],
+                                    "home": stat["authoritative_home_rows"],
+                                    "away": stat["authoritative_away_rows"]},
                           evidence_source="cfs_player_stats")
             if lifecycle != "CONCLUDED" and stat and stat["max_authority"] == 2:
                 self._add(result, "stats.authority_lifecycle_conflict", Severity.ERROR, "statistics",
                           "A non-concluded match has a concluded-authority snapshot.", match_id=row["match_id"],
                           expected="snapshot_authority=1", observed=2, evidence_source="matches JOIN cfs_player_stats")
+        result.aggregates["concluded_matches_with_partial_stats"] = len(partial_matches)
+        result.aggregates["concluded_matches_with_suspicious_player_count"] = len(suspicious_matches)
+        self._team_context_checks(result, season_id)
         self._identity_checks(result, season_id, provider_ids)
         self._audit_checks(result, concluded, stats_by_match)
+
+    def _team_context_checks(self, result: SeasonReport, season_id: int) -> None:
+        contexts = self.conn.execute(
+            "SELECT m.match_id,s.side,s.team_provider_id,"
+            "CASE s.side WHEN 'home' THEN ht.provider_id ELSE at.provider_id END expected_provider_id,"
+            "COUNT(*) rows FROM cfs_player_stats s "
+            "JOIN matches m ON m.match_provider_id=s.match_provider_id "
+            "LEFT JOIN afl_teams ht ON ht.afl_id=m.home_team_id "
+            "LEFT JOIN afl_teams at ON at.afl_id=m.away_team_id "
+            "WHERE m.season_id=? AND s.snapshot_authority=2 "
+            "GROUP BY m.match_id,s.side,s.team_provider_id,expected_provider_id "
+            "ORDER BY m.match_id,s.side,s.team_provider_id", (season_id,),
+        ).fetchall()
+        for context in contexts:
+            if (context["team_provider_id"] is None
+                    or context["expected_provider_id"] is None):
+                self._add(result, "stats.team_provider_unavailable", Severity.INFO, "statistics",
+                          "Statistic team context cannot be compared without both provider identities.",
+                          match_id=context["match_id"],
+                          expected=context["expected_provider_id"],
+                          observed={"side": context["side"],
+                                    "team_provider_id": context["team_provider_id"],
+                                    "rows": context["rows"]},
+                          evidence_source="cfs_player_stats JOIN matches JOIN afl_teams")
+            elif context["team_provider_id"] != context["expected_provider_id"]:
+                self._add(result, "stats.team_participant_mismatch", Severity.ERROR, "statistics",
+                          "Statistic team provider identity contradicts the stored match participant.",
+                          match_id=context["match_id"], expected={
+                              "side": context["side"],
+                              "team_provider_id": context["expected_provider_id"],
+                          }, observed={"side": context["side"],
+                                       "team_provider_id": context["team_provider_id"],
+                                       "rows": context["rows"]},
+                          evidence_source="cfs_player_stats JOIN matches JOIN afl_teams")
 
     def _identity_checks(self, result: SeasonReport, season_id: int,
                          provider_ids: list[str]) -> None:
@@ -333,6 +417,23 @@ class SeasonCompletenessReporter:
                       "A season player's statistic row is attached outside the selected season.",
                       player_id=row["player_id"], observed=row["match_provider_id"],
                       evidence_source="competition_season_players JOIN cfs_player_stats LEFT JOIN matches")
+        missing_memberships = self.conn.execute(
+            "SELECT DISTINCT s.canonical_player_id,m.match_id,s.match_provider_id "
+            "FROM cfs_player_stats s JOIN matches m ON m.match_provider_id=s.match_provider_id "
+            "LEFT JOIN competition_season_players csp "
+            "ON csp.player_id=s.canonical_player_id AND csp.competition_season_id=? "
+            "WHERE m.season_id=? AND s.snapshot_authority=2 "
+            "AND s.canonical_player_id IS NOT NULL AND csp.id IS NULL "
+            "ORDER BY m.match_id,s.canonical_player_id", (season_id, season_id),
+        ).fetchall()
+        for row in missing_memberships:
+            self._add(result, "stats.player_missing_season_membership", Severity.WARNING,
+                      "players",
+                      "Authoritative statistic player has no membership in the selected season.",
+                      match_id=row["match_id"], player_id=row["canonical_player_id"],
+                      observed=row["match_provider_id"],
+                      evidence_source=("cfs_player_stats JOIN matches LEFT JOIN "
+                                       "competition_season_players"))
 
     def _audit_checks(self, result: SeasonReport, concluded: list[sqlite3.Row],
                       stats_by_match: dict[str, sqlite3.Row]) -> None:

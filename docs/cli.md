@@ -505,7 +505,7 @@ finding list. Finding automation must use `code`, not `message`. For example:
 | Overall status | Decision | Exit |
 |---|---|---:|
 | `invalid` | At least one `error`. | 1 |
-| `incomplete` | No error, but a warning with an explicitly required-data code (missing season foundations/provider identity or concluded authoritative statistics). | 1 |
+| `incomplete` | No error, but a warning with an explicitly required-data code (missing season foundations/provider identity, concluded authoritative statistics, a complete two-sided snapshot, a conservative player-count floor, or authoritative-player season membership). | 1 |
 | `usable_with_warnings` | Other warnings remain, but no unsafe or explicitly incomplete condition exists. | 0 |
 | `complete` | No errors or warnings; informational findings are allowed. | 0 |
 
@@ -551,15 +551,37 @@ Only `cfs_player_stats` is authoritative. Authority `1` is live/partial and `2`
 is concluded; the writer protects higher authority and only permits equal-
 authority observations with a non-older collection timestamp. Legacy
 `player_stats` is counted only as compatibility evidence and never closes a CFS
-gap. The report avoids a universal low-player threshold: without a persisted
-competition-specific expectation, one-sided observations are a conservative
-warning and row totals remain available as evidence.
+gap. Zero authoritative rows use `match.final_without_authoritative_stats`;
+one-sided or mixed-authority observations use
+`match.partial_authoritative_stats`; and a two-sided concluded snapshot below
+the named `MIN_CONCLUDED_AUTHORITATIVE_PLAYER_ROWS = 20` floor uses
+`stats.suspicious_player_count`. The floor is deliberately much lower than an
+expected AFL match-day total: it identifies obviously incomplete snapshots
+without assuming an exact team-sheet or interchange rule. All three conditions
+make the report `incomplete` and exit `1`.
 
 Canonical player crosswalks use `canonical_players`, `player_provider_ids`, and
 `cfs_player_stats.canonical_player_id`; the report never guesses or merges an
 identity. A null `competition_season_players.team_id` is legitimate when the CFS
 season-player source did not provide or could not resolve a team and is therefore
 informational. A contradictory non-null relationship is unsafe.
+
+For authority-2 rows, `side=home` must carry the stored home participant's team
+provider ID and `side=away` must carry the away participant's provider ID.
+`stats.team_participant_mismatch` is an unsafe contradiction (`invalid`);
+`stats.team_provider_unavailable` is informational when either identity is null,
+because the report does not infer a missing identity. A known canonical player
+in requested-season authoritative statistics without a matching
+`competition_season_players` row produces
+`stats.player_missing_season_membership` and makes the report `incomplete`. This
+is the inverse of `stats.match_outside_season`, which starts with a season member
+and finds that player's statistic rows outside the requested match set.
+
+`match.duplicate_provider_id` is an `error` and makes the report `invalid`.
+Healthy migrated databases normally prevent it through the partial unique
+SQLite index `idx_matches_provider_id` for non-null values; the report retains a
+defensive check for damaged, legacy, or manually altered schemas. Multiple null
+provider IDs remain missing/unpublished identity, not duplicates.
 
 Audit correlation is deliberately limited to `scrape_runs` records whose target
 is the exact Champion Data match ID and whose scrape type is

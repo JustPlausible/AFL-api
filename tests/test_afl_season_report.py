@@ -17,7 +17,7 @@ NOW = datetime(2026, 8, 2, 12, tzinfo=timezone.utc)
 
 
 def database(tmp_path, *, status="CONCLUDED", stats=True, one_sided=False,
-             provider_id="CD_M1", membership_team=10):
+             provider_id="CD_M1", membership_team=10, player_count=20):
     tmp_path.mkdir(parents=True, exist_ok=True)
     path = tmp_path / "report.db"
     migrate_database(path)
@@ -32,7 +32,9 @@ def database(tmp_path, *, status="CONCLUDED", stats=True, one_sided=False,
         conn.execute("INSERT INTO afl_team_seasons VALUES(85,?,?,?)", (team, now, now))
     conn.execute("INSERT INTO rounds(round_id,round_label,season_id,competition_id,provider_id,round_number) VALUES(101,'Round 1',85,1,'CD_R1',1)")
     conn.execute("INSERT INTO matches(match_id,match_provider_id,round_id,home_team,away_team,venue,status,start_time_utc,season_id,home_team_id,away_team_id) VALUES(8001,?,101,'A','B','MCG',?,'2026-03-01T00:00:00+00:00',85,10,11)", (provider_id, status))
-    for player, cd, afl, team in ((1, "CD_I1", "1", membership_team), (2, "CD_I2", "2", 11)):
+    for player in range(1, player_count + 1):
+        cd, afl = f"CD_I{player}", str(player)
+        team = membership_team if player == 1 else (10 if player <= player_count // 2 else 11)
         conn.execute("INSERT INTO canonical_players VALUES(?,?,?,?,?,?)",
                      (player, f"Player {player}", "Player", str(player), now, now))
         for provider, value in (("champion_data", cd), ("afl", afl)):
@@ -41,8 +43,11 @@ def database(tmp_path, *, status="CONCLUDED", stats=True, one_sided=False,
         conn.execute("INSERT INTO competition_season_players(player_id,competition_season_id,team_id,source_provider,source_json,created_at,updated_at) VALUES(?,85,?,'champion_data','{}',?,?)",
                      (player, team, now, now))
     if stats:
-        sides = ((1, "CD_I1", "CD_T1", "home"),) if one_sided else (
-            (1, "CD_I1", "CD_T1", "home"), (2, "CD_I2", "CD_T2", "away"))
+        sides = tuple(
+            (player, f"CD_I{player}", "CD_T1" if one_sided or player <= player_count // 2
+             else "CD_T2", "home" if one_sided or player <= player_count // 2 else "away")
+            for player in range(1, player_count + 1)
+        )
         for player, cd, team, side in sides:
             conn.execute("INSERT INTO cfs_player_stats(match_provider_id,champion_data_player_id,afl_match_id,team_provider_id,side,collected_at,source_endpoint,resolved_match_status,snapshot_authority,extra_stats_json,raw_player_json,canonical_player_id) VALUES(?,?,'8001',?,?,?,'match_player_stats','CONCLUDED',2,'{}','{}',?)",
                          (provider_id, cd, team, side, now, player))
@@ -65,7 +70,7 @@ def test_complete_finished_season_is_deterministic_and_legacy_is_not_authority(t
     assert first.to_dict() == second.to_dict()
     assert first.status is ReportStatus.COMPLETE
     assert first.metadata.generated_at == NOW.isoformat()
-    assert first.aggregates["authoritative_stat_rows"] == 2
+    assert first.aggregates["authoritative_stat_rows"] == 20
     assert exit_code(first.status) == 0
     conn.execute("DELETE FROM cfs_player_stats")
     conn.execute("INSERT INTO player_stats(match_id,player_name,team_code,status,scraped_at) VALUES(8001,'Legacy','A','COMPLETED',?)", (NOW.isoformat(),))
@@ -98,6 +103,72 @@ def test_partial_unresolved_conflict_and_outside_season_findings(tmp_path):
             "player.provider_mapping_conflict", "stats.match_outside_season"} <= codes(value)
     assert value.status is ReportStatus.INVALID
     assert exit_code(value.status) == 1
+
+
+def test_two_sided_below_conservative_floor_is_incomplete(tmp_path):
+    _, conn = database(tmp_path, player_count=2)
+    value = report(conn)
+    finding = next(item for item in value.findings
+                   if item.code == "stats.suspicious_player_count")
+    assert finding.observed == {"total": 2, "home": 1, "away": 1}
+    assert finding.expected == {"minimum_total": 20}
+    assert value.aggregates["concluded_matches_with_suspicious_player_count"] == 1
+    assert value.status is ReportStatus.INCOMPLETE
+    assert exit_code(value.status) == 1
+
+
+def test_one_sided_authoritative_rows_are_incomplete(tmp_path):
+    _, conn = database(tmp_path, one_sided=True)
+    value = report(conn)
+    assert "match.partial_authoritative_stats" in codes(value)
+    assert "stats.suspicious_player_count" not in codes(value)
+    assert value.aggregates["concluded_matches_with_partial_stats"] == 1
+    assert value.status is ReportStatus.INCOMPLETE
+
+
+def test_team_provider_context_mismatch_and_unavailable_are_distinct(tmp_path):
+    _, conn = database(tmp_path)
+    conn.execute("UPDATE cfs_player_stats SET team_provider_id=NULL "
+                 "WHERE champion_data_player_id='CD_I2'")
+    conn.commit()
+    unavailable = report(conn)
+    assert "stats.team_provider_unavailable" in codes(unavailable)
+    assert "stats.team_participant_mismatch" not in codes(unavailable)
+    assert unavailable.status is ReportStatus.COMPLETE
+    conn.execute("UPDATE cfs_player_stats SET team_provider_id='CD_T2' "
+                 "WHERE champion_data_player_id='CD_I1'")
+    conn.commit()
+    value = report(conn)
+    assert "stats.team_participant_mismatch" in codes(value)
+    assert "stats.team_provider_unavailable" in codes(value)
+    assert value.status is ReportStatus.INVALID
+
+
+def test_authoritative_player_without_season_membership_is_incomplete(tmp_path):
+    _, conn = database(tmp_path)
+    conn.execute("DELETE FROM competition_season_players WHERE player_id=1")
+    conn.commit()
+    value = report(conn)
+    finding = next(item for item in value.findings
+                   if item.code == "stats.player_missing_season_membership")
+    assert (finding.player_id, finding.match_id) == (1, 8001)
+    assert finding.severity.value == "warning"
+    assert value.status is ReportStatus.INCOMPLETE
+
+
+def test_duplicate_match_provider_identity_is_defensively_invalid(tmp_path):
+    _, conn = database(tmp_path)
+    conn.execute("DROP INDEX idx_matches_provider_id")
+    conn.execute("INSERT INTO matches(match_id,match_provider_id,round_id,home_team,away_team,"
+                 "venue,status,start_time_utc,season_id,home_team_id,away_team_id) "
+                 "VALUES(8002,'CD_M1',101,'A','B','MCG','SCHEDULED',"
+                 "'2026-03-02T00:00:00+00:00',85,10,11)")
+    conn.commit()
+    value = report(conn)
+    finding = next(item for item in value.findings if item.code == "match.duplicate_provider_id")
+    assert finding.severity.value == "error"
+    assert finding.observed["occurrences"] == 2
+    assert value.status is ReportStatus.INVALID
 
 
 def test_missing_provider_and_failed_audit_statuses(tmp_path):
