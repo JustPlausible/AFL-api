@@ -27,6 +27,42 @@ def _diagnostic_output(diagnostic, *, details=None, pretty=False):
                       indent=2 if pretty else None)
 
 
+def _season_sync_summary(result):
+    lines = [
+        f"AFL season sync {result.requested_season}: {result.outcome}",
+        ("matches: "
+         f"selected={result.total_matches_discovered} eligible={result.eligible_matches} "
+         f"collected={result.collected_successfully} "
+         f"already_complete={result.already_complete_unchanged} "
+         f"selection={result.selection_status}"),
+        ("skipped: "
+         f"scheduled={result.skipped_scheduled} "
+         f"live_or_postgame={result.skipped_live_or_postgame} "
+         f"future_placeholder={result.skipped_future_placeholder} "
+         f"missing_provider={result.skipped_missing_provider_identity}"),
+        ("material: "
+         f"unavailable={result.unavailable_unpublished} empty={result.empty} "
+         f"partial={result.partial} unknown={result.unknown} "
+         f"unresolved_lifecycle={result.unresolved_lifecycle} failed={result.failed} "
+         f"explicit_unsatisfied={result.explicit_matches_unsatisfied}"),
+        ("statistic rows: "
+         f"inserted={result.statistic_rows_inserted} "
+         f"updated={result.statistic_rows_updated} "
+         f"unchanged={result.statistic_rows_unchanged}"),
+        f"audit: run={result.audit_id} correlation={result.correlation_id}",
+    ]
+    actionable = [
+        f"{match.match_id}:{match.outcome}" for match in result.matches
+        if match.outcome not in {
+            "collected", "already_complete", "scheduled", "live_or_postgame",
+            "future_placeholder",
+        }
+    ]
+    if actionable:
+        lines.append("actionable matches: " + ", ".join(actionable))
+    return "\n".join(lines)
+
+
 def import_clubs_to_db():
     """Load clubs from the canonical seed and import using a shared connection."""
     from db.club_seed import upsert_club_seed
@@ -418,7 +454,10 @@ def handle_sync_afl_season(args):
     envelope_fields = diagnostic.to_dict().keys()
     details = {key: value for key, value in result.to_dict().items()
                if key not in envelope_fields}
-    print(_diagnostic_output(diagnostic, details=details, pretty=args.print_json))
+    if args.print_json:
+        print(_diagnostic_output(diagnostic, details=details, pretty=True))
+    else:
+        print(_season_sync_summary(result))
     if result.outcome != "success":
         raise SystemExit(1)
 

@@ -6,13 +6,15 @@ from types import SimpleNamespace
 
 from afl_json import (CollectionResult, PlayerPersistenceSummary,
                       PlayerStatsStatus, normalise_player_stats, persist_afl_metadata)
+from afl_json.client import AflJsonResourceUnavailable
 from afl_json.season_sync import (SeasonBootstrapResult, SeasonSynchronizer,
                                   SeasonSyncOptions)
 from db.migration_runner import migrate_database
 from db.scrape_runs import complete_scrape_run, start_scrape_run
 
 
-def metadata(statuses=("CONCLUDED", "SCHEDULED", "CONCLUDED"), *, missing_provider=True):
+def metadata(statuses=("CONCLUDED", "SCHEDULED", "CONCLUDED"), *, missing_provider=True,
+             start_times=None):
     matches = []
     for index, status in enumerate(statuses, 1):
         matches.append({
@@ -20,7 +22,9 @@ def metadata(statuses=("CONCLUDED", "SCHEDULED", "CONCLUDED"), *, missing_provid
             "provider_id": None if missing_provider and index == 3 else f"CD_M{index}",
             "status": status, "round": {"id": 100 + index},
             "home": {}, "away": {}, "home_score": None, "away_score": None,
-            "venue": None, "utc_start_time": None, "metadata": None, "source": {},
+            "venue": None,
+            "utc_start_time": start_times[index - 1] if start_times else None,
+            "metadata": None, "source": {},
         })
     return CollectionResult(
         {"afl_id": 1, "provider_id": "CD_C1", "code": "AFL", "name": "AFL",
@@ -31,7 +35,7 @@ def metadata(statuses=("CONCLUDED", "SCHEDULED", "CONCLUDED"), *, missing_provid
         [{"afl_id": 100 + i, "provider_id": f"CD_R{i}", "name": f"Round {i}",
           "round_number": i, "abbreviation": f"R{i}", "start_time": None,
           "end_time": None, "byes": [], "metadata": None, "source": {}}
-         for i in range(1, 4)], [], matches,
+         for i in range(1, len(statuses) + 1)], [], matches,
     )
 
 
@@ -61,11 +65,11 @@ class Collector:
 
 
 def setup(tmp_path, statuses=("CONCLUDED", "SCHEDULED", "CONCLUDED"), *,
-          missing_provider=True, client=None):
+          missing_provider=True, client=None, start_times=None):
     path = tmp_path / "sync.db"
     migrate_database(path)
     conn = sqlite3.connect(path)
-    collected = metadata(statuses, missing_provider=missing_provider)
+    collected = metadata(statuses, missing_provider=missing_provider, start_times=start_times)
 
     def bootstrap(_client, db, **_kwargs):
         summary = persist_afl_metadata(db, collected)
@@ -201,3 +205,135 @@ def test_stored_postgame_advances_before_eligibility_classification(tmp_path):
     assert result.collected_successfully == 1
     assert result.skipped_not_concluded == result.partial == 0
     assert conn.execute("SELECT status FROM matches WHERE match_id=8001").fetchone()[0] == "CONCLUDED"
+
+
+class NoDetailClient:
+    def get(self, *_args, **_kwargs):
+        raise AflJsonResourceUnavailable("not published", endpoint="match_detail")
+
+
+def test_expected_season_lifecycle_skips_remain_success(tmp_path):
+    future = "2099-01-01T00:00:00+00:00"
+    conn, sync = setup(
+        tmp_path, ("SCHEDULED", "LIVE", "POSTGAME", "MYSTERY"), missing_provider=False,
+        client=NoDetailClient(), start_times=(future, future, future, future),
+    )
+
+    result = sync.run(season=2026, competition_code="AFL", competition_provider_id="CD_C1")
+
+    assert result.outcome == "success"
+    assert (result.skipped_scheduled, result.skipped_live_or_postgame,
+            result.skipped_future_placeholder) == (1, 2, 1)
+    assert result.partial == result.unknown == result.unresolved_lifecycle == 0
+
+
+def test_past_unknown_lifecycle_is_materially_partial(tmp_path):
+    past = "2020-01-01T00:00:00+00:00"
+    conn, sync = setup(tmp_path, ("MYSTERY",), missing_provider=False,
+                       client=NoDetailClient(), start_times=(past,))
+
+    result = sync.run(season=2026, competition_code="AFL", competition_provider_id="CD_C1")
+
+    assert result.outcome == "partial"
+    assert result.unresolved_lifecycle == 1
+    assert result.matches[0].outcome == "unknown_lifecycle"
+
+
+def test_each_material_cfs_outcome_is_partial(tmp_path):
+    statuses = (
+        PlayerStatsStatus.UNAVAILABLE, PlayerStatsStatus.EMPTY,
+        PlayerStatsStatus.LIVE_PARTIAL, PlayerStatsStatus.UNKNOWN,
+    )
+    for index, status in enumerate(statuses):
+        case_path = tmp_path / str(index)
+        case_path.mkdir()
+        conn, sync = setup(case_path, ("CONCLUDED",), missing_provider=False)
+        base = concluded()
+        Collector.results = {"CD_M1": replace(
+            base, status=status,
+            records=[] if status in {PlayerStatsStatus.UNAVAILABLE, PlayerStatsStatus.EMPTY} else base.records,
+        )}
+        result = sync.run(season=2026, competition_code="AFL",
+                          competition_provider_id="CD_C1")
+        assert result.outcome == "partial"
+        conn.close()
+
+
+def test_explicit_absent_and_unsatisfied_matches_are_partial(tmp_path):
+    conn, sync = setup(tmp_path, ("SCHEDULED",), missing_provider=False)
+
+    result = sync.run(
+        season=2026, competition_code="AFL", competition_provider_id="CD_C1",
+        options=SeasonSyncOptions(match_ids=(8001, 9999)),
+    )
+
+    assert result.outcome == "partial"
+    assert result.explicit_matches_requested == result.explicit_matches_unsatisfied == 2
+    assert result.missing_requested_match_ids == [9999]
+    assert {match.match_id for match in result.matches} == {8001, 9999}
+
+
+def test_explicit_lifecycle_and_identity_skips_are_unsatisfied(tmp_path):
+    cases = [
+        (("SCHEDULED",), False, 8001, None),
+        (("LIVE",), False, 8001, NoDetailClient()),
+        (("MYSTERY",), False, 8001, NoDetailClient()),
+        (("CONCLUDED", "CONCLUDED", "CONCLUDED"), True, 8003, None),
+    ]
+    for index, (statuses, missing_provider, match_id, client) in enumerate(cases):
+        case_path = tmp_path / str(index)
+        case_path.mkdir()
+        conn, sync = setup(case_path, statuses, missing_provider=missing_provider,
+                           client=client)
+        result = sync.run(
+            season=2026, competition_code="AFL", competition_provider_id="CD_C1",
+            options=SeasonSyncOptions(match_ids=(match_id,)),
+        )
+        assert result.outcome == "partial"
+        assert result.explicit_matches_unsatisfied == 1
+        assert result.matches[-1].match_id == match_id
+        conn.close()
+
+
+def test_explicit_collected_and_already_complete_matches_succeed(tmp_path):
+    conn, sync = setup(tmp_path, ("CONCLUDED",), missing_provider=False)
+    Collector.results = {"CD_M1": concluded()}
+    collected_result = sync.run(
+        season=2026, competition_code="AFL", competition_provider_id="CD_C1",
+        options=SeasonSyncOptions(match_ids=(8001,)),
+    )
+    complete_result = sync.run(
+        season=2026, competition_code="AFL", competition_provider_id="CD_C1",
+        options=SeasonSyncOptions(match_ids=(8001,)),
+    )
+
+    assert collected_result.outcome == complete_result.outcome == "success"
+    assert collected_result.explicit_matches_unsatisfied == 0
+    assert complete_result.already_complete_unchanged == 1
+
+
+def test_concluded_missing_provider_is_materially_partial(tmp_path):
+    conn, sync = setup(tmp_path, ("CONCLUDED", "CONCLUDED", "CONCLUDED"),
+                       missing_provider=True)
+
+    result = sync.run(season=2026, competition_code="AFL", competition_provider_id="CD_C1")
+
+    assert result.outcome == "partial"
+    assert result.skipped_missing_provider_identity == 1
+
+
+def test_empty_selection_contract_distinguishes_bounded_and_unbounded(tmp_path):
+    conn, sync = setup(tmp_path, (), missing_provider=False)
+    unbounded = sync.run(season=2026, competition_code="AFL", competition_provider_id="CD_C1")
+    bounded = sync.run(
+        season=2026, competition_code="AFL", competition_provider_id="CD_C1",
+        options=SeasonSyncOptions(round_number=99),
+    )
+    empty_range = sync.run(
+        season=2026, competition_code="AFL", competition_provider_id="CD_C1",
+        options=SeasonSyncOptions(round_from=98, round_to=99),
+    )
+
+    assert (unbounded.selection_status, unbounded.outcome) == ("empty_unbounded", "success")
+    assert (bounded.selection_status, bounded.outcome) == ("empty_bounded", "partial")
+    assert (empty_range.selection_status, empty_range.outcome) == ("empty_bounded", "partial")

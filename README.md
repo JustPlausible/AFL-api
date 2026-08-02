@@ -159,8 +159,30 @@ no rendered-HTML fallback or legacy `player_stats` dual write.
 
 The JSON result distinguishes skipped, unavailable/unpublished, empty, partial,
 unknown, failed, already-complete, and collected matches and includes correlated
-audit IDs. A complete run exits 0; a materially partial or failed run prints its
-structured result and exits 1. Deeper relationship completeness and
+audit IDs. Default output is a concise human-readable summary; `--print-json`
+emits the complete machine-readable result, including match-level details, to
+stdout even when the command subsequently exits non-zero.
+
+Exit status `0` means all currently actionable concluded matches were collected
+or already complete; scheduled, current live/postgame, and recognised future
+placeholders may be safely skipped. Exit status `1` means material actionable or
+explicitly requested work was unavailable, empty, partial, rejected, unknown,
+missing provider identity, absent, or failed. Exit status `2` is invalid CLI
+usage. A bounded round/range returning no matches exits `1`; an unbounded season
+with no published fixtures reports `empty_unbounded` and exits `0`.
+
+Round ranges are inclusive. Repeatable `--match-id` values are deduplicated in
+first-seen order. Combining match IDs with a round or range uses intersection
+semantics, so every requested ID must also satisfy the round bound. Round `0` is
+valid, negative rounds are invalid, and match IDs must be positive.
+
+Summary units are explicit: `records_received` and
+`total_matches_discovered` count selected matches; `eligible_matches` counts
+concluded matches with provider identity, including already-complete matches;
+`collected_successfully` counts matches actually recollected; and
+`already_complete_unchanged` counts matches skipped as complete. `rows_inserted`,
+`rows_updated`, `rows_unchanged`, and `rows_written` count CFS statistic rows,
+with `rows_written` equal to inserted plus updated rows. Deeper relationship completeness and
 reconciliation reporting remains the responsibility of Issue #107.
 
 The existing commands remain deliberately distinct:

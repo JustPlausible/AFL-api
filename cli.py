@@ -56,6 +56,20 @@ def cfs_match_provider_id(value: str) -> str:
                         example="CD_M20260142001")
 
 
+def non_negative_round(value: str) -> int:
+    number = int(value)
+    if number < 0:
+        raise argparse.ArgumentTypeError("round must be zero or greater")
+    return number
+
+
+def positive_match_id(value: str) -> int:
+    number = int(value)
+    if number <= 0:
+        raise argparse.ArgumentTypeError("match ID must be a positive integer")
+    return number
+
+
 def _add_operation_argument(container, destination, **kwargs):
     """Register an operation using its authoritative public flag name."""
     action = container.add_argument(
@@ -117,14 +131,15 @@ def create_parser() -> argparse.ArgumentParser:
     cfs_group.add_argument("--afl-match-id", type=int, metavar="AFL_MATCH_ID",
                            help="With --collect-match-player-stats: numeric AFL ID for canonical status resolution")
     sync_group = parser.add_argument_group("Whole-season persistent synchronisation")
-    sync_group.add_argument("--round", type=int, metavar="ROUND",
+    sync_group.add_argument("--round", type=non_negative_round, metavar="ROUND",
                             help="With --sync-afl-season: process one round")
-    sync_group.add_argument("--round-from", type=int, metavar="ROUND",
+    sync_group.add_argument("--round-from", type=non_negative_round, metavar="ROUND",
                             help="With --sync-afl-season: first round in an inclusive range")
-    sync_group.add_argument("--round-to", type=int, metavar="ROUND",
+    sync_group.add_argument("--round-to", type=non_negative_round, metavar="ROUND",
                             help="With --sync-afl-season: last round in an inclusive range")
-    sync_group.add_argument("--match-id", type=int, action="append", default=[], metavar="AFL_MATCH_ID",
-                            help="With --sync-afl-season: process a canonical AFL match ID (repeatable)")
+    sync_group.add_argument("--match-id", type=positive_match_id, action="append", default=[], metavar="AFL_MATCH_ID",
+                            help=("With --sync-afl-season: process a canonical AFL match ID "
+                                  "(repeatable; intersects round filters)"))
     sync_group.add_argument("--refresh-complete", action="store_true",
                             help="With --sync-afl-season: reconsider concluded authoritative snapshots")
 
@@ -193,6 +208,7 @@ def handle_args(argv=None):
         parser.error("--round-from and --round-to must be supplied together")
     if args.round_from is not None and args.round_from > args.round_to:
         parser.error("--round-from cannot be greater than --round-to")
+    args.match_id = list(dict.fromkeys(args.match_id))
     return args
 
 def main(argv=None):

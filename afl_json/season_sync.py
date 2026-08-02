@@ -4,6 +4,8 @@ from __future__ import annotations
 import sqlite3
 import uuid
 from dataclasses import asdict, dataclass, field, replace
+from datetime import datetime, timezone
+from typing import Callable
 
 from db.scrape_runs import (TRIGGER_CLI, complete_scrape_run, fail_scrape_run,
                             sanitize_error_summary, start_scrape_run)
@@ -84,6 +86,10 @@ class SeasonSyncResult:
     total_matches_discovered: int = 0
     eligible_matches: int = 0
     skipped_not_concluded: int = 0
+    skipped_scheduled: int = 0
+    skipped_live_or_postgame: int = 0
+    skipped_future_placeholder: int = 0
+    unresolved_lifecycle: int = 0
     skipped_missing_provider_identity: int = 0
     already_complete_unchanged: int = 0
     collected_successfully: int = 0
@@ -92,6 +98,10 @@ class SeasonSyncResult:
     partial: int = 0
     unknown: int = 0
     failed: int = 0
+    explicit_matches_requested: int = 0
+    explicit_matches_unsatisfied: int = 0
+    missing_requested_match_ids: list[int] = field(default_factory=list)
+    selection_status: str = "selected"
     statistic_rows_inserted: int = 0
     statistic_rows_updated: int = 0
     statistic_rows_unchanged: int = 0
@@ -115,11 +125,13 @@ class SeasonSynchronizer:
     """Compose existing bootstrap, lifecycle, CFS and writer boundaries."""
 
     def __init__(self, client, conn: sqlite3.Connection, *, bootstrap=bootstrap_afl_season,
-                 collector_factory=MatchPlayerStatsCollector):
+                 collector_factory=MatchPlayerStatsCollector,
+                 clock: Callable[[], datetime] | None = None):
         self.client = client
         self.conn = conn
         self.bootstrap = bootstrap
         self.collector_factory = collector_factory
+        self.clock = clock or (lambda: datetime.now(timezone.utc))
 
     def run(self, *, season: str | int, competition_code: str,
             competition_provider_id: str, options: SeasonSyncOptions = SeasonSyncOptions(),
@@ -149,11 +161,37 @@ class SeasonSynchronizer:
 
             rows = self._matches(foundation.season_id, options)
             summary.total_matches_discovered = len(rows)
+            summary.explicit_matches_requested = len(options.match_ids)
+            bounded = bool(options.round_number is not None or options.round_from is not None
+                           or options.match_ids)
+            if not rows:
+                summary.selection_status = "empty_bounded" if bounded else "empty_unbounded"
             collector = self.collector_factory(self.client, raw_directory=raw_directory)
             for row in rows:
                 self._process_match(row, options, collector, summary)
+            if options.match_ids:
+                found = {row["match_id"] for row in rows}
+                summary.missing_requested_match_ids = [
+                    match_id for match_id in options.match_ids if match_id not in found
+                ]
+                summary.matches.extend(
+                    MatchSyncResult(match_id, None, None, "missing_requested_match")
+                    for match_id in summary.missing_requested_match_ids
+                )
+                requested_outcomes = {
+                    match.match_id: match.outcome for match in summary.matches
+                    if match.match_id in options.match_ids
+                }
+                summary.explicit_matches_unsatisfied = sum(
+                    requested_outcomes.get(match_id) not in {"collected", "already_complete"}
+                    for match_id in options.match_ids
+                )
             material = (summary.failed + summary.unavailable_unpublished + summary.empty
-                        + summary.partial + summary.unknown)
+                        + summary.partial + summary.unknown
+                        + summary.skipped_missing_provider_identity
+                        + summary.unresolved_lifecycle
+                        + summary.explicit_matches_unsatisfied
+                        + int(summary.selection_status == "empty_bounded"))
             summary.outcome = "partial" if material else "success"
             complete_scrape_run(
                 parent_id,
@@ -187,7 +225,7 @@ class SeasonSynchronizer:
             clauses.append(f"m.match_id IN ({','.join('?' for _ in options.match_ids)})")
             params.extend(options.match_ids)
         return self.conn.execute(
-            "SELECT m.match_id,m.match_provider_id,m.status,r.round_number "
+            "SELECT m.match_id,m.match_provider_id,m.status,m.start_time_utc,r.round_number "
             "FROM matches m LEFT JOIN rounds r ON r.round_id=m.round_id "
             f"WHERE {' AND '.join(clauses)} ORDER BY r.round_number,m.match_id", params,
         ).fetchall()
@@ -214,14 +252,21 @@ class SeasonSynchronizer:
                 ))
                 return
         if lifecycle != "CONCLUDED":
-            outcome = "unknown_lifecycle" if lifecycle is None else (
-                "partial_lifecycle" if lifecycle in {"LIVE", "POSTGAME"} else "not_concluded")
-            if outcome == "unknown_lifecycle":
-                summary.unknown += 1
-            elif outcome == "partial_lifecycle":
-                summary.partial += 1
-            else:
+            if lifecycle == "SCHEDULED":
+                outcome = "scheduled"
+                summary.skipped_scheduled += 1
                 summary.skipped_not_concluded += 1
+            elif lifecycle in {"LIVE", "POSTGAME"}:
+                outcome = "live_or_postgame"
+                summary.skipped_live_or_postgame += 1
+                summary.skipped_not_concluded += 1
+            elif _is_future(row["start_time_utc"], self.clock()):
+                outcome = "future_placeholder"
+                summary.skipped_future_placeholder += 1
+                summary.skipped_not_concluded += 1
+            else:
+                outcome = "unknown_lifecycle"
+                summary.unresolved_lifecycle += 1
             summary.matches.append(MatchSyncResult(match_id, provider_id, round_number,
                                                     outcome, lifecycle))
             return
@@ -309,3 +354,17 @@ class SeasonSynchronizer:
             summary.matches.append(MatchSyncResult(match_id, provider_id, round_number,
                                                     "failed", lifecycle, audit_id=audit_id,
                                                     error=error))
+
+
+def _is_future(value: object, now: datetime) -> bool:
+    if not isinstance(value, str) or not value.strip():
+        return False
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc) > now.astimezone(timezone.utc)
