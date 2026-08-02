@@ -4,6 +4,150 @@ The root `cli.py` flag parser is the supported operator interface. JSON sources
 are preferred. HTML collection remains explicit and is never an automatic
 fallback or dual-write path.
 
+## Which command should I run?
+
+Run these from the repository root after activating the configured Python
+environment. Placeholder identifiers show the required identifier family; replace
+them with values from the target season. “CFS auth” means access to the protected
+CFS JSON endpoints: the client obtains and refreshes its WMC token automatically,
+so there is currently no operator-supplied CFS username, password, or token
+environment variable.
+
+| Operator goal | Exact recommended command | Database effect | Source and persistence notes | Credentials/access |
+| --- | --- | --- | --- | --- |
+| Show the application version | `python cli.py --version` | Does not open the database | Local, lightweight version probe | None |
+| Apply migrations | `python -m db.migrate` | Creates/upgrades the configured `DB_PATH`; also refreshes the canonical club seed when a migration calls for it | Repository migration modules; run before bootstrap | Filesystem write access to `DB_PATH` |
+| Bootstrap one AFL season | `python cli.py --bootstrap-afl-season <SEASON_YEAR>` | Opens the database; upserts canonical metadata, players, provider mappings, team links, and season membership | Public AFL JSON metadata followed by CFS season players; no HTML fallback | Outbound AFL access and CFS auth |
+| Inspect season metadata without persistence | `python cli.py --collect-afl-metadata --afl-season <SEASON_YEAR> --print-json` | Does not open or write the database | Public AFL competition, season, rounds, teams, and matches only | Outbound public AFL access; no CFS auth |
+| Collect several resources to artifacts only | `python cli.py --collect-afl-data --afl-season <SEASON_YEAR> --collection-round 1 --collection-endpoints metadata,players,fixtures,rosters,lineups,player-stats --collection-output collection-runs/season-round-1 --no-database` | Never opens the database | Writes raw/normalised files under the output directory; selected families can combine public AFL and CFS JSON | Outbound AFL access; CFS auth for protected families |
+| Persist authoritative stats for one completed match | `python cli.py --collect-match-player-stats CD_M20260142001 --afl-match-id 8001` | Opens the database; upserts `cfs_player_stats` | CFS JSON canonical snapshot; one `CD_M...` match; never HTML fallback or a `player_stats` dual-write | Outbound AFL access and CFS auth |
+| Inspect a CFS round roster | `python cli.py --collect-match-rosters CD_R202601421 --print-json` | Does not open or write the database | CFS selections are returned for inspection and are **not** canonically persisted | Outbound AFL access and CFS auth |
+| Collect current injuries | `python cli.py --scrape-injuries` | Opens the database; upserts canonically resolved `injuries` and `injury_history` | Deliberate rendered-HTML operational source; unresolved/ambiguous players are reported, not guessed | Outbound AFL website access |
+| Collect operational lineups for a round | `python cli.py --scrape-lineups 9` | Opens the database; upserts operational lineup tables | Deliberate rendered-HTML source; argument is an AFL round number | Outbound AFL website access |
+| Explicitly scrape legacy matches for one database round | `python cli.py --scrape-round 1155` | Opens the database; writes legacy match/fixture data | Explicit HTML compatibility path; argument is a database/AFL `round_id`, not round number | Outbound AFL website access |
+| Explicitly scrape legacy statistics for one match | `python cli.py --scrape-match 8216` | Opens the database; upserts legacy `player_stats` | Explicit HTML compatibility path; not authoritative and never an automatic fallback | Outbound AFL website access |
+| Import or refresh the supported club seed | `python cli.py --import-clubs` | Opens the database; upserts canonical `bootstrap/clubs.json` rows | Local repository seed, not an arbitrary input file; migrations already seed/refresh it where applicable | Filesystem write access to `DB_PATH` |
+| Synchronise an implemented whole season | `python cli.py --sync-afl-season <SEASON_YEAR>` | Opens the database; bootstraps canonical season data and upserts concluded match snapshots in `cfs_player_stats` | Implemented idempotent AFL/CFS JSON workflow; use its documented round/match bounds for narrower work | Outbound AFL access and CFS auth |
+
+The table is a selector, not a full option reference. The sections below explain
+individual collection modes; the implemented bounds and exit behavior for season
+sync are in the [whole-season synchronization reference](../README.md#whole-season-persistent-synchronisation).
+
+## Supported first run on a clean installation
+
+This is the smallest supported setup sequence. The production release procedure,
+including writer shutdown, backups, restore, and rollback, remains in the
+[release runbook](operations/release_runbook_v0_5_0.md).
+
+1. Copy or otherwise configure the environment values described in
+   [`.env.example`](../.env.example). Set `DB_PATH` to the intended SQLite file
+   (relative paths resolve from the repository root) and confirm the effective
+   value before writing:
+
+   ```bash
+   python -c 'import config; print(config.DB_PATH)'
+   ```
+
+   Configure production Admin credentials and API-key handling before exposing
+   those services. Public metadata needs only outbound AFL access. Protected CFS
+   calls use the automatically acquired WMC token described above; they do not
+   read a repository-defined CFS credential environment variable.
+2. Apply all migrations. This opens and creates or upgrades `DB_PATH`, including
+   the supported club seed:
+
+   ```bash
+   python -m db.migrate
+   ```
+
+3. Bootstrap the target season. This first reads public AFL JSON, then requires
+   CFS auth for season players, and writes the canonical hierarchy and membership:
+
+   ```bash
+   python cli.py --bootstrap-afl-season <SEASON_YEAR>
+   ```
+
+4. Verify the configured database without changing it. The following portable
+   Python/SQLite check confirms integrity, applied migrations, the club seed, and
+   canonical season/player membership for the requested year:
+
+   ```bash
+   SEASON_YEAR=<SEASON_YEAR> python - <<'PY'
+   import os, sqlite3
+   import config
+   conn = sqlite3.connect(f"file:{config.DB_PATH}?mode=ro", uri=True)
+   assert conn.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+   assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] > 0
+   assert conn.execute("SELECT COUNT(*) FROM clubs").fetchone() == (18,)
+   year = int(os.environ["SEASON_YEAR"])
+   season_id = conn.execute("SELECT afl_id FROM afl_seasons WHERE year=?", (year,)).fetchone()
+   assert season_id, f"season {year} was not bootstrapped"
+   assert conn.execute("SELECT COUNT(*) FROM rounds WHERE season_id=?", season_id).fetchone()[0] > 0
+   assert conn.execute("SELECT COUNT(*) FROM competition_season_players WHERE competition_season_id=?", season_id).fetchone()[0] > 0
+   print("bootstrap verification passed")
+   PY
+   ```
+
+5. Only after those checks pass, start the services required by the deployment.
+   API, Scheduler, and Admin are **not** required to migrate or bootstrap. See the
+   [portable Compose service definitions](../compose.example.yaml), the
+   [API/Admin deployment guidance](../README.md#-docker-and-deployment-layout),
+   and [Scheduler startup guidance](../README.md#scheduler-startup-and-shutdown).
+   In production, start API/readiness validation before resuming Scheduler writers,
+   as specified by the release runbook.
+
+## Common follow-up workflows
+
+* **Refresh metadata and player membership:** rerun
+  `python cli.py --bootstrap-afl-season <SEASON_YEAR>`. Its canonical upserts are
+  the ordinary supported membership refresh; see
+  [public AFL metadata collection](public_afl_metadata.md).
+* **Collect one completed match’s authoritative statistics:** run
+  `python cli.py --collect-match-player-stats CD_M20260142001 --afl-match-id 8001`;
+  see the [match player-stat guide](match_player_stats.md) for lifecycle rules.
+* **Investigate upstream data without database writes:** use public-only
+  `python cli.py --collect-afl-metadata --afl-season <SEASON_YEAR> --print-json`,
+  or the `--collect-afl-data ... --no-database` artifact form in the table when
+  several endpoint families are needed.
+* **Rerun current injuries:** run `python cli.py --scrape-injuries`; the operation
+  replaces/updates supported current and history records through canonical player
+  resolution. See the [source policy](operational_source_policy.md).
+* **Validate a deployment:** check `/healthz`, then `/readyz`, and separately
+  inspect `schema_migrations`; readiness proves database connectivity, not schema
+  completeness. Use the exact gates in the
+  [release runbook](operations/release_runbook_v0_5_0.md#13-health-and-readiness-verification).
+* **Back up, restore, or roll back:** use the production-sensitive procedures in
+  the [release runbook](operations/release_runbook_v0_5_0.md), not abbreviated
+  commands copied into this guide.
+
+## Command boundaries
+
+* **Bootstrap versus collection:** bootstrap is the idempotent, persistent
+  one-season metadata/player setup and refresh. Read-only metadata collection is
+  diagnostic; database-free orchestration writes artifacts only. The implemented
+  `--sync-afl-season` additionally processes eligible completed match statistics;
+  follow the linked whole-season synchronization reference for its bounds and
+  exit semantics.
+* **Canonical versus legacy:** AFL/CFS JSON supplies canonical metadata, player
+  membership, and authoritative `cfs_player_stats`. Explicit HTML match/stat
+  commands are compatibility paths; legacy `player_stats` is not authoritative.
+  HTML is never an automatic fallback or dual-write where source policy prohibits
+  fallback. Injuries and lineups are deliberate supported HTML-backed operational
+  sources, not fallbacks.
+* **Match versus season:** `--collect-match-player-stats CD_M...` is exactly one
+  match. Whole-season collection exists only as the verified
+  `--sync-afl-season` operation; do not extrapolate unimplemented command names.
+* **CLI versus services:** CLI operations run synchronously. Scheduler/Admin
+  triggers use their documented service paths and may enqueue work; they are not
+  aliases for bootstrap. Roster inspection remains read-only and never populates
+  canonical roster or operational lineup tables.
+* **One operation per invocation:** select only one top-level operation flag.
+  Conflicts are rejected before runtime components load, as implemented for
+  [Issue #110](https://github.com/JustPlausible/AFL-api/issues/110).
+
+Season completeness/reconciliation reporting remains planned in
+[Issue #107](https://github.com/JustPlausible/AFL-api/issues/107). No proposed
+syntax is documented until it exists in the parser and dispatch implementation.
+
 ## General usage and help
 
 Run commands from the repository root in the configured project environment:

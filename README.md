@@ -46,6 +46,12 @@ reads the authoritative declaration in [`version.py`](version.py).
 
 ## 🚀 Quick Start
 
+For a clean database, follow the authoritative
+**[supported first-run sequence and command-selection table](docs/cli.md#which-command-should-i-run)**
+before starting API, Scheduler, or Admin services. The abbreviated Docker example
+below demonstrates the portable development stack; it does not replace database
+migration, season bootstrap, and verification.
+
 ### Prerequisites
 
 - Docker & Docker Compose installed
@@ -114,7 +120,8 @@ Do not publish scheduler ports in production Compose files. If scheduler mutatio
 
 ## 🧩 Operator CLI
 
-Use the implemented parser as the command reference:
+Use the [operator command selector and supported first-run sequence](docs/cli.md#which-command-should-i-run)
+to choose a workflow, and the implemented parser as the complete option reference:
 
 ```bash
 python cli.py --help
@@ -144,8 +151,10 @@ python cli.py --sync-afl-season 2026 --match-id 8204
 python cli.py --sync-afl-season 2026 --refresh-complete --print-json
 ```
 
-The command requires the same public AFL access and authenticated CFS/WMC
-environment used by bootstrap and single-match CFS collection. It selects
+The command requires the same public AFL access and authenticated CFS endpoints
+used by bootstrap and single-match CFS collection. The client automatically
+obtains and refreshes its WMC token; there is no configured operator credential
+variable for that token. The command selects
 matches from the persisted canonical season: only concluded/final matches with
 an explicit `CD_M...` mapping are collected. Existing concluded authoritative
 snapshots are skipped unless `--refresh-complete` is given. Each match is a
