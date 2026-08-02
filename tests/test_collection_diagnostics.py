@@ -1,4 +1,6 @@
 import json
+from contextlib import contextmanager
+from types import SimpleNamespace
 
 import pytest
 
@@ -55,3 +57,37 @@ def test_sensitive_detail_is_redacted_and_never_echoed():
     assert "hunter2" not in encoded
     assert "session-value" not in encoded
     assert "<redacted>" in encoded
+
+
+def test_lineup_cli_reports_supported_persistent_html_mode(monkeypatch, capsys):
+    import cli_runtime
+    from db import connection, import_to_db, scrape_runs
+    from scraper import scrape_afl_lineups
+    from utils import log
+
+    class Connection:
+        row_factory = None
+
+        def close(self):
+            pass
+
+    @contextmanager
+    def audit(*_args, **_kwargs):
+        yield {"run_id": "audit-1", "rows_read": None, "rows_written": None}
+
+    monkeypatch.setattr(connection, "get_db_connection", Connection)
+    monkeypatch.setattr(scrape_runs, "audited_scrape_run", audit)
+    monkeypatch.setattr(scrape_afl_lineups, "scrape_team_lineups",
+                        lambda **_kwargs: [{"player_id": 1}])
+    monkeypatch.setattr(import_to_db, "save_lineups_to_db",
+                        lambda records, conn, round_number: len(records))
+    monkeypatch.setattr(log, "log", lambda *_args, **_kwargs: None)
+
+    cli_runtime.handle_scrape_lineups(SimpleNamespace(scrape_lineups=9, print_json=False))
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["source_family"] == "html"
+    assert output["mode"] == "persistent"
+    assert output["database_opened"] is True
+    assert output["fallback_allowed"] is False
+    assert output["fallback_occurred"] is False

@@ -142,7 +142,7 @@ def handle_scrape_injuries(args):
     outcome = collect_operational(OperationalDomain.INJURIES, trigger_source=TRIGGER_CLI)
     diagnostic = CollectionDiagnostic(
         operation="scrape_injuries", domain="injuries", source_family="html",
-        collector=outcome.collector, mode="legacy_persistent", database_opened=True,
+        collector=outcome.collector, mode="persistent", database_opened=True,
         persistence_target="injuries,injury_history", persistence_action="upsert",
         records_received=outcome.rows_read, rows_written=outcome.rows_written,
         result_status=outcome.status, fallback_allowed=False, fallback_occurred=False,
@@ -170,7 +170,7 @@ def handle_scrape_lineups(args):
         audit["rows_written"] = len(players)
         diagnostic = CollectionDiagnostic(
             operation="scrape_lineups", domain="lineups", source_family="html",
-            collector="scraper.scrape_afl_lineups", mode="legacy_persistent",
+            collector="scraper.scrape_afl_lineups", mode="persistent",
             database_opened=True, persistence_target="lineups,player_lineups",
             persistence_action="upsert", records_received=len(players),
             rows_written=len(players), result_status="success" if players else "empty",
