@@ -7,7 +7,7 @@ from db.migration_runner import migrate_database
 from db.scrape_runs import (
     STATUS_COMPLETED, STATUS_FAILED, STATUS_PARTIAL, STATUS_RUNNING, TRIGGER_CLI,
     complete_scrape_run, fail_scrape_run, recent_scrape_runs, recover_stale_running_runs,
-    sanitize_error_summary, start_scrape_run,
+    record_scrape_decision, sanitize_error_summary, start_scrape_run,
 )
 
 
@@ -76,8 +76,28 @@ def test_recover_stale_running_runs_uses_cutoff(tmp_path):
 
 def test_migration_is_additive_and_idempotent(tmp_path):
     db = tmp_path / "fresh.db"
-    assert migrate_database(db) == ["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011"]
+    assert migrate_database(db) == ["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012"]
     assert migrate_database(db) == []
     c = sqlite3.connect(db)
     tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"scrape_runs", "scrape_log", "scrape_summary"} <= tables
+
+
+def test_decision_records_are_redacted_and_queryable(tmp_path):
+    c = conn(tmp_path)
+    run_id = record_scrape_decision(
+        "afl_season_sync_decision", target_type="match", target_identifier=8001,
+        reason_code="scheduled", decision_class="safe", correlation_id="season-1",
+        canonical_match_id=8001, provider_match_id="CD_M1", round_identifier=1,
+        diagnostic_summary="token=secret Authorization: Bearer hidden",
+        trigger_source=TRIGGER_CLI, conn=c,
+    )
+
+    row = c.execute("SELECT * FROM scrape_runs WHERE run_id=?", (run_id,)).fetchone()
+    assert (row["status"], row["rows_read"], row["rows_written"]) == ("completed", 0, 0)
+    assert "secret" not in row["diagnostic_summary"]
+    assert "hidden" not in row["diagnostic_summary"]
+    assert len(recent_scrape_runs(correlation_id="season-1", conn=c)) == 1
+    assert len(recent_scrape_runs(target_identifier=8001, conn=c)) == 1
+    assert len(recent_scrape_runs(reason_code="scheduled", conn=c)) == 1
+    assert recent_scrape_runs(reason_code="missing_provider_identity", conn=c) == []

@@ -49,6 +49,12 @@ class ScrapeRun:
     error_class: str | None
     error_summary: str | None
     correlation_id: str | None
+    reason_code: str | None
+    decision_class: str | None
+    canonical_match_id: int | None
+    provider_match_id: str | None
+    round_identifier: str | None
+    diagnostic_summary: str | None
 
 
 def utc_now() -> str:
@@ -153,7 +159,48 @@ def fail_scrape_run(run_id: str, exc: BaseException | str, *, conn: sqlite3.Conn
     _finish(run_id, STATUS_FAILED, error_class=cls, error_summary=sanitize_error_summary(exc), conn=conn)
 
 
-def recent_scrape_runs(*, limit: int = 50, scrape_type: str | None = None, status: str | None = None, conn: sqlite3.Connection | None = None) -> list[ScrapeRun]:
+def record_scrape_decision(scrape_type: str, *, target_type: str,
+                           target_identifier: Any, reason_code: str,
+                           decision_class: str, correlation_id: str,
+                           canonical_match_id: int | None = None,
+                           provider_match_id: str | None = None,
+                           round_identifier: Any = None,
+                           diagnostic_summary: str = "",
+                           trigger_source: str | None = None,
+                           conn: sqlite3.Connection | None = None) -> str:
+    """Persist one already-terminal, zero-write orchestration decision."""
+    if decision_class not in {"safe", "material"}:
+        raise ValueError(f"Unsupported decision class: {decision_class}")
+    db, close = _conn(conn)
+    run_id = str(uuid.uuid4())
+    now = utc_now()
+    try:
+        db.execute(
+            """INSERT INTO scrape_runs (
+                run_id, scrape_type, target_type, target_identifier, trigger_source,
+                status, started_at, finished_at, duration_ms, rows_read, rows_written,
+                correlation_id, reason_code, decision_class, canonical_match_id,
+                provider_match_id, round_identifier, diagnostic_summary
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?, ?, ?, ?, ?, ?)""",
+            (run_id, scrape_type, target_type, str(target_identifier),
+             validate_trigger_source(infer_trigger_source(trigger_source, correlation_id)),
+             STATUS_COMPLETED if decision_class == "safe" else STATUS_PARTIAL,
+             now, now, correlation_id, reason_code, decision_class,
+             canonical_match_id, provider_match_id,
+             None if round_identifier is None else str(round_identifier),
+             sanitize_error_summary(diagnostic_summary)),
+        )
+        db.commit()
+        return run_id
+    finally:
+        if close:
+            db.close()
+
+
+def recent_scrape_runs(*, limit: int = 50, scrape_type: str | None = None,
+                       status: str | None = None, correlation_id: str | None = None,
+                       target_identifier: Any = None, reason_code: str | None = None,
+                       conn: sqlite3.Connection | None = None) -> list[ScrapeRun]:
     if status is not None:
         validate_status(status)
     db, close = _conn(conn)
@@ -163,6 +210,12 @@ def recent_scrape_runs(*, limit: int = 50, scrape_type: str | None = None, statu
             clauses.append("scrape_type=?"); params.append(scrape_type)
         if status:
             clauses.append("status=?"); params.append(status)
+        if correlation_id:
+            clauses.append("correlation_id=?"); params.append(correlation_id)
+        if target_identifier is not None:
+            clauses.append("target_identifier=?"); params.append(str(target_identifier))
+        if reason_code:
+            clauses.append("reason_code=?"); params.append(reason_code)
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
         cur = db.execute(f"SELECT * FROM scrape_runs{where} ORDER BY started_at DESC LIMIT ?", (*params, limit))
         return [ScrapeRun(**dict(zip([d[0] for d in cur.description], row))) for row in cur.fetchall()]
