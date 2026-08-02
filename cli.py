@@ -13,23 +13,63 @@ if __name__ == "__main__" and sys.argv[1:] == ["--version"]:
     print(__version__)
     raise SystemExit(0)
 
-from utils.log import log
-from scraper.scrape_afl_clubs import save_club_players_to_json
-from scraper.scrape_afl_lineups import scrape_team_lineups
-from scraper import scrape_afl_matches
-from db.scrape_runs import audited_scrape_run, TRIGGER_CLI
-from merge.helpers import resolve_players_for_club
-from utils.club_lookup import load_clubs, get_club
-from db.import_to_db import import_players, save_lineups_to_db
-from db.connection import get_db_connection
-from db.club_seed import upsert_club_seed
-from afl_json import (
-    AflJsonClient, MatchPlayerStatsCollector, MatchRosterCollector, PublicAflCollector,
-    BatchCollectionError, CollectionOrchestrator, CollectionRequest,
-    later_match_status, persist_afl_metadata, persist_player_seasons,
-    reconcile_match_status, upsert_player_stats,
-)
-from config import AFL_COMPETITION_CODE, AFL_COMPETITION_PROVIDER_ID, AFL_SEASON_YEAR, DB_PATH
+from config import AFL_COMPETITION_CODE, AFL_COMPETITION_PROVIDER_ID, AFL_SEASON_YEAR
+
+OPERATION_FLAGS = {
+    "version": "--version",
+    "scrape_club": "--scrape-club",
+    "scrape_clubs": "--scrape-clubs",
+    "enrich_club": "--enrich-club",
+    "enrich_clubs": "--enrich-clubs",
+    "scrape_enrich_all": "--scrape-enrich-all",
+    "scrape_injuries": "--scrape-injuries",
+    "scrape_lineups": "--scrape-lineups",
+    "scrape_round": "--scrape-round",
+    "scrape_all_rounds": "--scrape-all-rounds",
+    "scrape_match": "--scrape-match",
+    "collect_afl_metadata": "--collect-afl-metadata",
+    "collect_afl_data": "--collect-afl-data",
+    "bootstrap_afl_season": "--bootstrap-afl-season",
+    "collect_match_rosters": "--collect-match-rosters",
+    "collect_match_player_stats": "--collect-match-player-stats",
+    "import_clubs": "--import-clubs",
+    "export_clubs": "--export-clubs",
+}
+
+_RUNTIME_COMPONENTS_LOADED = False
+
+
+def _load_runtime_components():
+    """Load operational dependencies only after argument validation."""
+    global _RUNTIME_COMPONENTS_LOADED
+    if _RUNTIME_COMPONENTS_LOADED:
+        return
+    global log, save_club_players_to_json, scrape_team_lineups, scrape_afl_matches
+    global audited_scrape_run, TRIGGER_CLI, resolve_players_for_club, load_clubs, get_club
+    global import_players, save_lineups_to_db, get_db_connection, upsert_club_seed
+    global AflJsonClient, MatchPlayerStatsCollector, MatchRosterCollector, PublicAflCollector
+    global BatchCollectionError, CollectionOrchestrator, CollectionRequest
+    global later_match_status, persist_afl_metadata, persist_player_seasons
+    global reconcile_match_status, upsert_player_stats, DB_PATH
+
+    from utils.log import log
+    from scraper.scrape_afl_clubs import save_club_players_to_json
+    from scraper.scrape_afl_lineups import scrape_team_lineups
+    from scraper import scrape_afl_matches
+    from db.scrape_runs import audited_scrape_run, TRIGGER_CLI
+    from merge.helpers import resolve_players_for_club
+    from utils.club_lookup import load_clubs, get_club
+    from db.import_to_db import import_players, save_lineups_to_db
+    from db.connection import get_db_connection
+    from db.club_seed import upsert_club_seed
+    from afl_json import (
+        AflJsonClient, MatchPlayerStatsCollector, MatchRosterCollector, PublicAflCollector,
+        BatchCollectionError, CollectionOrchestrator, CollectionRequest,
+        later_match_status, persist_afl_metadata, persist_player_seasons,
+        reconcile_match_status, upsert_player_stats,
+    )
+    from config import DB_PATH
+    _RUNTIME_COMPONENTS_LOADED = True
 
 
 def _json_default(value):
@@ -62,6 +102,15 @@ def cfs_round_provider_id(value: str) -> str:
 def cfs_match_provider_id(value: str) -> str:
     return _provider_id(value, prefix="CD_M", label="match provider ID",
                         example="CD_M20260142001")
+
+
+def _add_operation_argument(container, destination, **kwargs):
+    """Register an operation using its authoritative public flag name."""
+    action = container.add_argument(
+        OPERATION_FLAGS[destination], dest=destination, **kwargs
+    )
+    action.is_top_level_operation = True
+    return action
 
 def import_clubs_to_db():
     """Load clubs from the canonical seed and import using a shared connection."""
@@ -120,32 +169,32 @@ def create_parser() -> argparse.ArgumentParser:
         description=("AFL operator CLI: preferred AFL/CFS JSON collection and "
                      "explicit legacy HTML tools")
     )
-    parser.add_argument("--version", action="version", version=__version__,
-                        help="Print the AFL-api version and exit")
+    _add_operation_argument(parser, "version", action="store_true",
+                            help="Print the AFL-api version and exit")
 
     # 🔹 Club-related arguments
     club_group = parser.add_argument_group("Club import, export, HTML scrape, and enrichment")
-    club_group.add_argument("--scrape-club", metavar="CLUB_NAME", help="Legacy HTML: scrape one club's players to a raw JSON file")
-    club_group.add_argument("--scrape-clubs", action="store_true", help="Legacy HTML: scrape all clubs to raw JSON files")
-    club_group.add_argument("--enrich-club", metavar="CLUB_NAME", help="Enrich one existing raw club JSON file locally")
-    club_group.add_argument("--enrich-clubs", action="store_true", help="Enrich all existing raw club JSON files locally")
-    club_group.add_argument("--scrape-enrich-all", action="store_true", help="Legacy HTML: scrape and enrich every club, then persist players")
+    _add_operation_argument(club_group, "scrape_club", metavar="CLUB_NAME", help="Legacy HTML: scrape one club's players to a raw JSON file")
+    _add_operation_argument(club_group, "scrape_clubs", action="store_true", help="Legacy HTML: scrape all clubs to raw JSON files")
+    _add_operation_argument(club_group, "enrich_club", metavar="CLUB_NAME", help="Enrich one existing raw club JSON file locally")
+    _add_operation_argument(club_group, "enrich_clubs", action="store_true", help="Enrich all existing raw club JSON files locally")
+    _add_operation_argument(club_group, "scrape_enrich_all", action="store_true", help="Legacy HTML: scrape and enrich every club, then persist players")
     club_group.add_argument("--skip-existing", action="store_true", help="(Club-only) Skip if output file already exists")
 
     # 🔹 Match + fixture scraping
     match_group = parser.add_argument_group("Explicit legacy AFL HTML collection")
-    match_group.add_argument("--scrape-injuries", action="store_true", help="Legacy HTML: collect the AFL injury list and persist injuries")
-    match_group.add_argument("--scrape-lineups", type=int, metavar="ROUND", help="Explicit legacy HTML lineup scrape (persists legacy lineup tables)")
-    match_group.add_argument("--scrape-round", type=int, metavar="ROUND_ID", help="Explicit legacy HTML match scrape for a round_id")
-    match_group.add_argument("--scrape-all-rounds", action="store_true", help="Explicit legacy HTML match scrape for all database rounds")
-    match_group.add_argument("--scrape-match", type=int, metavar="MATCH_ID", help="Explicit legacy HTML player-stat scrape; persists to player_stats (not fallback or dual-write)")
+    _add_operation_argument(match_group, "scrape_injuries", action="store_true", help="Legacy HTML: collect the AFL injury list and persist injuries")
+    _add_operation_argument(match_group, "scrape_lineups", type=int, metavar="ROUND", help="Explicit legacy HTML lineup scrape (persists legacy lineup tables)")
+    _add_operation_argument(match_group, "scrape_round", type=int, metavar="ROUND_ID", help="Explicit legacy HTML match scrape for a round_id")
+    _add_operation_argument(match_group, "scrape_all_rounds", action="store_true", help="Explicit legacy HTML match scrape for all database rounds")
+    _add_operation_argument(match_group, "scrape_match", type=int, metavar="MATCH_ID", help="Explicit legacy HTML player-stat scrape; persists to player_stats (not fallback or dual-write)")
 
     metadata_group = parser.add_argument_group("Preferred AFL public JSON")
-    metadata_group.add_argument("--collect-afl-metadata", action="store_true",
+    _add_operation_argument(metadata_group, "collect_afl_metadata", action="store_true",
                                 help="Collect competition, season, rounds, teams and matches without database writes")
-    metadata_group.add_argument("--collect-afl-data", action="store_true",
+    _add_operation_argument(metadata_group, "collect_afl_data", action="store_true",
                                 help="Run the full modular JSON pipeline to files only (never writes the database)")
-    metadata_group.add_argument("--bootstrap-afl-season", metavar="SEASON",
+    _add_operation_argument(metadata_group, "bootstrap_afl_season", metavar="SEASON",
                                 help="Persist AFL metadata plus CFS players and season membership")
     metadata_group.add_argument("--afl-season", default=AFL_SEASON_YEAR, metavar="SEASON",
                                 help="Select a season by year, AFL ID, provider ID or exact name")
@@ -154,10 +203,10 @@ def create_parser() -> argparse.ArgumentParser:
     metadata_group.add_argument("--afl-competition-provider-id", default=AFL_COMPETITION_PROVIDER_ID, metavar="PROVIDER_ID",
                                 help="Stable Premiership provider ID")
     cfs_group = parser.add_argument_group("Preferred Champion Data/CFS JSON")
-    cfs_group.add_argument("--collect-match-rosters", metavar="ROUND_PROVIDER_ID",
+    _add_operation_argument(cfs_group, "collect_match_rosters", metavar="ROUND_PROVIDER_ID",
                                 type=cfs_round_provider_id,
                                 help="Collect CFS selections read-only; requires CD_R... (example: CD_R202601421)")
-    cfs_group.add_argument("--collect-match-player-stats", metavar="MATCH_PROVIDER_ID",
+    _add_operation_argument(cfs_group, "collect_match_player_stats", metavar="MATCH_PROVIDER_ID",
                                 type=cfs_match_provider_id,
                                 help="Collect CFS stats into cfs_player_stats; requires CD_M... (example: CD_M20260142001)")
     cfs_group.add_argument("--source-status", metavar="STATUS",
@@ -188,15 +237,29 @@ def create_parser() -> argparse.ArgumentParser:
 
     # 🔹 Backup and restore
     db_group = parser.add_argument_group("Club database tools")
-    db_group.add_argument("--import-clubs", action="store_true", help="Persist the canonical club seed to the database")
-    db_group.add_argument("--export-clubs", action="store_true", help="Export clubs from DB to backup JSON")
+    _add_operation_argument(db_group, "import_clubs", action="store_true", help="Persist the canonical club seed to the database")
+    _add_operation_argument(db_group, "export_clubs", action="store_true", help="Export clubs from DB to backup JSON")
 
     return parser
 
 
-def handle_args():
+def selected_operation_flags(args):
+    """Return selected operations in the authoritative, stable display order."""
+    return [
+        flag for destination, flag in OPERATION_FLAGS.items()
+        if getattr(args, destination) is not None and getattr(args, destination) is not False
+    ]
+
+
+def handle_args(argv=None):
     parser = create_parser()
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    selected = selected_operation_flags(args)
+    if len(selected) > 1:
+        parser.error(
+            "Only one operation may be selected per invocation.\n"
+            f"Conflicting operations: {', '.join(selected)}"
+        )
     if (args.source_status or args.afl_match_id is not None) and not args.collect_match_player_stats:
         parser.error("--source-status and --afl-match-id require --collect-match-player-stats CD_M...")
     collection_options = (args.collection_output is not None or args.collection_round
@@ -208,8 +271,14 @@ def handle_args():
         parser.error("--collect-afl-data requires --collection-output PATH")
     return args
 
-def main():
-    args = handle_args()
+def main(argv=None):
+    args = handle_args(argv)
+
+    if args.version:
+        print(__version__)
+        return
+
+    _load_runtime_components()
 
     if args.collect_afl_data:
         families = (tuple(item.strip() for item in args.collection_endpoints.split(",") if item.strip())
@@ -453,3 +522,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+else:
+    # Preserve the importable module surface used by focused handler tests.
+    # Script execution deliberately loads these only after argument validation.
+    _load_runtime_components()
