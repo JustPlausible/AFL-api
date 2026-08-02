@@ -51,7 +51,7 @@ class SourcePolicy:
 
 SOURCE_POLICY = {
     OperationalDomain.METADATA: SourcePolicy(
-        OperationalDomain.METADATA, "public_json", "PublicAflCollector", True, False,
+        OperationalDomain.METADATA, "public_afl_json", "PublicAflCollector", True, False,
         "scraper.scrape_afl_fixtures / scraper.scrape_afl_matches",
     ),
     OperationalDomain.MATCH_ROSTERS: SourcePolicy(
@@ -66,7 +66,7 @@ SOURCE_POLICY = {
         "cfs_json", "MatchRosterCollector", False,
     ),
     OperationalDomain.MATCH_STATUS: SourcePolicy(
-        OperationalDomain.MATCH_STATUS, "public_json", "reconcile_match_status", True, False,
+        OperationalDomain.MATCH_STATUS, "public_afl_json", "reconcile_match_status", True, False,
         "scraper.scrape_afl_matches / scraper.monitor_match_status",
     ),
     OperationalDomain.MATCH_PLAYER_STATS: SourcePolicy(

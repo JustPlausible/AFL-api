@@ -10,6 +10,8 @@ from dataclasses import asdict, is_dataclass
 from decimal import Decimal
 from pathlib import Path
 
+from collection.diagnostics import CollectionDiagnostic
+
 
 def _json_default(value):
     if isinstance(value, Decimal):
@@ -17,6 +19,12 @@ def _json_default(value):
     if is_dataclass(value):
         return asdict(value)
     raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
+def _diagnostic_output(diagnostic, *, details=None, pretty=False):
+    """Serialize one envelope and its non-conflicting domain-specific details."""
+    return json.dumps(diagnostic.to_dict(details=details), default=_json_default,
+                      indent=2 if pretty else None)
 
 
 def import_clubs_to_db():
@@ -71,9 +79,26 @@ def handle_collect_afl_data(args):
         with AflJsonClient() as client:
             summary = CollectionOrchestrator(client).run(request)
     except (BatchCollectionError, FileExistsError, ValueError) as exc:
-        print(json.dumps({"status": "failed", "error": str(exc)}), file=sys.stderr)
+        diagnostic = CollectionDiagnostic(
+            operation="collect_afl_data", domain="orchestration",
+            source_family="public_afl_json+cfs_json", collector="CollectionOrchestrator",
+            mode="database_free", database_opened=False, persistence_target="none",
+            result_status="failed", result_detail=exc.__class__.__name__,
+            fallback_allowed=False, fallback_occurred=False,
+        )
+        print(_diagnostic_output(diagnostic), file=sys.stderr)
         raise SystemExit(1) from None
-    print(json.dumps(summary, default=_json_default))
+    status = summary.get("status", "unknown")
+    common_status = "success" if status in {"success", "successful"} else status
+    diagnostic = CollectionDiagnostic(
+        operation="collect_afl_data", domain="orchestration",
+        source_family="public_afl_json+cfs_json", collector="CollectionOrchestrator",
+        mode="database_free", database_opened=False, persistence_target="none",
+        result_status=common_status if common_status in {"success", "partial", "failed", "skipped"} else "unknown",
+        fallback_allowed=False, fallback_occurred=False,
+        season_id=args.afl_season,
+    )
+    print(_diagnostic_output(diagnostic, details=summary))
     if summary["status"] == "failed":
         raise SystemExit(1)
 
@@ -115,8 +140,16 @@ def handle_scrape_injuries(args):
     from db.scrape_runs import TRIGGER_CLI
 
     outcome = collect_operational(OperationalDomain.INJURIES, trigger_source=TRIGGER_CLI)
-    displayed = outcome if args.print_json else outcome.details
-    print(json.dumps(displayed, default=_json_default, indent=2 if args.print_json else None))
+    diagnostic = CollectionDiagnostic(
+        operation="scrape_injuries", domain="injuries", source_family="html",
+        collector=outcome.collector, mode="persistent", database_opened=True,
+        persistence_target="injuries,injury_history", persistence_action="upsert",
+        records_received=outcome.rows_read, rows_written=outcome.rows_written,
+        result_status=outcome.status, fallback_allowed=False, fallback_occurred=False,
+        diagnostic_count=len((outcome.details or {}).get("diagnostics", ())),
+    )
+    print(_diagnostic_output(diagnostic, details=outcome.details,
+                             pretty=args.print_json))
 
 
 def handle_scrape_lineups(args):
@@ -135,8 +168,17 @@ def handle_scrape_lineups(args):
         audit["rows_read"] = len(players)
         save_lineups_to_db(players, conn, args.scrape_lineups)
         audit["rows_written"] = len(players)
-        if args.print_json:
-            print(json.dumps(players, indent=2))
+        diagnostic = CollectionDiagnostic(
+            operation="scrape_lineups", domain="lineups", source_family="html",
+            collector="scraper.scrape_afl_lineups", mode="persistent",
+            database_opened=True, persistence_target="lineups,player_lineups",
+            persistence_action="upsert", records_received=len(players),
+            rows_written=len(players), result_status="success" if players else "empty",
+            fallback_allowed=False, fallback_occurred=False,
+            round_id=args.scrape_lineups, audit_id=audit["run_id"],
+        )
+        details = {"records": players} if args.print_json else None
+        print(_diagnostic_output(diagnostic, details=details, pretty=args.print_json))
     conn.close()
 
 
@@ -170,9 +212,15 @@ def handle_scrape_all_rounds(_args):
 def handle_scrape_match(args):
     from scraper import scrape_afl_player_stats
     from utils.log import log
-    log(f"📊 Explicit legacy player-stat collection for match_id {args.scrape_match}: "
-        "source_family=html collector=scraper.scrape_afl_player_stats "
-        "persistence_target=player_stats fallback_occurred=false", "INFO")
+    diagnostic = CollectionDiagnostic(
+        operation="scrape_match", domain="match_player_stats", source_family="html",
+        collector="scraper.scrape_afl_player_stats", mode="legacy_persistent",
+        database_opened=True, persistence_target="player_stats", persistence_action="upsert",
+        result_status="success", fallback_allowed=False, fallback_occurred=False,
+        match_id=args.scrape_match,
+    )
+    log("📊 Explicit legacy player-stat collection " +
+        " ".join(f"{key}={value}" for key, value in diagnostic.to_dict(omit_none=True).items()), "INFO")
     scrape_afl_player_stats.run_scraper(match_id=args.scrape_match, once=True)
 
 
@@ -210,26 +258,36 @@ def handle_collect_match_player_stats(args):
     finally:
         conn.close()
     output = {
-        "source_family": "cfs_json", "collector": "MatchPlayerStatsCollector",
-        "persistence_target": "cfs_player_stats", "fallback_occurred": False,
-        "fallback_reason": None, "match_provider_id": result.match_provider_id,
-        "status": result.status.value, "endpoint_source_status": result.endpoint_source_status,
+        "fallback_reason": None,
+        "match_provider_id": result.match_provider_id, "status": result.status.value,
+        "endpoint_source_status": result.endpoint_source_status,
         "stored_canonical_status": reconciliation.stored_status,
         "direct_match_detail_status": reconciliation.direct_status,
         "resolved_match_status": result.resolved_match_status,
         "status_resolution": status_resolution,
         "canonical_match_refreshed": reconciliation.canonical_refreshed,
         "afl_match_id": reconciliation.afl_match_id, "collected_at": result.collected_at,
-        "source_endpoint": result.source_endpoint, "records_collected": len(result.records),
-        "rows_written": rows_written, "rejected_records": result.rejected_records,
+        "records_collected": len(result.records), "rejected_records": result.rejected_records,
         "diagnostics": [*reconciliation.diagnostics, *result.diagnostics], "records": result.records,
     }
+    diagnostic = CollectionDiagnostic(
+        operation="collect_match_player_stats", domain="match_player_stats",
+        source_family="cfs_json", collector="MatchPlayerStatsCollector", mode="persistent",
+        database_opened=True, persistence_target="cfs_player_stats", persistence_action="upsert",
+        source_endpoint=result.source_endpoint, records_received=len(result.records) + result.rejected_records,
+        records_normalised=len(result.records), records_rejected=result.rejected_records,
+        rows_written=rows_written, result_status=result.status.value,
+        result_detail=result.endpoint_source_status, fallback_allowed=False,
+        fallback_occurred=False, diagnostic_count=len(output["diagnostics"]),
+        match_id=reconciliation.afl_match_id, provider_match_id=result.match_provider_id,
+        audit_id=audit["run_id"],
+    )
     if args.print_json:
-        print(json.dumps(output, indent=2, default=_json_default))
+        print(_diagnostic_output(diagnostic, details=output, pretty=True))
     else:
         output.pop("records")
         output["diagnostics"] = [diagnostic.code for diagnostic in output["diagnostics"]]
-        print(json.dumps(output, default=_json_default))
+        print(_diagnostic_output(diagnostic, details=output))
 
 
 def handle_collect_match_rosters(args):
@@ -238,21 +296,28 @@ def handle_collect_match_rosters(args):
         result = MatchRosterCollector(client, raw_directory=args.afl_raw_directory).collect(
             args.collect_match_rosters)
     output = {
-        "source_family": "cfs_json", "collector": "MatchRosterCollector",
-        "persistence_target": None, "persistence_performed": False,
-        "fallback_occurred": False, "fallback_reason": None,
+        "persistence_performed": False, "fallback_reason": None,
         "round_provider_id": result.round_provider_id, "status": result.status.value,
         "publication_state": result.publication_state,
         "provider_timestamp": result.provider_timestamp,
         "provider_version": result.provider_version, "rosters": result.rosters,
         "selections": result.selections,
     }
+    diagnostic = CollectionDiagnostic(
+        operation="collect_match_rosters", domain="match_rosters", source_family="cfs_json",
+        collector="MatchRosterCollector", mode="read_only", database_opened=False,
+        persistence_target="none", records_received=len(result.selections),
+        records_normalised=len(result.selections),
+        result_status="success" if result.status.value == "published" else result.status.value,
+        result_detail=result.publication_state, fallback_allowed=False, fallback_occurred=False,
+        round_id=result.round_provider_id,
+    )
     if args.print_json:
-        print(json.dumps(output, indent=2))
+        print(_diagnostic_output(diagnostic, details=output, pretty=True))
     else:
         output.pop("rosters")
         output["selections"] = len(result.selections)
-        print(json.dumps(output))
+        print(_diagnostic_output(diagnostic, details=output))
 
 
 def handle_bootstrap_afl_season(args):
@@ -278,7 +343,7 @@ def handle_bootstrap_afl_season(args):
             audit["rows_written"] = summary.inserted + summary.updated + player_summary.rows_written
     finally:
         conn.close()
-    print(json.dumps({
+    details = {
         "competition": result.competition["name"], "season": result.season["name"],
         "records_read": summary.records_read, "inserted": summary.inserted,
         "updated": summary.updated, "unchanged": summary.unchanged, "failed": summary.failed,
@@ -292,7 +357,26 @@ def handle_bootstrap_afl_season(args):
         "player_seasons_unchanged": player_summary.unchanged,
         "missing_team_links": player_summary.missing_team_links,
         "player_diagnostics": [diagnostic.code for diagnostic in player_result.diagnostics],
-    }))
+    }
+    status = "unavailable" if player_summary.status == "unavailable" else (
+        "unchanged" if summary.inserted + summary.updated + player_summary.rows_written == 0
+        else "success")
+    diagnostic = CollectionDiagnostic(
+        operation="bootstrap_afl_season", domain="season_bootstrap",
+        source_family="public_afl_json+cfs_json", collector="PublicAflCollector",
+        mode="composite", database_opened=True,
+        persistence_target="afl_metadata,canonical_players,player_seasons",
+        persistence_action="upsert", records_received=summary.records_read + player_summary.records_read,
+        rows_inserted=summary.inserted + player_summary.players_inserted + player_summary.mappings_inserted + player_summary.associations_inserted,
+        rows_updated=summary.updated + player_summary.players_updated + player_summary.associations_updated,
+        rows_unchanged=summary.unchanged + player_summary.unchanged,
+        rows_written=summary.inserted + summary.updated + player_summary.rows_written,
+        result_status=status, result_detail=player_summary.status,
+        fallback_allowed=False, fallback_occurred=False,
+        diagnostic_count=len(player_result.diagnostics), season_id=result.season["afl_id"],
+        audit_id=audit["run_id"],
+    )
+    print(_diagnostic_output(diagnostic, details=details, pretty=args.print_json))
 
 
 def handle_collect_afl_metadata(args):
@@ -303,10 +387,19 @@ def handle_collect_afl_metadata(args):
             competition_provider_id=args.afl_competition_provider_id, season=args.afl_season)
     output = {"competition": result.competition, "season": result.season,
               "rounds": result.rounds, "teams": result.teams, "matches": result.matches}
+    received = 2 + len(result.rounds) + len(result.teams) + len(result.matches)
+    diagnostic = CollectionDiagnostic(
+        operation="collect_afl_metadata", domain="metadata",
+        source_family="public_afl_json", collector="PublicAflCollector",
+        mode="read_only", database_opened=False, persistence_target="none",
+        records_received=received, records_normalised=received, result_status="success",
+        fallback_allowed=False, fallback_occurred=False,
+        season_id=result.season.get("afl_id"),
+    )
     if args.print_json:
-        print(json.dumps(output, indent=2))
+        print(_diagnostic_output(diagnostic, details=output, pretty=True))
     else:
-        print(json.dumps({"competition": result.competition["name"],
+        print(_diagnostic_output(diagnostic, details={"competition": result.competition["name"],
                           "season": result.season["name"], "rounds": len(result.rounds),
                           "teams": len(result.teams), "matches": len(result.matches)}))
 

@@ -44,18 +44,17 @@ def test_roster_cli_reports_source_read_only_boundary_and_publication_state(
     cli.main()
     output = json.loads(capsys.readouterr().out)
 
-    assert output == {
-        "source_family": "cfs_json",
-        "collector": "MatchRosterCollector",
-        "persistence_target": None,
-        "persistence_performed": False,
-        "fallback_occurred": False,
-        "fallback_reason": None,
-        "round_provider_id": "CD_R202601421",
-        "status": status,
-        "publication_state": status.upper(),
-        "provider_timestamp": None,
-        "provider_version": None,
-        "selections": count,
+    assert {key: output[key] for key in (
+        "operation", "source_family", "collector", "mode", "database_opened",
+        "persistence_target", "fallback_allowed", "fallback_occurred",
+        "round_provider_id", "status", "publication_state", "selections",
+    )} == {
+        "operation": "collect_match_rosters", "source_family": "cfs_json",
+        "collector": "MatchRosterCollector", "mode": "read_only",
+        "database_opened": False, "persistence_target": "none",
+        "fallback_allowed": False, "fallback_occurred": False,
+        "round_provider_id": "CD_R202601421", "status": status,
+        "publication_state": status.upper(), "selections": count,
     }
+    assert output["result_status"] == ("success" if status == "published" else "empty")
     assert len(calls) == 1

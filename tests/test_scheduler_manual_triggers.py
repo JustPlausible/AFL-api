@@ -54,7 +54,7 @@ def test_scheduler_valid_triggers_create_registry_with_admin_manual_and_correct_
         assert calls[-1][1]["job_type"] == job_type
         assert calls[-1][1]["trigger_type"] == "admin_manual"
         body = resp.json()
-        assert body["selected_source"] in {"public_json", "cfs_json", "html"}
+        assert body["selected_source"] in {"public_afl_json", "cfs_json", "html"}
         assert body["collector"]
         assert body["persistence"] in {"persistent", "read_only"}
         assert body["rows_collected"] is None

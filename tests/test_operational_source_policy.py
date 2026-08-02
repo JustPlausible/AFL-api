@@ -30,8 +30,8 @@ def _database(tmp_path, monkeypatch):
 
 
 def test_policy_is_json_first_and_keeps_injuries_intentionally_html():
-    assert policy_for(OperationalDomain.METADATA).source_family == "public_json"
-    assert policy_for(OperationalDomain.MATCH_STATUS).source_family == "public_json"
+    assert policy_for(OperationalDomain.METADATA).source_family == "public_afl_json"
+    assert policy_for(OperationalDomain.MATCH_STATUS).source_family == "public_afl_json"
     assert policy_for(OperationalDomain.MATCH_ROSTERS).source_family == "cfs_json"
     assert policy_for(OperationalDomain.MATCH_ROSTERS).persists is False
     assert policy_for(OperationalDomain.LINEUPS).source_family == "html"

@@ -79,7 +79,13 @@ def test_json_operation_uses_only_selected_handler_imports(monkeypatch, tmp_path
 
     cli_runtime.handle_collect_afl_data(args)
 
-    assert json.loads(capsys.readouterr().out) == summary
+    output = json.loads(capsys.readouterr().out)
+    assert output["operation"] == "collect_afl_data"
+    assert output["result_status"] == "success"
+    assert output["status"] == "successful"
+    assert output["mode"] == "database_free"
+    assert output["database_opened"] is False
+    assert output["persistence_target"] == "none"
     assert not ({name for name in RUNTIME_MODULES if name.startswith("scraper.")} & set(sys.modules))
     fake_afl_json.CollectionOrchestrator.assert_called_once_with(client)
 
@@ -102,5 +108,11 @@ def test_legacy_operation_uses_only_selected_handler_imports(monkeypatch):
     cli_runtime.handle_scrape_match(SimpleNamespace(scrape_match=8216))
 
     player_stats.run_scraper.assert_called_once_with(match_id=8216, once=True)
+    message = log_module.log.call_args.args[0]
+    assert "source_family=html" in message
+    assert "mode=legacy_persistent" in message
+    assert "persistence_target=player_stats" in message
+    assert "fallback_allowed=False" in message
+    assert "fallback_occurred=False" in message
     assert "afl_json" not in sys.modules
     assert "db.connection" not in sys.modules

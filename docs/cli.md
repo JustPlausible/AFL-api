@@ -125,7 +125,7 @@ python cli.py --collect-match-rosters CD_R202601421 --print-json
 
 This collects CFS round selections and change records. It is **read-only**:
 there is no canonical, publication-safe roster persistence path yet, so it does
-not write legacy lineup tables.
+not write the operational HTML-backed lineup tables.
 
 ```bash
 python cli.py --collect-match-player-stats CD_M20260142001 --print-json
@@ -139,10 +139,12 @@ explicit diagnostic status fallback. Both options require
 `--collect-match-player-stats` and do not change the required `CD_M...`
 collector identifier.
 
-## Explicit legacy HTML commands
+## Supported HTML-backed and explicit legacy commands
 
-These commands use rendered AFL web pages, persist legacy tables where noted,
-and are not invoked as fallback by a JSON command:
+These commands use rendered AFL web pages and are not invoked as fallback by a
+JSON command. Injury and operational lineup collection are supported persistent
+workflows; only commands explicitly identified as compatibility paths use the
+`legacy_persistent` mode:
 
 ```bash
 python cli.py --scrape-injuries
@@ -155,7 +157,7 @@ python cli.py --scrape-match 8216
 | Flag | Identifier | Behavior |
 | --- | --- | --- |
 | `--scrape-injuries` | none | Collects HTML injury data, resolves players to canonical AFL IDs, and persists resolved current/history injury records; unresolved or ambiguous rows are reported rather than assigned guessed identities. |
-| `--scrape-lineups ROUND` | AFL round number, such as `9` | Collects HTML lineups and persists legacy lineup tables. |
+| `--scrape-lineups ROUND` | AFL round number, such as `9` | Collects HTML lineups and persists the operational lineup tables. |
 | `--scrape-round ROUND_ID` | Database/AFL numeric `round_id`, such as `1155` | Collects HTML match cards and persists legacy match data; this is not a round number. |
 | `--scrape-all-rounds` | none | Reads rounds already in the database and runs the legacy HTML match collector for all of them. |
 | `--scrape-match MATCH_ID` | AFL numeric match ID, such as `8216` | Collects HTML player stats and persists `player_stats`, separately from CFS `cfs_player_stats`. |
@@ -221,6 +223,79 @@ python cli.py --collect-match-rosters CD_R202601421 --afl-raw-directory data/raw
 `--skip-existing` applies only to club file scraping. There is no silent
 JSON-to-HTML fallback, source auto-selection, or automatic write to both legacy
 and canonical tables.
+
+### Common collection diagnostic envelope
+
+Collection boundaries use `CollectionDiagnostic` as a small, reusable envelope.
+Its stable core identifies `operation`, `domain`, `source_family`, `collector`,
+`mode`, `database_opened`, `persistence_target`, `result_status`,
+`fallback_allowed`, and `fallback_occurred`. Optional fields describe a safe
+source endpoint, persistence action, received/normalised/rejected records,
+inserted/updated/unchanged/written rows, diagnostic count, target identifiers,
+and audit/correlation IDs. JSON and compact operator output are assembled from
+that same object; full JSON may additionally contain non-conflicting
+domain-specific fields and records.
+
+Missing or inapplicable values are JSON `null`; omitted human-summary values
+mean the same thing. A numeric zero is emitted only when an operation measured
+zero. In particular, the CLI never guesses an inserted-versus-updated split
+when a writer exposes only a total. Endpoints are descriptions safe for logs,
+not authenticated URLs, and credentials, cookies, tokens, authorization
+headers, and raw sensitive errors are not diagnostic fields.
+
+Source families have stable meanings: `public_afl_json` is authoritative public
+AFL metadata JSON, `cfs_json` is authenticated Champion Data/CFS JSON, and
+`html` identifies HTML source technology; it does not by itself imply legacy
+persistence. A composite can report
+`public_afl_json+cfs_json`. Canonical current statistics write only
+`cfs_player_stats`; explicit legacy HTML statistics write only `player_stats`.
+Operational injuries and lineups deliberately remain HTML-backed. No command
+uses these diagnostics to enable fallback or dual writes.
+
+Modes are `read_only` (no write), `database_free` (no database is opened and
+the target is `none`), `persistent`, `legacy_persistent`, and `composite` for a
+multi-stage operation. `legacy_persistent` is reserved for explicit compatibility
+writers such as HTML player statistics targeting `player_stats`; supported HTML
+injury and lineup operations are `persistent`. Stable statuses are `success`, `unchanged`, `partial`,
+`unavailable`, `empty`, `live_partial`, `concluded`, `unknown`, `skipped`, and
+`failed`. Provider publication detail such as `published` remains available in
+`result_detail` or a domain field rather than being flattened away.
+
+Representative compact JSON includes the same fields as `--print-json`:
+
+```json
+{"operation":"collect_match_player_stats","source_family":"cfs_json","collector":"MatchPlayerStatsCollector","mode":"persistent","database_opened":true,"persistence_target":"cfs_player_stats","rows_written":44,"result_status":"concluded","fallback_allowed":false,"fallback_occurred":false}
+```
+
+The equivalent database-free core is
+`mode=database_free`, `database_opened=false`, and
+`persistence_target=none`. An explicit legacy match-stat run instead reports
+`source_family=html`, `mode=legacy_persistent`, and
+`persistence_target=player_stats`.
+
+### Active collection-operation inventory
+
+This is a boundary inventory, not a transcript of every command's output.
+
+| Operations | Classification | Source | Collector/service | Database and target | Structured output |
+|---|---|---|---|---|---|
+| `--collect-afl-metadata` | `read_only` | `public_afl_json` | `PublicAflCollector` | unopened; `none` | compact JSON; full `--print-json` |
+| `--bootstrap-afl-season` | `composite` persistent | `public_afl_json+cfs_json` | `PublicAflCollector`, metadata/player persistence | opened; AFL metadata, canonical players and season links | compact/full JSON envelope |
+| `--collect-afl-data` | `database_free` orchestrated | public AFL + CFS JSON | `CollectionOrchestrator` | unopened; deterministic files (`none` database target) | always JSON |
+| `--collect-match-rosters` | `read_only` | `cfs_json` | `MatchRosterCollector` | unopened; `none` | compact JSON; full `--print-json` |
+| `--collect-match-player-stats` | `persistent` | `cfs_json` | `MatchPlayerStatsCollector` | opened; `cfs_player_stats` | compact JSON; records with `--print-json` |
+| `--scrape-match` | `legacy_persistent` | `html` | `scrape_afl_player_stats` | opened by scraper; `player_stats` | operator diagnostic plus existing scraper output |
+| `--scrape-round`, `--scrape-all-rounds` | `legacy_persistent` composite | `html` | `scrape_afl_matches` | opened; legacy match/fixture tables | existing logs/audit only |
+| `--scrape-lineups` | `persistent` | `html` | `scrape_afl_lineups` | opened; lineup tables | envelope; records with `--print-json` |
+| `--scrape-injuries` | `persistent` | `html` | injury pipeline | opened; `injuries`, `injury_history` | compact/full JSON envelope |
+| club scrape/enrich operations | file or composite legacy workflow | `html` or local files | club scraper / merge helpers | raw/enriched files; all-club flow imports players | existing summaries/logs |
+| `--import-clubs`, `--export-clubs` | persistent / read-export | local canonical seed / database | club seed/import helpers | opened; clubs or backup JSON | existing logs |
+
+Legacy round/all-round and club/import/export handlers deliberately retain their
+specialized tables and summaries rather than receiving speculative counts or a
+broad CLI rewrite. The envelope is intended for reuse by future orchestration,
+including Issue #106, but this work does not implement that synchronization
+workflow.
 
 ## Bounded JSON CLI gap review
 

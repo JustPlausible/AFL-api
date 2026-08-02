@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -161,4 +162,10 @@ def test_cli_injury_command_uses_operational_policy(monkeypatch, capsys):
     cli_runtime.handle_scrape_injuries(args)
     assert calls == [(source_policy.OperationalDomain.INJURIES,
                       {"trigger_source": "cli"})]
-    assert '"rows_persisted": 1' in capsys.readouterr().out
+    output = json.loads(capsys.readouterr().out)
+    assert output["rows_persisted"] == 1
+    assert output["source_family"] == "html"
+    assert output["mode"] == "persistent"
+    assert output["database_opened"] is True
+    assert output["fallback_allowed"] is False
+    assert output["fallback_occurred"] is False
