@@ -80,6 +80,27 @@ def test_partial_print_json_preserves_stdout_before_exit_one(monkeypatch, capsys
     assert json.loads(output.out)["result_status"] == "partial"
 
 
+def test_audit_only_partial_json_preserves_committed_match(monkeypatch, capsys):
+    value = result("partial")
+    value.audit_outcome = "failed"
+    value.audit_failures = 1
+    value.matches[0] = MatchSyncResult(
+        8001, "CD_M1", 1, "collected", "CONCLUDED", records=46,
+        rows_inserted=46, rows_written=46, audit_id="match-audit",
+        collection_outcome="concluded", persistence_outcome="committed",
+        audit_outcome="failed", audit_error_class="OperationalError",
+        audit_error_summary="token=<redacted>", processing_continued=True,
+    )
+
+    with pytest.raises(SystemExit, match="1"):
+        invoke(monkeypatch, capsys, value, "--print-json")
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["result_status"] == "partial"
+    assert payload["matches"][0]["persistence_outcome"] == "committed"
+    assert payload["matches"][0]["audit_outcome"] == "failed"
+    assert payload["matches"][0]["rows_written"] == 46
+
+
 @pytest.mark.parametrize("arguments,message", [
     (["--round", "-1"], "round must be zero or greater"),
     (["--round-from", "-1", "--round-to", "2"], "round must be zero or greater"),

@@ -396,6 +396,14 @@ persistence. A composite can report
 Operational injuries and lineups deliberately remain HTML-backed. No command
 uses these diagnostics to enable fallback or dual writes.
 
+Season-sync JSON additionally separates each match's `collection_outcome`,
+`persistence_outcome`, and `audit_outcome`. It includes exact
+`rows_inserted`, `rows_updated`, `rows_unchanged`, and `rows_written` counts;
+audit-only failures include the audit ID, shared correlation ID, redacted
+`audit_error_class`/`audit_error_summary`, and `processing_continued`. The
+season-level `audit_outcome` and `audit_failures` expose child or parent audit
+finalisation problems without changing a committed persistence outcome.
+
 Modes are `read_only` (no write), `database_free` (no database is opened and
 the target is `none`), `persistent`, `legacy_persistent`, and `composite` for a
 multi-stage operation. `legacy_persistent` is reserved for explicit compatibility
