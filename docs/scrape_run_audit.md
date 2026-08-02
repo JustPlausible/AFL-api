@@ -6,6 +6,25 @@
 
 Every run starts as `running` before the scraper performs its main network or database work. Normal success changes the row to `completed`; normal exceptions change it to `failed` and re-raise the original exception. Canonical trigger sources are `cli`, `scheduler`, `admin_manual`, and `startup_recovery`.
 
+## Season synchronizer transaction and outcome contract
+
+`SeasonSynchronizer` owns its supplied SQLite connection for the complete
+operation. The connection must be usable and have no active transaction at
+entry. The service rejects `conn.in_transaction == true` before it creates an
+audit row, calls a remote collector, or performs persistence. Callers must not
+place unrelated work on that connection: bootstrap, per-match authoritative
+persistence, and audit helpers use separate commits and rollbacks.
+
+Season-sync machine results report collection, authoritative persistence, and
+audit finalisation independently. A match with `persistence_outcome` equal to
+`committed` remains collected with its exact row counts if its audit update
+fails; `audit_outcome`, the audit and correlation IDs, a redacted audit error
+class/summary, and `processing_continued` describe that operational failure.
+The season result reports aggregate `audit_failures` and parent
+`audit_outcome`. Safe audit-only failures produce a partial CLI result and
+allow later independent matches to run. Processing stops only when rollback
+and a simple connection probe cannot establish a clean, usable connection.
+
 CLI scrapers default to `cli`. Scheduler-launched jobs use the Issue #25 scheduler `job_id` contract, stored as `correlation_id`, such as `fixtures_daily`, `injuries_daily`, `lineups_match_<match_id>`, `lineups_round_<round>_<slot>`, `match_refresh_<match_id>`, or `stats_match_<match_id>`. Admin-manual callers should pass `admin_manual`; stale-run recovery records failed rows with a concise recovery reason.
 
 ## Nullable fields

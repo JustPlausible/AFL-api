@@ -4,6 +4,8 @@ import sqlite3
 from dataclasses import replace
 from types import SimpleNamespace
 
+import pytest
+
 from afl_json import (CollectionResult, PlayerPersistenceSummary,
                       PlayerStatsStatus, normalise_player_stats, persist_afl_metadata)
 from afl_json.client import AflJsonResourceUnavailable
@@ -65,7 +67,7 @@ class Collector:
 
 
 def setup(tmp_path, statuses=("CONCLUDED", "SCHEDULED", "CONCLUDED"), *,
-          missing_provider=True, client=None, start_times=None):
+          missing_provider=True, client=None, start_times=None, sync_kwargs=None):
     path = tmp_path / "sync.db"
     migrate_database(path)
     conn = sqlite3.connect(path)
@@ -78,7 +80,7 @@ def setup(tmp_path, statuses=("CONCLUDED", "SCHEDULED", "CONCLUDED"), *,
 
     Collector.calls = []
     return conn, SeasonSynchronizer(client or object(), conn, bootstrap=bootstrap,
-                                    collector_factory=Collector)
+                                    collector_factory=Collector, **(sync_kwargs or {}))
 
 
 def test_first_run_rerun_and_refresh_are_idempotent(tmp_path):
@@ -337,3 +339,131 @@ def test_empty_selection_contract_distinguishes_bounded_and_unbounded(tmp_path):
     assert (unbounded.selection_status, unbounded.outcome) == ("empty_unbounded", "success")
     assert (bounded.selection_status, bounded.outcome) == ("empty_bounded", "partial")
     assert (empty_range.selection_status, empty_range.outcome) == ("empty_bounded", "partial")
+
+
+def test_committed_match_survives_audit_failure_and_later_match_runs(tmp_path):
+    calls = 0
+
+    def flaky_complete(run_id, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise sqlite3.OperationalError(
+                "Authorization: Bearer child-secret Cookie: session=hidden "
+                "postgres://admin:db-password@example.test/data"
+            )
+        complete_scrape_run(run_id, **kwargs)
+
+    conn, sync = setup(
+        tmp_path, ("CONCLUDED", "CONCLUDED"), missing_provider=False,
+        sync_kwargs={"complete_audit": flaky_complete},
+    )
+    Collector.results = {"CD_M1": concluded("CD_M1"), "CD_M2": concluded("CD_M2")}
+
+    result = sync.run(season=2026, competition_code="AFL",
+                      competition_provider_id="CD_C1")
+
+    first, second = result.matches
+    assert result.outcome == "partial"
+    assert (result.statistic_rows_inserted, result.statistic_rows_updated,
+            result.statistic_rows_unchanged) == (2, 0, 0)
+    assert tuple(conn.execute(
+        "SELECT COUNT(*),COUNT(DISTINCT match_provider_id) FROM cfs_player_stats"
+    ).fetchone()) == (2, 2)
+    assert (first.outcome, first.collection_outcome, first.persistence_outcome,
+            first.rows_inserted, first.rows_updated, first.rows_unchanged,
+            first.rows_written) == ("collected", "concluded", "committed", 1, 0, 0, 1)
+    assert first.audit_outcome == "failed" and first.processing_continued is True
+    assert first.audit_id and first.correlation_id == result.correlation_id
+    assert second.persistence_outcome == "committed" and second.audit_outcome == "completed"
+    diagnostic = f"{first.audit_error_class} {first.audit_error_summary}"
+    assert "OperationalError" in diagnostic
+    assert all(secret not in diagnostic for secret in
+               ("child-secret", "session=hidden", "db-password"))
+    assert "<redacted>" in diagnostic
+
+
+def test_fail_audit_failure_does_not_mask_original_collection_error(tmp_path):
+    def broken_fail(_run_id, _exc, **_kwargs):
+        raise sqlite3.OperationalError("token=audit-secret")
+
+    conn, sync = setup(
+        tmp_path, ("CONCLUDED",), missing_provider=False,
+        sync_kwargs={"fail_audit": broken_fail},
+    )
+    Collector.results = {"CD_M1": RuntimeError("original collection failure")}
+
+    result = sync.run(season=2026, competition_code="AFL",
+                      competition_provider_id="CD_C1")
+
+    match = result.matches[0]
+    assert match.error == "original collection failure"
+    assert match.audit_outcome == "failed"
+    assert match.audit_error_class == "OperationalError"
+    assert "audit-secret" not in match.audit_error_summary
+
+
+def test_parent_audit_failure_preserves_completed_children(tmp_path):
+    calls = 0
+
+    def fail_parent(run_id, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise sqlite3.OperationalError("parent audit commit failed")
+        complete_scrape_run(run_id, **kwargs)
+
+    conn, sync = setup(
+        tmp_path, ("CONCLUDED",), missing_provider=False,
+        sync_kwargs={"complete_audit": fail_parent},
+    )
+    Collector.results = {"CD_M1": concluded()}
+
+    result = sync.run(season=2026, competition_code="AFL",
+                      competition_provider_id="CD_C1")
+
+    assert result.outcome == "partial" and result.audit_outcome == "failed"
+    assert result.audit_error_class == "OperationalError"
+    assert result.matches[0].persistence_outcome == "committed"
+    assert result.matches[0].audit_outcome == "completed"
+    assert conn.execute("SELECT COUNT(*) FROM cfs_player_stats").fetchone()[0] == 1
+
+
+def test_already_terminal_child_audit_is_an_audit_only_failure(tmp_path):
+    calls = 0
+
+    def terminal_child(run_id, **kwargs):
+        nonlocal calls
+        calls += 1
+        complete_scrape_run(run_id, **kwargs)
+        if calls == 1:
+            complete_scrape_run(run_id, **kwargs)
+
+    conn, sync = setup(
+        tmp_path, ("CONCLUDED",), missing_provider=False,
+        sync_kwargs={"complete_audit": terminal_child},
+    )
+    Collector.results = {"CD_M1": concluded()}
+
+    result = sync.run(season=2026, competition_code="AFL",
+                      competition_provider_id="CD_C1")
+
+    assert result.matches[0].persistence_outcome == "committed"
+    assert result.matches[0].audit_outcome == "failed"
+    assert result.matches[0].audit_error_class == "ValueError"
+    assert conn.execute("SELECT COUNT(*) FROM cfs_player_stats").fetchone()[0] == 1
+
+
+def test_ambient_transaction_is_rejected_before_any_side_effect(tmp_path):
+    conn, sync = setup(tmp_path, ("CONCLUDED",), missing_provider=False)
+    before_audits = conn.execute("SELECT COUNT(*) FROM scrape_runs").fetchone()[0]
+    conn.execute("CREATE TEMP TABLE caller_work(value INTEGER)")
+    conn.execute("INSERT INTO caller_work VALUES (1)")
+    Collector.calls = []
+
+    with pytest.raises(RuntimeError, match="without an active transaction"):
+        sync.run(season=2026, competition_code="AFL", competition_provider_id="CD_C1")
+
+    assert Collector.calls == []
+    assert conn.execute("SELECT COUNT(*) FROM scrape_runs").fetchone()[0] == before_audits
+    assert conn.execute("SELECT COUNT(*) FROM caller_work").fetchone()[0] == 1

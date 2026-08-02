@@ -49,7 +49,8 @@ def _season_sync_summary(result):
          f"inserted={result.statistic_rows_inserted} "
          f"updated={result.statistic_rows_updated} "
          f"unchanged={result.statistic_rows_unchanged}"),
-        f"audit: run={result.audit_id} correlation={result.correlation_id}",
+        (f"audit: outcome={result.audit_outcome} failures={result.audit_failures} "
+         f"run={result.audit_id} correlation={result.correlation_id}"),
     ]
     actionable = [
         f"{match.match_id}:{match.outcome}" for match in result.matches
