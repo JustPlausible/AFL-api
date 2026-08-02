@@ -12,6 +12,7 @@ for the reusable release summary and upgrade cautions.
 - [v0.5.0 release notes](releases/v0.5.0.md)
 - [Operator command selector and supported first-run sequence](cli.md#which-command-should-i-run) — the authoritative answer to “what command should I run?”
 - [Operational AFL source policy and source matrix](operational_source_policy.md)
+- [AFL data authority and identity map](architecture/data_authority_map.md)
 
 - [Administrator CSRF protection](admin_csrf.md)
 - [Admin manual scheduler triggers](admin_manual_triggers.md)
