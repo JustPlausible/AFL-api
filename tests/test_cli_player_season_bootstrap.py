@@ -5,6 +5,7 @@ import sqlite3
 import sys
 
 import cli
+import afl_json
 from afl_json import CollectionResult, PlayerCollectionResult
 from db.migration_runner import migrate_database
 
@@ -51,9 +52,9 @@ def run(tmp_path, monkeypatch, capsys, status="published"):
     path = tmp_path / f"cli-{status}.db"
     migrate_database(path)
     FakeCollector.player_status = status
-    monkeypatch.setattr(cli, "AflJsonClient", FakeClient)
-    monkeypatch.setattr(cli, "PublicAflCollector", FakeCollector)
-    monkeypatch.setattr(cli, "get_db_connection", lambda: sqlite3.connect(path))
+    monkeypatch.setattr(afl_json, "AflJsonClient", FakeClient)
+    monkeypatch.setattr(afl_json, "PublicAflCollector", FakeCollector)
+    monkeypatch.setattr("db.connection.get_db_connection", lambda: sqlite3.connect(path))
     monkeypatch.setattr(sys, "argv", ["cli.py", "--bootstrap-afl-season", "2026"])
     cli.main()
     return path, json.loads(capsys.readouterr().out)

@@ -148,7 +148,7 @@ def test_orchestration_marks_stage_exceptions_failed(tmp_path, stage):
 
 
 def test_cli_injury_command_uses_operational_policy(monkeypatch, capsys):
-    import cli
+    import cli_runtime
     from collection import source_policy
     expected = source_policy.CollectionOutcome(
         "injuries", "html", "collector", True, False, None, "success", 1, 1,
@@ -157,7 +157,8 @@ def test_cli_injury_command_uses_operational_policy(monkeypatch, capsys):
     calls = []
     monkeypatch.setattr(source_policy, "collect_operational",
                         lambda domain, **kwargs: calls.append((domain, kwargs)) or expected)
-    cli.scrape_injuries_to_db()
+    args = type("Args", (), {"print_json": False})()
+    cli_runtime.handle_scrape_injuries(args)
     assert calls == [(source_policy.OperationalDomain.INJURIES,
                       {"trigger_source": "cli"})]
     assert '"rows_persisted": 1' in capsys.readouterr().out

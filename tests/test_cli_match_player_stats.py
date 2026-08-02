@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 import cli
+import afl_json
 from afl_json import AflJsonResourceUnavailable
 from afl_json.player_stats import upsert_player_stats as real_upsert_player_stats
 from db.migration_runner import migrate_database
@@ -60,9 +61,8 @@ def cli_database(tmp_path, monkeypatch):
     )
     conn.commit()
     conn.close()
-    monkeypatch.setattr(cli, "DB_PATH", str(path))
-    monkeypatch.setattr(cli, "get_db_connection", lambda: sqlite3.connect(path))
-    monkeypatch.setattr(cli, "AflJsonClient", FakeClient)
+    monkeypatch.setattr("db.connection.get_db_connection", lambda: sqlite3.connect(path))
+    monkeypatch.setattr(afl_json, "AflJsonClient", FakeClient)
     return path
 
 
@@ -140,7 +140,7 @@ def test_cli_database_failure_rolls_back_partial_snapshot(
         real_upsert_player_stats(conn, replace(result, records=result.records[:1]))
         raise sqlite3.OperationalError("simulated database failure")
 
-    monkeypatch.setattr(cli, "upsert_player_stats", fail_after_one)
+    monkeypatch.setattr(afl_json, "upsert_player_stats", fail_after_one)
 
     with pytest.raises(sqlite3.OperationalError, match="simulated database failure"):
         run_cli(monkeypatch, capsys)

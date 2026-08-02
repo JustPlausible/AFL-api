@@ -24,6 +24,13 @@ there is no command-specific help screen. Only one top-level operation flag may
 be selected per invocation; conflicting operations are rejected before runtime
 database, browser, or network components are loaded.
 
+Importing `cli` for `create_parser`, operation metadata, identifier validators,
+or pure argument validation is intentionally lightweight. Runtime dependencies
+are imported only after validation selects one operation and its handler is
+dispatched. Consequently, help, version, parsing, validation, and unrelated
+operations do not require database, legacy scraper/browser, or AFL/CFS optional
+dependencies.
+
 Network collectors need outbound AFL access. CFS commands additionally require
 the configured CFS/WMC credentials. Persistent operations use `DB_PATH` (by
 default `data/afl_players.db`) and require an initialized, migrated database.

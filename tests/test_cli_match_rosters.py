@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 import cli
+import afl_json
 
 
 class FakeClient:
@@ -34,8 +35,8 @@ def test_roster_cli_reports_source_read_only_boundary_and_publication_state(
             assert provider_id == "CD_R202601421"
             return result
 
-    monkeypatch.setattr(cli, "AflJsonClient", FakeClient)
-    monkeypatch.setattr(cli, "MatchRosterCollector", Collector)
+    monkeypatch.setattr(afl_json, "AflJsonClient", FakeClient)
+    monkeypatch.setattr(afl_json, "MatchRosterCollector", Collector)
     monkeypatch.setattr(sys, "argv", [
         "cli.py", "--collect-match-rosters", "CD_R202601421",
     ])
