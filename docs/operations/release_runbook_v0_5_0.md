@@ -12,13 +12,13 @@ verification, restore, and rollback gates.
 
 This runbook releases AFL-api v0.5.0 as the API and Scheduler processes backed
 by one persistent SQLite database. It applies to a controlled production-like
-Docker deployment built from this repository; `compose.example.yaml` is the
-repository's only Compose definition, but is explicitly development-oriented
-(`--reload` and a source bind mount), so an operator's production override must
-remove those settings.
+Docker deployment built from this repository. `compose.example.yaml` is
+explicitly development-oriented (`--reload` and a source bind mount);
+`compose.production.example.yaml` is the repository's concise single-instance
+starting point and must still be reviewed for the operator's environment.
 
-It does not provision hosts, proxies, TLS, secrets, monitoring, or a production
-Compose override, and it does not replace the detailed guides in section 22.
+It does not provision hosts, proxies, TLS, secrets, monitoring, or a complete
+production environment, and it does not replace the detailed guides in section 22.
 Review every command against the actual deployment, secret store, volume,
 ownership, and retention policy before execution. Placeholders and assumptions
 are called out; never paste a production secret into the release record.

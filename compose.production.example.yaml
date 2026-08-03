@@ -1,20 +1,25 @@
-# Development/example Compose configuration for local development, evaluation,
-# and test/demo operation. The source bind mount and Uvicorn --reload commands
-# are development conveniences; do not copy them unchanged into a stable deployment.
+# Production-like example for one carefully operated, SQLite-backed instance.
+# AFL_API_TAG is operator-selected; replace this example default with the
+# reviewed release or commit identifier recorded for the deployment.
+x-afl-image: &afl-image
+  image: "${AFL_API_IMAGE:-afl-api}:${AFL_API_TAG:-0.5.0-example}"
+
 name: afl-api
 
 services:
   afl-api:
+    <<: *afl-image
     build:
       context: .
       dockerfile: Dockerfile
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
     ports:
       - "${AFL_API_PORT:-8000}:8000"
     env_file:
       - .env
+    environment:
+      DB_PATH: "${DB_PATH:-/app/data/afl_players.db}"
     volumes:
-      - .:/app
       - afl-api-data:/app/data
       - afl-api-logs:/app/logs
     restart: unless-stopped
@@ -26,16 +31,15 @@ services:
       start_period: 20s
 
   afl-admin:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    command: uvicorn admin:app --host 0.0.0.0 --port 8001 --reload
+    <<: *afl-image
+    command: uvicorn admin:app --host 0.0.0.0 --port 8001
     ports:
       - "${AFL_ADMIN_PORT:-8001}:8001"
     env_file:
       - .env
+    environment:
+      DB_PATH: "${DB_PATH:-/app/data/afl_players.db}"
     volumes:
-      - .:/app
       - afl-api-data:/app/data
       - afl-api-logs:/app/logs
     restart: unless-stopped
@@ -44,20 +48,18 @@ services:
       - admin-access
 
   afl-scheduler:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    <<: *afl-image
     command: uvicorn scheduler.start:app --host 0.0.0.0 --port 8000
     env_file:
       - .env
     environment:
-      - PYTHONUNBUFFERED=1
+      DB_PATH: "${DB_PATH:-/app/data/afl_players.db}"
+      PYTHONUNBUFFERED: "1"
     ulimits:
       nofile:
         soft: 65535
         hard: 65535
     volumes:
-      - .:/app
       - afl-api-data:/app/data
       - afl-api-logs:/app/logs
     restart: unless-stopped

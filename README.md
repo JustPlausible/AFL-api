@@ -79,7 +79,17 @@ Dependency manifests are split by purpose:
 - `requirements.txt` contains runtime dependencies required by the API, admin UI, scheduler, and scrapers.
 - `requirements-dev.txt` extends runtime dependencies and adds test/development-only dependencies.
 
-`compose.example.yaml` is a portable example/development configuration. It intentionally avoids real production paths, ports, and secrets. It uses named volumes for local `data` and `logs` state and bind-mounts `.:/app` only for development reload workflows.
+`compose.example.yaml` is the portable local-development, evaluation, and
+test/demo configuration. Its source bind mount and `--reload` processes are
+development conveniences, not stable-deployment settings.
+
+`compose.production.example.yaml` is a concise production-like example for the
+supported single-instance SQLite model. It builds the checkout once under an
+operator-selected image tag shared by API, Admin, and Scheduler, omits source
+mounts and reload, and persists `/app/data` and `/app/logs`. See the
+[Docker deployment guide](docs/operations/docker_deployment.md) for adaptable
+commands, image versioning and reproducibility, persistent paths, network and
+secret boundaries, and links to release/backup/rollback operations.
 
 For production, keep the real Compose file, `.env`, paths, ports, and secrets outside this repository. A recommended server layout is:
 
@@ -90,7 +100,9 @@ For production, keep the real Compose file, `.env`, paths, ports, and secrets ou
 /opt/docker/appdata/afl-api/logs   # Persistent runtime logs
 ```
 
-Production should build from `/opt/projects/afl-api` and should not mount source over `/app`. Mount only persistent runtime state, for example:
+These paths are illustrative operator guidance, not repository defaults. A
+deployment should build from its reviewed checkout and should not mount source
+over `/app`. Mount only persistent runtime state, for example:
 
 ```yaml
 services:
