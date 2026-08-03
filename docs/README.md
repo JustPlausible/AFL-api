@@ -8,6 +8,7 @@ for the reusable release summary and upgrade cautions.
 
 ## Operational and development guides
 
+- [Production-like single-instance Docker deployment](operations/docker_deployment.md)
 - [AFL-api v0.5.0 operator release, backup, restore, and rollback runbook](operations/release_runbook_v0_5_0.md)
 - [v0.5.0 release notes](releases/v0.5.0.md)
 - [Operator command selector and supported first-run sequence](cli.md#which-command-should-i-run) — the authoritative answer to “what command should I run?”
