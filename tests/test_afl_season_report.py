@@ -214,6 +214,9 @@ def test_team_provider_context_mismatch_and_unavailable_are_distinct(tmp_path):
     value = report(conn)
     assert "stats.team_participant_mismatch" in codes(value)
     assert "stats.team_provider_unavailable" in codes(value)
+    human = render_human(value)
+    assert human.count("stats.team_participant_mismatch") == 1
+    assert human.count("stats.team_provider_unavailable") == 1
     assert value.status is ReportStatus.INVALID
 
 
@@ -229,6 +232,30 @@ def test_systematically_null_team_context_is_one_aggregate_finding_per_match(tmp
     assert value.aggregates["authoritative_stat_rows_with_unavailable_team_context"] == 20
     assert value.aggregates["matches_with_unavailable_team_context"] == 1
     assert value.status is ReportStatus.COMPLETE
+
+
+def test_human_output_aggregates_unavailable_team_context_but_json_retains_details(tmp_path):
+    _, conn = database(tmp_path)
+    conn.execute("UPDATE cfs_player_stats SET team_provider_id=NULL")
+    conn.execute("INSERT INTO matches(match_id,match_provider_id,round_id,home_team,away_team,"
+                 "venue,status,start_time_utc,season_id,home_team_id,away_team_id) "
+                 "VALUES(8002,'CD_M2',101,'A','B','MCG','CONCLUDED',"
+                 "'2026-03-02T00:00:00+00:00',85,10,11)")
+    conn.execute("INSERT INTO cfs_player_stats(match_provider_id,champion_data_player_id,"
+                 "afl_match_id,team_provider_id,side,collected_at,source_endpoint,"
+                 "resolved_match_status,snapshot_authority,extra_stats_json,raw_player_json) "
+                 "VALUES('CD_M2','CD_EXTRA','8002',NULL,'home',?,'match_player_stats',"
+                 "'CONCLUDED',2,'{}','{}')", (NOW.isoformat(),))
+    conn.commit()
+
+    value = report(conn)
+    human = render_human(value)
+
+    assert sum(item.code == "stats.team_provider_unavailable"
+               for item in value.findings) == 2
+    assert human.count("stats.team_provider_unavailable") == 1
+    assert "across 2 matches" in human
+    assert "per-match details remain in JSON output" in human
 
 
 def test_authoritative_player_without_season_membership_is_incomplete(tmp_path):

@@ -232,9 +232,16 @@ Do not derive relationships by parsing the characters inside `CD_*` identifiers.
   - `*.player.player.player.playerId`
   - `*.player.player.player.playerName.givenName`
   - `*.player.player.player.playerName.surname`
-  - `*.player.teamId`
   - `*.player.jumperNumber`
   - `*.player.photoURL`
+- Team identity in currently verified payloads: no `teamId`, `teamProviderId`,
+  `squadId`, `clubId`, or
+  equivalent independent identifier was found in the player records, the home
+  or away collection containers, or match-level metadata in the inspected
+  upcoming/live/postgame/concluded responses. The array name supplies only
+  side context, not Champion Data `CD_T...` identity. This does not rule out a
+  future optional field; such a field requires a documented namespace contract
+  before it can be mapped.
 - Important statistic path: `*.playerStats.stats`
 - Core canonical AFL statistic fields:
   - `goals`

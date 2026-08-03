@@ -2,7 +2,7 @@
   "matchStatus": "LIVE",
   "homeTeamPlayerStats": [
     {
-      "player": {"teamId": "CD_T1", "player": {"player": {"player": {"playerId": "CD_I1", "playerName": {"givenName": "Ada", "surname": "Able"}}}}, "jumperNumber": 7},
+      "player": {"player": {"player": {"player": {"playerId": "CD_I1", "playerName": {"givenName": "Ada", "surname": "Able"}}}}, "jumperNumber": 7},
       "playerStats": {"stats": {"goals": 0, "behinds": "1", "kicks": 2.5, "handballs": 3, "marks": 1, "unknownMetric": {"value": 9}}},
       "sourceSequence": 4
     }

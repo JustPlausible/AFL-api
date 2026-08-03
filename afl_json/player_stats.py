@@ -254,7 +254,6 @@ def _normalise_entry(entry: Mapping[str, Any], *, side: str, match_provider_id: 
     if player_id is None:
         return None, [PlayerStatDiagnostic("error", "missing_player_id",
             f"Player-stat entry is missing Champion Data player ID in match {match_provider_id}")]
-    team_id = _deep_first(player_context, "teamId")
     mapped: dict[str, int | Decimal | None] = {}
     for canonical, source in CANONICAL_STAT_FIELDS.items():
         if source not in stats:
@@ -276,7 +275,11 @@ def _normalise_entry(entry: Mapping[str, Any], *, side: str, match_provider_id: 
         side=side, collected_at=collected_at, source_endpoint=SOURCE_ENDPOINT,
         endpoint_source_status=endpoint_source_status,
         resolved_match_status=resolved_match_status, afl_match_id=afl_match_id,
-        team_provider_id=_text(team_id), extra_stats=extra,
+        # The verified match-player-stat contract identifies the collection side,
+        # but supplies no independent team provider identity.  Do not turn side,
+        # canonical match participants, or similarly named undocumented fields
+        # into circular reconciliation evidence.
+        team_provider_id=None, extra_stats=extra,
         raw_player=deepcopy(dict(entry)), **mapped,
     ), diagnostics
 
@@ -319,15 +322,20 @@ def upsert_player_stats(conn: sqlite3.Connection, result: PlayerStatsCollectionR
         # while a newer same-authority response with any changed source or
         # canonical value remains eligible for update.
         changed_columns = (
-            "afl_match_id", "team_provider_id", "side", "source_endpoint",
+            "afl_match_id", "side", "source_endpoint",
             "endpoint_source_status", "resolved_match_status",
             *CANONICAL_STAT_FIELDS, "extra_stats_json", "raw_player_json",
         )
         if supports_canonical_link:
             changed_columns = (*changed_columns, "canonical_player_id")
-        meaningful_change = " OR ".join(
+        comparisons = [
+            "(excluded.team_provider_id IS NOT NULL AND "
+            "excluded.team_provider_id IS NOT cfs_player_stats.team_provider_id)"
+        ]
+        comparisons.extend(
             f"excluded.{name} IS NOT cfs_player_stats.{name}" for name in changed_columns
         )
+        meaningful_change = " OR ".join(comparisons)
         canonical_column = "canonical_player_id," if supports_canonical_link else ""
         canonical_assignment = ("canonical_player_id=excluded.canonical_player_id,"
                                 if supports_canonical_link else "")
@@ -350,7 +358,9 @@ def upsert_player_stats(conn: sqlite3.Connection, result: PlayerStatsCollectionR
                 {', '.join(CANONICAL_STAT_FIELDS)}, extra_stats_json, raw_player_json
             ) VALUES ({', '.join('?' for _ in parameters)})
             ON CONFLICT(match_provider_id, champion_data_player_id) DO UPDATE SET
-                afl_match_id=excluded.afl_match_id, team_provider_id=excluded.team_provider_id,
+                afl_match_id=excluded.afl_match_id,
+                team_provider_id=COALESCE(excluded.team_provider_id,
+                                          cfs_player_stats.team_provider_id),
                 {canonical_assignment}
                 side=excluded.side, collected_at=excluded.collected_at,
                 source_endpoint=excluded.source_endpoint,
@@ -409,17 +419,6 @@ def _deep_player_id(value: Any) -> str | None:
         player_id = _text(current.get("playerId"))
         if player_id:
             return player_id
-        current = current.get("player")
-    return None
-
-
-def _deep_first(value: Any, key: str) -> Any:
-    current = value
-    for _ in range(5):
-        if not isinstance(current, dict):
-            return None
-        if current.get(key) is not None:
-            return current[key]
         current = current.get("player")
     return None
 

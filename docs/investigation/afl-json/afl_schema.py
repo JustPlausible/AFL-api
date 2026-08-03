@@ -276,10 +276,12 @@ PLAYER_MATCH_STAT_FIELDS: Final[tuple[FieldMapping, ...]] = (
     FieldMapping(
         "team_provider_id",
         None,
-        ("player.teamId",),
-        "str",
-        True,
-        MissingPolicy.ERROR_RECORD,
+        (),
+        "str | None",
+        False,
+        MissingPolicy.SET_NULL,
+        notes=("No independent team identity exists in currently verified "
+               "match-player-stat payloads; home/away collection placement is side only."),
     ),
     FieldMapping("goals", "player_stats.goals", ("playerStats.stats.goals",), "int | None", False, MissingPolicy.SET_NULL, "integral_number_or_null"),
     FieldMapping("behinds", "player_stats.behinds", ("playerStats.stats.behinds",), "int | None", False, MissingPolicy.SET_NULL, "integral_number_or_null"),
