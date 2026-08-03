@@ -547,6 +547,23 @@ non-concluded matches are excluded from final-stat failures. Opening Round and
 finals are ordinary persisted rounds; no fixed season-match count is assumed.
 Missing venue/time is informational because upstream publication is nullable.
 
+Future finals may reference public-API placeholder teams that are not members of
+the season's `/teams` response. Bootstrap persists their numeric reference in
+`matches.home_team_id`/`away_team_id` and retains the complete embedded match
+team objects in `home_json`/`away_json`; it does not create participating
+`afl_teams` rows for them. The source exposes no explicit placeholder flag and
+placeholder numeric/provider IDs are not treated as stable. The current reliable
+sentinel is the embedded team's simultaneous `abbreviation="TBD"` and
+`nickname="TBD"` values (names describe ladder positions or prior-final
+winners and therefore vary). A future, non-concluded fixture whose otherwise
+invalid participants all carry that sentinel produces one informational
+`match.participants_unpublished` finding. This applies to both `PLACEHOLDER` and
+`SCHEDULED` source statuses, so a scheduled Grand Final is not misclassified.
+A concluded match that still has TBD participants, or any fixture with an
+unrecognised/non-placeholder team outside season participation, retains the
+unsafe `match.missing_team` error. The report does not hard-code team IDs, match
+IDs, round names, dates, or a finals format.
+
 Only `cfs_player_stats` is authoritative. Authority `1` is live/partial and `2`
 is concluded; the writer protects higher authority and only permits equal-
 authority observations with a non-older collection timestamp. Legacy

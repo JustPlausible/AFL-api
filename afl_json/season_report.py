@@ -1,6 +1,7 @@
 """Deterministic, read-only completeness reporting for a persisted AFL season."""
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections import Counter
 from dataclasses import asdict, dataclass, field
@@ -195,7 +196,8 @@ class SeasonCompletenessReporter:
         rounds = self.conn.execute("SELECT COUNT(*) FROM rounds WHERE season_id=?", (season_id,)).fetchone()[0]
         match_rows = self.conn.execute(
             "SELECT m.match_id,m.match_provider_id,m.round_id,m.home_team_id,m.away_team_id,"
-            "m.start_time_utc,m.venue,m.status,r.season_id AS round_season,"
+            "m.start_time_utc,m.venue,m.status,m.home_json,m.away_json,"
+            "r.season_id AS round_season,"
             "hts.team_id AS valid_home,ats.team_id AS valid_away "
             "FROM matches m LEFT JOIN rounds r ON r.round_id=m.round_id "
             "LEFT JOIN afl_team_seasons hts ON hts.competition_season_id=? AND hts.team_id=m.home_team_id "
@@ -268,11 +270,28 @@ class SeasonCompletenessReporter:
                 self._add(result, "match.missing_round", Severity.ERROR, "matches",
                           "Match round is absent or belongs to another season.", match_id=row["match_id"],
                           expected=season_id, observed=row["round_season"], evidence_source="matches JOIN rounds")
-            if row["valid_home"] is None or row["valid_away"] is None:
-                self._add(result, "match.missing_team", Severity.ERROR, "matches",
-                          "Home or away team is absent from season participation.", match_id=row["match_id"],
-                          expected="two season teams", observed="invalid relationship",
-                          evidence_source="matches JOIN afl_team_seasons")
+            invalid_sides = tuple(side for side in ("home", "away")
+                                  if row[f"valid_{side}"] is None)
+            placeholder_sides = tuple(
+                side for side in invalid_sides if _is_placeholder_team(row[f"{side}_json"])
+            )
+            if invalid_sides:
+                if (lifecycle != "CONCLUDED" and _is_future(row["start_time_utc"], self.clock())
+                        and placeholder_sides == invalid_sides):
+                    self._add(result, "match.participants_unpublished", Severity.INFO, "matches",
+                              "Future fixture participants are intentionally unpublished.",
+                              match_id=row["match_id"], expected="participating season teams",
+                              observed={"placeholder_sides": placeholder_sides,
+                                        "status": row["status"]},
+                              evidence_source="matches(home_json,away_json,start_time_utc,status)")
+                else:
+                    self._add(result, "match.missing_team", Severity.ERROR, "matches",
+                              "Home or away team is absent from season participation.",
+                              match_id=row["match_id"], expected="two season teams",
+                              observed={"invalid_sides": invalid_sides,
+                                        "placeholder_sides": placeholder_sides,
+                                        "status": row["status"]},
+                              evidence_source="matches JOIN afl_team_seasons")
             if not row["match_provider_id"]:
                 severity = Severity.WARNING if lifecycle == "CONCLUDED" else Severity.INFO
                 self._add(result, "match.missing_provider_id", severity, "matches",
@@ -489,3 +508,33 @@ def render_human(report: SeasonReport) -> str:
         lines.append(f"[{item.severity.value}] {item.code}" +
                      (f" ({identifiers})" if identifiers else "") + f": {item.message}")
     return "\n".join(lines)
+
+
+def _is_placeholder_team(raw_context: object) -> bool:
+    """Recognise the persisted public-API TBD sentinel without relying on IDs."""
+    if not isinstance(raw_context, str):
+        return False
+    try:
+        context = json.loads(raw_context)
+    except (TypeError, ValueError):
+        return False
+    if not isinstance(context, dict):
+        return False
+    team = context.get("team")
+    if not isinstance(team, dict):
+        return False
+    return all(isinstance(team.get(field), str)
+               and team[field].strip().casefold() == "tbd"
+               for field in ("abbreviation", "nickname"))
+
+
+def _is_future(value: object, now: datetime) -> bool:
+    if not isinstance(value, str) or not value.strip():
+        return False
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc) > now.astimezone(timezone.utc)

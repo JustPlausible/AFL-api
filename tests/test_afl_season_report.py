@@ -63,6 +63,24 @@ def codes(value):
     return {item.code for item in value.findings}
 
 
+def set_match_participants(conn, *, status, home_id, away_id, placeholder,
+                           start="2026-09-26T04:30:00+00:00"):
+    def context(team_id, name):
+        team = {"id": team_id, "providerId": f"CD_T{team_id}", "name": name,
+                "abbreviation": "TBD" if placeholder else "OUT",
+                "nickname": "TBD" if placeholder else "Outsider", "teamType": "MEN"}
+        return json.dumps({"team": team}, sort_keys=True)
+
+    conn.execute(
+        "UPDATE matches SET status=?,start_time_utc=?,home_team_id=?,away_team_id=?,"
+        "home_team=?,away_team=?,home_json=?,away_json=? WHERE match_id=8001",
+        (status, start, home_id, away_id, "TBD" if placeholder else "Outsider A",
+         "TBD" if placeholder else "Outsider B", context(home_id, "Winner of PF1"),
+         context(away_id, "Winner of PF2")),
+    )
+    conn.commit()
+
+
 def test_complete_finished_season_is_deterministic_and_legacy_is_not_authority(tmp_path):
     _, conn = database(tmp_path)
     first = report(conn)
@@ -90,6 +108,57 @@ def test_future_match_nullable_membership_and_missing_provider_are_classified(tm
     assert by_code["match.missing_provider_id"].severity.value == "info"
     assert "match.final_without_authoritative_stats" not in by_code
     assert value.status is ReportStatus.COMPLETE
+
+
+@pytest.mark.parametrize("status", ["PLACEHOLDER", "SCHEDULED"])
+def test_future_tbd_participants_are_informational_for_any_nonconcluded_status(
+        tmp_path, status):
+    _, conn = database(tmp_path, status=status, stats=False)
+    set_match_participants(conn, status=status, home_id=156, away_id=160, placeholder=True)
+
+    value = report(conn)
+
+    finding = next(item for item in value.findings
+                   if item.code == "match.participants_unpublished")
+    assert finding.severity.value == "info"
+    assert finding.observed == {"placeholder_sides": ("home", "away"), "status": status}
+    assert "match.missing_team" not in codes(value)
+    assert value.status is ReportStatus.COMPLETE
+    assert exit_code(value.status) == 0
+
+
+def test_scheduled_match_with_participating_teams_has_no_participant_finding(tmp_path):
+    _, conn = database(tmp_path, status="SCHEDULED", stats=False)
+
+    value = report(conn)
+
+    assert "match.participants_unpublished" not in codes(value)
+    assert "match.missing_team" not in codes(value)
+    assert value.status is ReportStatus.COMPLETE
+
+
+def test_concluded_match_with_tbd_participants_is_invalid(tmp_path):
+    _, conn = database(tmp_path)
+    set_match_participants(conn, status="CONCLUDED", home_id=156, away_id=160,
+                           placeholder=True, start="2026-07-01T00:00:00+00:00")
+
+    value = report(conn)
+
+    assert "match.participants_unpublished" not in codes(value)
+    assert "match.missing_team" in codes(value)
+    assert value.status is ReportStatus.INVALID
+
+
+def test_nonplaceholder_teams_outside_season_are_invalid(tmp_path):
+    _, conn = database(tmp_path, status="SCHEDULED", stats=False)
+    set_match_participants(conn, status="SCHEDULED", home_id=901, away_id=902,
+                           placeholder=False)
+
+    value = report(conn)
+
+    assert "match.participants_unpublished" not in codes(value)
+    assert "match.missing_team" in codes(value)
+    assert value.status is ReportStatus.INVALID
 
 
 def test_partial_unresolved_and_conflicting_crosswalk_findings(tmp_path):
