@@ -463,6 +463,32 @@ def handle_sync_afl_season(args):
         raise SystemExit(1)
 
 
+def handle_report_afl_season(args):
+    """Run the reusable reporter over a query-only SQLite connection."""
+    from afl_json.season_report import (SeasonCompletenessReporter, exit_code,
+                                        render_human)
+    from db.connection import (get_db_path, get_read_only_db_connection)
+
+    conn = get_read_only_db_connection()
+    try:
+        report = SeasonCompletenessReporter(
+            conn, database=get_db_path().name,
+        ).report(
+            args.report_afl_season,
+            competition_code=args.afl_competition_code,
+            competition_provider_id=args.afl_competition_provider_id,
+        )
+    finally:
+        conn.close()
+    if args.print_json:
+        print(json.dumps(report.to_dict(), indent=2, default=_json_default))
+    else:
+        print(render_human(report))
+    code = exit_code(report.status)
+    if code:
+        raise SystemExit(code)
+
+
 def handle_collect_afl_metadata(args):
     from afl_json import AflJsonClient, PublicAflCollector
     with AflJsonClient() as client:
@@ -501,6 +527,7 @@ HANDLERS = {
     "collect_match_rosters": handle_collect_match_rosters,
     "bootstrap_afl_season": handle_bootstrap_afl_season,
     "sync_afl_season": handle_sync_afl_season,
+    "report_afl_season": handle_report_afl_season,
     "collect_afl_metadata": handle_collect_afl_metadata,
 }
 
