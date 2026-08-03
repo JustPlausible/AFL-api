@@ -491,7 +491,7 @@ class SeasonCompletenessReporter:
 
 
 def render_human(report: SeasonReport) -> str:
-    """Render the same structured findings exposed by :meth:`to_dict`."""
+    """Render structured findings, aggregating repetitive optional context."""
     meta = report.metadata
     lines = [
         f"AFL season completeness report {meta.requested_season_year}: {report.status.value}",
@@ -501,7 +501,18 @@ def render_human(report: SeasonReport) -> str:
                                if not isinstance(value, dict))),
         "severity: " + " ".join(f"{key}={value}" for key, value in report.severity_counts.items()),
     ]
-    for item in report.findings:
+    unavailable = [item for item in report.findings
+                   if item.code == "stats.team_provider_unavailable"]
+    findings = [item for item in report.findings
+                if item.code != "stats.team_provider_unavailable"]
+    if unavailable:
+        rows = report.aggregates["authoritative_stat_rows_with_unavailable_team_context"]
+        matches = report.aggregates["matches_with_unavailable_team_context"]
+        lines.append("[info] stats.team_provider_unavailable: "
+                     f"independent team provider context is unavailable for {rows} "
+                     f"authoritative rows across {matches} matches "
+                     "(per-match details remain in JSON output).")
+    for item in findings:
         identifiers = " ".join(f"{key}={value}" for key, value in (
             ("match", item.match_id), ("team", item.team_id), ("player", item.player_id)
         ) if value is not None)

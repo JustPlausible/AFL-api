@@ -1,5 +1,6 @@
 import json
 import sqlite3
+from dataclasses import replace
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -56,7 +57,7 @@ def test_live_partial_preserves_null_zero_decimal_unknown_and_metadata():
     record = result.records[0]
     assert isinstance(record, CanonicalPlayerStat)
     assert record.natural_key == ("CD_M1", "CD_I1")
-    assert record.side == "home" and record.team_provider_id == "CD_T1"
+    assert record.side == "home" and record.team_provider_id is None
     assert record.goals == 0 and record.behinds == 1 and record.kicks == Decimal("2.5")
     assert record.disposals is None and record.hitouts is None
     assert record.extra_stats == {"unknownMetric": {"value": 9}}
@@ -82,6 +83,18 @@ def test_concluded_maps_both_arrays_and_all_eight_fields():
     assert (home.goals, home.behinds, home.kicks, home.handballs, home.disposals,
             home.marks, home.tackles, home.hitouts) == (2, 1, 10, 8, 18, 4, 3, 0)
     assert home.extra_stats == {"ratingPoints": 7.25}
+    assert all(record.team_provider_id is None for record in result.records)
+
+
+def test_undocumented_team_like_field_is_not_promoted_to_provider_identity():
+    payload = fixture("match_player_stats_concluded.json")
+    payload["homeTeamPlayerStats"][0]["player"]["teamId"] = "CD_T1"
+
+    result = normalise_player_stats(payload, "CD_M1", collected_at="now")
+
+    assert result.records[0].side == "home"
+    assert result.records[0].team_provider_id is None
+    assert result.records[0].raw_player["player"]["teamId"] == "CD_T1"
 
 
 def test_endpoint_status_is_retained_and_advances_canonical_metadata():
@@ -228,8 +241,40 @@ def test_final_supersedes_live_is_idempotent_and_cannot_be_downgraded():
     assert upsert_player_stats(conn, final) == 2
     assert upsert_player_stats(conn, final) == 0
     assert upsert_player_stats(conn, stale_live) == 0
-    row = conn.execute("SELECT goals, endpoint_source_status, snapshot_authority FROM cfs_player_stats WHERE champion_data_player_id='CD_I1'").fetchone()
-    assert row == (2, "CONCLUDED", 2)
+    row = conn.execute("SELECT goals, endpoint_source_status, snapshot_authority,"
+                       "team_provider_id FROM cfs_player_stats "
+                       "WHERE champion_data_player_id='CD_I1'").fetchone()
+    assert row == (2, "CONCLUDED", 2, None)
+
+
+def test_missing_team_identity_does_not_erase_existing_verified_identity():
+    conn = sqlite3.connect(":memory:")
+    _schema(conn)
+    payload = fixture("match_player_stats_concluded.json")
+    first = normalise_player_stats(
+        payload, "CD_M1", collected_at="2026-07-25T12:00:00+00:00"
+    )
+    verified = replace(first, records=[replace(first.records[0], team_provider_id="CD_T1")])
+    assert upsert_player_stats(conn, verified) == 1
+
+    later_without_identity = normalise_player_stats(
+        {**payload, "homeTeamPlayerStats": [{
+            **payload["homeTeamPlayerStats"][0],
+            "playerStats": {"stats": {
+                **payload["homeTeamPlayerStats"][0]["playerStats"]["stats"],
+                "goals": 3,
+            }},
+        }]},
+        "CD_M1", collected_at="2026-07-25T13:00:00+00:00"
+    )
+    later_without_identity = replace(
+        later_without_identity, records=later_without_identity.records[:1]
+    )
+    assert upsert_player_stats(conn, later_without_identity) == 1
+    assert conn.execute(
+        "SELECT team_provider_id,goals FROM cfs_player_stats "
+        "WHERE champion_data_player_id='CD_I1'"
+    ).fetchone() == ("CD_T1", 3)
 
 
 def test_metadata_conclusion_receives_final_snapshot_authority():

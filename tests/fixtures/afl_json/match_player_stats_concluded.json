@@ -2,13 +2,13 @@
   "status": "CONCLUDED",
   "homeTeamPlayerStats": [
     {
-      "player": {"teamId": "CD_T1", "player": {"player": {"player": {"playerId": "CD_I1"}}}},
+      "player": {"player": {"player": {"player": {"playerId": "CD_I1"}}}},
       "playerStats": {"stats": {"goals": 2, "behinds": 1, "kicks": 10, "handballs": 8, "disposals": 18, "marks": 4, "tackles": 3, "hitouts": 0, "ratingPoints": 7.25}}
     }
   ],
   "awayTeamPlayerStats": [
     {
-      "player": {"teamId": "CD_T2", "player": {"player": {"player": {"playerId": "CD_I2"}}}},
+      "player": {"player": {"player": {"player": {"playerId": "CD_I2"}}}},
       "playerStats": {"stats": {"goals": "1", "behinds": "0", "kicks": "9", "handballs": "4", "disposals": "13", "marks": "5", "tackles": "2", "hitouts": "6"}}
     }
   ]

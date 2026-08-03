@@ -41,9 +41,58 @@ Both `homeTeamPlayerStats` and `awayTeamPlayerStats` pass through the same
 mapper and produce one collection. Natural identity is the requested Champion
 Data match provider ID plus the deeply nested Champion Data `playerId` observed
 at `player.player.player.playerId`. Each record also retains the AFL/internal
-match ID when supplied by its caller, `teamId`, home/away affiliation,
+match ID when supplied by its caller, home/away affiliation,
 collection time, endpoint, endpoint status, separately resolved canonical match
 status, the original player entry, and unmapped statistics.
+
+### Team identity investigation (Issue #126)
+
+The currently verified endpoint responses do **not** provide independent team
+identity. This is an observation about the retained states, not a claim that an
+undocumented future endpoint response can never add an optional field.
+The investigation checked each player-stat entry, its nested `player` and
+`playerStats` objects, both `homeTeamPlayerStats` and `awayTeamPlayerStats`
+containers, and top-level match metadata for `teamId`, `teamProviderId`,
+`squadId`, `clubId`, and equivalents. Sanitised upcoming/live, postgame and
+concluded captures showed no such field at any of those levels. In particular,
+there is no endpoint value whose namespace can be confirmed as the same
+Champion Data `CD_T...` namespace used by `afl_teams.provider_id`.
+
+Consequently, normalisation sets `CanonicalPlayerStat.team_provider_id` to
+null, the persistence DTO passes null, and the existing insert/upsert stores it
+in nullable `cfs_player_stats.team_provider_id`. The `homeTeamPlayerStats` and
+`awayTeamPlayerStats` collection names still produce `side=home|away`, but side
+is placement context rather than independent provider identity. Neither the
+canonical match participants nor current player-season membership is copied
+into the statistic row; doing so would make participant reconciliation
+circular. The nullable column remains available for a future documented source
+contract without a schema migration.
+
+The complete field trace is therefore:
+
+| Stage | Team context |
+| --- | --- |
+| CFS response / sanitised fixture | No independent team field at player, collection-container, or match level |
+| Payload traversal | The two arrays are traversed separately and assigned `side`; no team-identity path is read |
+| Normalised record / writer DTO | `CanonicalPlayerStat.team_provider_id = None` |
+| Persistence SQL | `upsert_player_stats` binds that value to the `team_provider_id` insert and conflict-update column |
+| Schema | Migration `0006` defines `cfs_player_stats.team_provider_id TEXT` without `NOT NULL` |
+| Reconciliation | `_team_context_checks` compares non-null values by side; null values produce informational unavailable context |
+
+The upsert's snapshot-authority predicate applies to the entire row: repeated
+concluded persistence is idempotent, and a later live or otherwise partial
+snapshot cannot erase any concluded observation. In addition, null is treated
+as absence rather than replacement for this optional identity: an accepted
+same-authority update can refresh statistics while retaining an existing
+non-null, independently sourced team provider ID. A documented future contract
+can populate or replace the value with another non-null identity.
+
+The season report compares a non-null independent statistic identity against
+the canonical home or away participant and reports contradiction as
+`stats.team_participant_mismatch`. Null source context remains informational as
+`stats.team_provider_unavailable` and does not change completeness or exit
+code. JSON retains per-match findings for auditability; human output aggregates
+their row and match counts to avoid one repetitive line per match.
 
 The initial central mapping is:
 
@@ -137,4 +186,35 @@ sqlite3 data/afl_players.db \
   "SELECT match_id, match_provider_id, status, updated_at, scraped_at FROM matches WHERE match_provider_id='CD_M20260142007';"
 sqlite3 data/afl_players.db \
   "SELECT COUNT(*), MIN(snapshot_authority), MAX(snapshot_authority), MIN(resolved_match_status) FROM cfs_player_stats WHERE match_provider_id='CD_M20260142007';"
+```
+
+For a safe, read-only 2026 reconciliation summary against a populated database,
+run the following query. It reports authoritative totals and null coverage,
+distinct non-null formats, side/participant contradictions, and matches with no
+independent team context; it does not expose raw payloads or credentials.
+
+```sql
+WITH authoritative AS (
+  SELECT s.*, m.match_id, ht.provider_id AS home_provider_id,
+         at.provider_id AS away_provider_id
+  FROM cfs_player_stats s
+  JOIN matches m ON m.match_provider_id = s.match_provider_id
+  LEFT JOIN afl_teams ht ON ht.afl_id = m.home_team_id
+  LEFT JOIN afl_teams at ON at.afl_id = m.away_team_id
+  WHERE m.season_id = (SELECT afl_id FROM afl_seasons WHERE year = 2026)
+    AND s.snapshot_authority = 2
+)
+SELECT COUNT(*) AS authoritative_rows,
+       SUM(team_provider_id IS NOT NULL) AS with_team_provider_id,
+       SUM(team_provider_id IS NULL) AS without_team_provider_id,
+       COUNT(DISTINCT CASE WHEN team_provider_id IS NOT NULL
+             THEN CASE WHEN team_provider_id GLOB 'CD_T[0-9]*' THEN 'CD_T<number>'
+                       ELSE 'other' END END) AS distinct_provider_id_formats,
+       SUM(team_provider_id IS NOT NULL AND
+           ((side = 'home' AND team_provider_id IS NOT home_provider_id) OR
+            (side = 'away' AND team_provider_id IS NOT away_provider_id)))
+         AS participant_mismatches,
+       COUNT(DISTINCT CASE WHEN team_provider_id IS NULL THEN match_id END)
+         AS matches_lacking_independent_team_context
+FROM authoritative;
 ```
