@@ -66,3 +66,78 @@ def test_mandatory_wal_mismatch_fails_visibly(tmp_path, monkeypatch):
     monkeypatch.setattr(connection_module.sqlite3, "connect", lambda *a, **k: FakeConnection())
     with pytest.raises(connection_module.SQLitePolicyError, match="required journal_mode=wal"):
         initialize_database_policy(tmp_path / "unsupported.db")
+
+
+def _busy_error(message="database is locked"):
+    exc = sqlite3.OperationalError(message)
+    exc.sqlite_errorcode = sqlite3.SQLITE_BUSY
+    return exc
+
+
+def test_wal_initialisation_retries_transient_lock(tmp_path, monkeypatch):
+    path = tmp_path / "transient.db"
+    real_connect = connection_module.sqlite3.connect
+    attempts = {"count": 0}
+    closed = {"count": 0}
+
+    class LockedConnection:
+        def execute(self, sql):
+            if "journal_mode" in sql:
+                raise _busy_error()
+            return self
+        def close(self):
+            closed["count"] += 1
+
+    def connect(*args, **kwargs):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            return LockedConnection()
+        return real_connect(*args, **kwargs)
+
+    monkeypatch.setattr(connection_module.sqlite3, "connect", connect)
+
+    assert initialize_database_policy(path)["journal_mode"] == "wal"
+    assert attempts["count"] == 2
+    assert closed["count"] == 1
+
+
+def test_wal_initialisation_lock_timeout_remains_visible(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        connection_module,
+        "SQLITE_POLICY",
+        connection_module.SQLitePolicy(connect_timeout_seconds=0.01, busy_timeout_ms=10),
+    )
+    closed = {"count": 0}
+
+    class LockedConnection:
+        def execute(self, sql):
+            if "journal_mode" in sql:
+                raise _busy_error()
+            return self
+        def close(self):
+            closed["count"] += 1
+
+    monkeypatch.setattr(connection_module.sqlite3, "connect", lambda *a, **k: LockedConnection())
+
+    with pytest.raises(connection_module.SQLitePolicyError, match="database remained locked"):
+        initialize_database_policy(tmp_path / "still-locked.db")
+    assert closed["count"] >= 1
+
+
+def test_wal_initialisation_does_not_retry_non_lock_errors(tmp_path, monkeypatch):
+    attempts = {"count": 0}
+
+    class BrokenConnection:
+        def execute(self, sql):
+            attempts["count"] += 1
+            if "journal_mode" in sql:
+                raise sqlite3.OperationalError("disk I/O error")
+            return self
+        def close(self):
+            pass
+
+    monkeypatch.setattr(connection_module.sqlite3, "connect", lambda *a, **k: BrokenConnection())
+
+    with pytest.raises(connection_module.SQLitePolicyError, match="disk I/O error"):
+        initialize_database_policy(tmp_path / "broken.db")
+    assert attempts["count"] == 2

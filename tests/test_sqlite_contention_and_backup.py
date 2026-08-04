@@ -5,6 +5,7 @@ import sqlite3
 
 import config
 from db.connection import get_db_connection, get_read_only_db_connection, initialize_database_policy
+from db.migration_runner import MIGRATIONS_DIR, discover_migrations
 
 
 def _hold_writer(path, ready, release):
@@ -43,10 +44,15 @@ def _initialize_at_startup(path, start, results):
 
 
 def _migrate_at_startup(path, start, results):
+    results.put(("started",))
     start.wait()
     try:
         from db.migration_runner import migrate_database
-        results.put(("ok", len(migrate_database(path))))
+        ran = migrate_database(path)
+        with sqlite3.connect(path) as conn:
+            head_count = conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
+            journal_mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+        results.put(("ok", len(ran), head_count, journal_mode))
     except Exception as exc:
         results.put(("error", type(exc).__name__, str(exc)))
 
@@ -120,13 +126,21 @@ def test_concurrent_startup_policy_initialisation_is_idempotent(tmp_path):
 
 def test_concurrent_full_migration_has_one_owner_and_one_idempotent_observer(tmp_path):
     path = tmp_path / "concurrent-migration.db"
+    expected_count = len(discover_migrations(MIGRATIONS_DIR))
     ctx = multiprocessing.get_context("spawn")
     start, results = ctx.Event(), ctx.Queue()
     processes = [ctx.Process(target=_migrate_at_startup,
                              args=(str(path), start, results)) for _ in range(2)]
     for process in processes: process.start()
+    assert sorted(results.get(timeout=10) for _ in processes) == [("started",), ("started",)]
     start.set()
-    values = sorted(results.get(timeout=30) for _ in processes)
+    values = sorted(results.get(timeout=40) for _ in processes)
     for process in processes: process.join(30)
-    assert values == [("ok", 0), ("ok", 12)]
+    assert values == [("ok", 0, expected_count, "wal"), ("ok", expected_count, expected_count, "wal")]
     assert all(process.exitcode == 0 for process in processes)
+    with sqlite3.connect(path) as conn:
+        assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+        assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        rows = conn.execute("SELECT migration_id, COUNT(*) FROM schema_migrations GROUP BY migration_id").fetchall()
+    assert len(rows) == expected_count
+    assert all(count == 1 for _, count in rows)

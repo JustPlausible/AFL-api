@@ -9,6 +9,7 @@ is opened.  Python's implicit (DEFERRED) transaction behaviour is retained.
 from __future__ import annotations
 
 import sqlite3
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,34 @@ SQLITE_POLICY = SQLitePolicy()
 
 class SQLitePolicyError(RuntimeError):
     """Raised when a mandatory persistent SQLite setting cannot be applied."""
+
+
+_POLICY_RETRY_BACKOFF_SECONDS = 0.05
+
+
+def _sqlite_error_code(exc: BaseException) -> int | None:
+    return getattr(exc, "sqlite_errorcode", None)
+
+
+def _is_sqlite_busy_or_locked(exc: BaseException) -> bool:
+    code = _sqlite_error_code(exc)
+    if code is not None:
+        return code in {
+            sqlite3.SQLITE_BUSY,
+            sqlite3.SQLITE_BUSY_RECOVERY,
+            sqlite3.SQLITE_BUSY_SNAPSHOT,
+            sqlite3.SQLITE_LOCKED,
+            sqlite3.SQLITE_LOCKED_SHAREDCACHE,
+        }
+    busy_markers = ("database is locked", "database table is locked", "database is busy")
+    return isinstance(exc, sqlite3.OperationalError) and any(
+        marker in str(exc).lower() for marker in busy_markers
+    )
+
+
+def _is_policy_lock_error(exc: SQLitePolicyError) -> bool:
+    cause = exc.__cause__
+    return cause is not None and _is_sqlite_busy_or_locked(cause)
 
 
 def get_db_path() -> Path:
@@ -86,9 +115,7 @@ def get_read_only_db_connection() -> sqlite3.Connection:
     return _configure_connection(conn, read_only=True)
 
 
-def initialize_database_policy(db_path: Path | str | None = None) -> dict[str, Any]:
-    """Idempotently establish and verify persistent policy (startup/migrations only)."""
-    path = validate_db_parent(Path(db_path) if db_path is not None else get_db_path())
+def _initialize_database_policy_once(path: Path) -> dict[str, Any]:
     conn = sqlite3.connect(path, timeout=SQLITE_POLICY.connect_timeout_seconds, isolation_level=None)
     try:
         conn.execute(f"PRAGMA busy_timeout = {SQLITE_POLICY.busy_timeout_ms}")
@@ -104,6 +131,33 @@ def initialize_database_policy(db_path: Path | str | None = None) -> dict[str, A
         raise SQLitePolicyError(f"failed to establish SQLite policy for {path}: {exc}") from exc
     finally:
         conn.close()
+
+
+def initialize_database_policy(db_path: Path | str | None = None) -> dict[str, Any]:
+    """Idempotently establish and verify persistent policy (startup/migrations only).
+
+    Concurrent startup can briefly lock ``PRAGMA journal_mode=WAL`` before the
+    migration runner's ``BEGIN IMMEDIATE`` claim exists. Retry only those
+    transient SQLite busy/locked failures for the declared policy timeout; a
+    process returns only after WAL is established or verified.
+    """
+    path = validate_db_parent(Path(db_path) if db_path is not None else get_db_path())
+    deadline = time.monotonic() + SQLITE_POLICY.connect_timeout_seconds
+    last_lock_error: SQLitePolicyError | None = None
+    while True:
+        try:
+            return _initialize_database_policy_once(path)
+        except SQLitePolicyError as exc:
+            if not _is_policy_lock_error(exc):
+                raise
+            last_lock_error = exc
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise SQLitePolicyError(
+                    f"timed out after {SQLITE_POLICY.connect_timeout_seconds:.1f}s while establishing "
+                    f"SQLite policy for {path}; database remained locked"
+                ) from last_lock_error
+            time.sleep(min(_POLICY_RETRY_BACKOFF_SECONDS, remaining))
 
 
 def inspect_database_policy(conn: sqlite3.Connection | None = None) -> dict[str, Any]:
