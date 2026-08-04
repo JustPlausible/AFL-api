@@ -22,9 +22,11 @@ current implementation already provides them.
 
 The central principle is:
 
-> The scheduler is a decision engine rather than merely a timer. It asks what
-> the most valuable collection work is now, based on authoritative state and
-> persisted collection evidence.
+> The scheduler is a decision engine rather than merely a timer. Rather than
+> asking *"What timer has expired?"* it asks *"What is the most valuable
+> collection action to perform now?"* The answer is determined from authoritative
+> AFL state, persisted collection evidence, and current scheduling priorities,
+> not simply the passage of time.
 
 ## 2. Goals and engineering principles
 
@@ -126,21 +128,40 @@ one task for each elapsed interval.
 
 ### 5.1 Priority and fairness
 
-The initial priority order is:
+The scheduler distinguishes between **controller domains** and **collection domains**.
 
-1. live player statistics;
-2. live match status;
+The primary controller domain is **match status**, which determines the current
+lifecycle of a match and therefore influences the scheduling behaviour of other
+domains. Before live collection begins, match status determines when player
+statistics become eligible. During live play it confirms lifecycle transitions,
+and after the match it determines when finalisation should begin.
+
+Player statistics remain the highest-priority operational collection domain
+because they provide the most time-sensitive end-user data. However, when lifecycle
+is uncertain or may have changed, match status should be evaluated first so that
+subsequent scheduling decisions are based on authoritative state.
+
+The initial operational priority is therefore:
+
+1. lifecycle transition checks (match status where required);
+2. live player statistics;
 3. post-match finalisation;
 4. imminent lineup monitoring;
 5. injuries;
 6. fixtures and season foundations;
 7. reconciliation and housekeeping.
 
-For each match, the planner selects its highest-priority due domain. Across
-matches, stable ordering, an age component, or another simple documented rule
-must prevent lower-priority overdue work from starving indefinitely. Priority
-is a scheduling choice, not permission to violate domain concurrency, pause,
-source, or persistence rules.
+For each match, the planner evaluates controller domains before selecting the
+highest-priority collection work. Across matches, stable ordering, an age
+component, or another simple documented rule should prevent lower-priority work
+from starving indefinitely. Priority influences scheduling order only; it does
+not override domain concurrency, pause state, source policy or persistence
+rules.
+
+Future implementations may use additional lifecycle information (such as quarter
+and half-time transitions) to refine polling cadence where operational metrics
+demonstrate a measurable benefit. Version 1 intentionally maintains fixed,
+predictable cadences during live play.
 
 ## 6. Match controller and claim model
 
@@ -163,23 +184,33 @@ conclusion; every execution is bounded and returns its worker.
 
 ### 6.1 Workers, atomic claims, and skips
 
-Use two concurrent collection workers as the conservative Version 1 default.
-They will normally process different matches. Claiming and a decision to skip
-must be atomic within the single scheduler process and backed by durable state
-that supports restart recovery.
+Version 1 should use two concurrent collection workers as the conservative default.
+Under normal operation these workers will process different matches concurrently,
+while all collection work for a single match remains mutually exclusive.
 
-When a match is already claimed:
+Match execution ownership is coordinated entirely within the single scheduler process. Before
+starting a match execution, the scheduler atomically determines whether the match
+is already being processed. If it is, the scheduler records a benign skip and
+reconsiders that match during a future planning cycle.
+
+When a match is already active:
 
 - record the benign reason `same_match_already_running`;
 - do not report a failure or increment failure counters;
-- do not queue each missed occurrence; and
-- reconsider the domain on the next planning cycle.
+- do not queue missed polling occurrences;
+- allow the current execution to complete normally; and
+- reconsider the match during the next planning cycle if further work remains.
 
-Claims require a lease or safe stale cutoff, a maximum useful runtime or
-timeout, stalled-task detection, and unconditional cleanup. A timeout must not
-allow a replacement execution to write concurrently with work that is still
-running; implementation must cancel, fence, or otherwise safely settle the old
-owner before reuse.
+The scheduler must always release match ownership when an execution completes or
+fails. If the scheduler terminates unexpectedly, any interrupted work is identified
+during startup recovery using persisted execution history and scheduler heartbeat
+information. Recovery is based on the current authoritative match and domain state,
+not on replaying missed scheduling intervals.
+
+This design intentionally avoids distributed locking or durable ownership
+coordination. Version 1 assumes a single scheduler process per database, making
+simple in-process coordination the preferred approach while retaining sufficient
+persistent information for safe restart recovery.
 
 ## 7. Durable scheduling state
 
@@ -299,7 +330,7 @@ execution.
 
 ### 9.2 Player-stat cadence and finalisation
 
-Player statistics are the highest-priority live BBBFL-related domain. Start at
+Player statistics are the highest-priority live fantasy-related domain. Start at
 60 seconds per authoritatively `LIVE` match. Thirty seconds is a possible later
 target only after measuring endpoint latency, rate limiting, simultaneous-match
 load, request volume, and SQLite contention.
@@ -315,17 +346,29 @@ reconciliation finding rather than an infinite retry loop.
 
 ### 9.3 Lineup scheduling
 
-Calculate lineup activity from current fixture times and the earliest match of
-the round, never from a fixed Thursday assumption. A practical initial profile
-should include:
+Calculate lineup activity from current fixture times and the earliest scheduled
+match of the round, never from a fixed Thursday assumption. Initial lineup
+monitoring should begin during the expected publication window for the earliest
+scheduled match, which historically occurs a little over 24 hours before the
+match (commonly around 5:00 pm local time on the preceding day). This timing is
+an operational expectation rather than a fixed rule and should remain
+configurable.
 
-- publication-window checks before the round's earliest scheduled match;
-- periodic checks after likely publication;
-- increased frequency near each match;
-- a one-hour-before or similar practical check;
-- checks every few minutes during the final 30 minutes where justified;
-- automatic replanning when match times change; and
+A practical initial profile should include:
+
+- begin monitoring during the expected initial publication window for the
+  earliest scheduled match;
+- periodic checks after likely publication to detect initial team announcements;
+- increased polling frequency as each individual match approaches;
+- checks every few minutes during the final 30 minutes before bounce to detect
+  late changes;
+- automatic replanning whenever fixture dates or times change;
 - normal completion when the match becomes authoritatively `LIVE`.
+
+The scheduler should increase lineup polling because the probability of
+meaningful change increases as the match approaches, not simply because time has
+elapsed. Actual publication timing should always be determined from
+authoritative source data rather than assumed from the scheduled fixture.
 
 The current operational source policy's explicit HTML lineup path remains in
 force until canonical lineup authority is separately redesigned.
@@ -352,11 +395,18 @@ than shelling out or duplicating collection logic.
 
 ### 10.2 Injuries
 
-Treat the AFL Tuesday injury publication as a likely window, not one immutable
-timestamp. Check less often outside the expected window, increase checks around
-likely Tuesday publication, reduce cadence after confirming an update, and make
-occasional later checks for amendments. Calendar/configuration changes must be
-possible without code rebuilds.
+Treat the AFL Tuesday injury publication as the expected weekly update window,
+rather than as a fixed timestamp. Increase polling frequency leading into and
+during the expected publication period to detect the weekly update as soon as it
+becomes available.
+
+Once the updated injury list has been successfully collected, reduce monitoring
+to an infrequent cadence (for example, approximately every six hours) to detect
+corrections or late amendments until the next expected publication window.
+
+The expected publication window and all polling cadences should remain
+configurable. The scheduler should respond to observed publication behaviour
+rather than assuming a permanently fixed Tuesday schedule.
 
 ## 11. Failure ownership and retry
 
@@ -531,7 +581,7 @@ problem.
 
 Version 1 explicitly excludes:
 
-- fantasy scoring and BBBFL league management;
+- fantasy scoring and consumer-defined league management;
 - automatic source fallback or source-authority scoring;
 - adaptive polling based on observed unchanged results;
 - distributed scheduling, multi-node leadership, or coordination;
@@ -627,3 +677,13 @@ The [readiness review](../project_status_scheduler_readiness.md) remains the
 evidence-based baseline for current gaps. This workflow is the implementation
 target. Future Issues should cite both and state which stage and acceptance
 criteria they deliver.
+
+## Design history
+
+This workflow was developed through iterative architectural design
+between the project maintainer and AI-assisted design review.
+
+The resulting document intentionally captures agreed engineering
+principles before scheduler implementation begins. It should be
+treated as the architectural reference for future scheduler Issues,
+pull requests and design discussions.
