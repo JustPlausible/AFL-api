@@ -152,10 +152,19 @@ def _applied(conn: sqlite3.Connection) -> dict[str, tuple[str, str]]:
 
 def migrate_database(db_path: Path | str | None = None, migrations_dir: Path = MIGRATIONS_DIR) -> list[str]:
     resolved = validate_db_parent(Path(db_path) if db_path is not None else get_db_path())
+    # WAL is persistent database state, so establish it at this controlled
+    # boundary rather than on ordinary application connection creation.
+    from db.connection import initialize_database_policy
+    initialize_database_policy(resolved)
     migrations = discover_migrations(migrations_dir)
     conn = sqlite3.connect(resolved, timeout=30, isolation_level=None)
     try:
         conn.execute("PRAGMA foreign_keys = ON")
+        # Hold one startup writer claim while inspecting and advancing the
+        # schema. Savepoints retain the historical per-migration rollback
+        # boundary while preventing a concurrent process from classifying or
+        # writing against an intermediate schema.
+        conn.execute("BEGIN IMMEDIATE")
         applied = _applied(conn)
         if not applied:
             state = classify_existing_database(conn)
@@ -163,14 +172,8 @@ def migrate_database(db_path: Path | str | None = None, migrations_dir: Path = M
                 baseline = next((m for m in migrations if m.identifier == BASELINE_ID), None)
                 if baseline is None:
                     raise MigrationError(f"Baseline migration {BASELINE_ID} is missing")
-                conn.execute("BEGIN IMMEDIATE")
-                try:
-                    _ensure_migration_table(conn)
-                    _record(conn, baseline)
-                    conn.execute("COMMIT")
-                except Exception:
-                    conn.execute("ROLLBACK")
-                    raise
+                _ensure_migration_table(conn)
+                _record(conn, baseline)
                 applied = _applied(conn)
         else:
             _ensure_migration_table(conn)
@@ -186,16 +189,24 @@ def migrate_database(db_path: Path | str | None = None, migrations_dir: Path = M
         for migration in migrations:
             if migration.identifier in applied_ids:
                 continue
-            conn.execute("BEGIN IMMEDIATE")
+            savepoint = f"migration_{migration.identifier}"
+            conn.execute(f"SAVEPOINT {savepoint}")
             try:
                 migration.module.migrate(conn)
                 _ensure_migration_table(conn)
                 _record(conn, migration)
-                conn.execute("COMMIT")
+                conn.execute(f"RELEASE SAVEPOINT {savepoint}")
                 ran.append(migration.identifier)
             except Exception as exc:
-                conn.execute("ROLLBACK")
+                conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+                # Preserve successfully released earlier migration savepoints,
+                # matching the runner's established partial-progress contract.
+                conn.execute("COMMIT")
                 raise MigrationError(f"Migration {migration.identifier} ({migration.description}) failed: {exc}") from exc
+        conn.execute("COMMIT")
         return ran
     finally:
+        if conn.in_transaction:
+            conn.rollback()
         conn.close()

@@ -62,37 +62,42 @@ def _job_id(kind: str, target: str) -> str:
 
 
 def manual_refresh_injuries(correlation_id: str):
-    from collection.source_policy import OperationalDomain, collect_operational
-    return collect_operational(OperationalDomain.INJURIES,
+    from collection.source_policy import OperationalDomain
+    from scheduler.collection import collect_scheduled
+    return collect_scheduled(OperationalDomain.INJURIES,
                                trigger_source=TRIGGER_ADMIN_MANUAL,
                                correlation_id=correlation_id)
 
 
 def manual_refresh_fixtures_round(round_id: int, correlation_id: str):
-    from collection.source_policy import OperationalDomain, collect_operational
-    return collect_operational(OperationalDomain.METADATA, target_id=round_id,
+    from collection.source_policy import OperationalDomain
+    from scheduler.collection import collect_scheduled
+    return collect_scheduled(OperationalDomain.METADATA, target_id=round_id,
                                trigger_source=TRIGGER_ADMIN_MANUAL,
                                correlation_id=correlation_id)
 
 
 def manual_refresh_lineups_round(round_id: int, correlation_id: str):
-    from collection.source_policy import OperationalDomain, collect_operational
-    return collect_operational(OperationalDomain.LINEUPS, target_id=round_id,
+    from collection.source_policy import OperationalDomain
+    from scheduler.collection import collect_scheduled
+    return collect_scheduled(OperationalDomain.LINEUPS, target_id=round_id,
                                trigger_source=TRIGGER_ADMIN_MANUAL,
                                correlation_id=correlation_id)
 
 
 def manual_refresh_lineups_match(match_id: int, correlation_id: str):
-    from collection.source_policy import OperationalDomain, collect_operational, round_for_match
-    return collect_operational(OperationalDomain.LINEUPS,
+    from collection.source_policy import OperationalDomain, round_for_match
+    from scheduler.collection import collect_scheduled
+    return collect_scheduled(OperationalDomain.LINEUPS,
                                target_id=round_for_match(match_id),
                                trigger_source=TRIGGER_ADMIN_MANUAL,
                                correlation_id=correlation_id)
 
 
 def manual_refresh_player_stats_match(match_id: int, correlation_id: str):
-    from collection.source_policy import OperationalDomain, collect_operational
-    return collect_operational(OperationalDomain.MATCH_PLAYER_STATS, target_id=match_id,
+    from collection.source_policy import OperationalDomain
+    from scheduler.collection import collect_scheduled
+    return collect_scheduled(OperationalDomain.MATCH_PLAYER_STATS, target_id=match_id,
                                trigger_source=TRIGGER_ADMIN_MANUAL,
                                correlation_id=correlation_id)
 

@@ -1,13 +1,17 @@
 from datetime import datetime, timedelta, timezone
 import sqlite3
+import threading
 
 import pytest
+import config
+from db import scrape_runs
 
 from db.migration_runner import migrate_database
 from db.scrape_runs import (
     STATUS_COMPLETED, STATUS_FAILED, STATUS_PARTIAL, STATUS_RUNNING, TRIGGER_CLI,
     complete_scrape_run, fail_scrape_run, recent_scrape_runs, recover_stale_running_runs,
     record_scrape_decision, sanitize_error_summary, start_scrape_run,
+    audited_scrape_run, scheduler_job_context,
 )
 
 
@@ -34,6 +38,37 @@ def test_lifecycle_filters_counts_and_correlation(tmp_path):
     assert recent_scrape_runs(scrape_type="fixture", status=STATUS_COMPLETED, conn=c)[0].run_id == rid
     with pytest.raises(ValueError):
         complete_scrape_run("missing", conn=c)
+
+
+def test_concurrent_scheduler_audit_context_is_thread_local(tmp_path, monkeypatch):
+    db = tmp_path / "concurrent-audit.db"
+    monkeypatch.setattr(config, "DB_PATH", str(db))
+    migrate_database(db)
+    barrier = threading.Barrier(2)
+
+    def audit(job_id):
+        with scheduler_job_context(job_id):
+            with audited_scrape_run("threaded", target_identifier=job_id):
+                barrier.wait()
+
+    threads = [threading.Thread(target=audit, args=(job_id,))
+               for job_id in ("job-a", "job-b")]
+    for thread in threads: thread.start()
+    for thread in threads: thread.join(5)
+    assert all(not thread.is_alive() for thread in threads)
+    with sqlite3.connect(db) as check:
+        assert check.execute(
+            "SELECT correlation_id,status FROM scrape_runs ORDER BY correlation_id"
+        ).fetchall() == [("job-a", STATUS_COMPLETED), ("job-b", STATUS_COMPLETED)]
+
+
+def test_audit_finalisation_failure_does_not_hide_collector_error(tmp_path, monkeypatch):
+    c = conn(tmp_path)
+    monkeypatch.setattr(scrape_runs, "fail_scrape_run",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("audit unavailable")))
+    with pytest.raises(ValueError, match="collector failed"):
+        with audited_scrape_run("failure", conn=c):
+            raise ValueError("collector failed")
 
 
 def test_fail_sanitizes_and_truncates(tmp_path):

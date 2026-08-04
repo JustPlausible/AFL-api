@@ -34,10 +34,11 @@ def refresh_live_matches():
     if not rows:
         log.info("📭 No LIVE matches found.")
 
-    from collection.source_policy import OperationalDomain, collect_operational
+    from collection.source_policy import OperationalDomain
+    from scheduler.collection import collect_scheduled
     for (match_id,) in rows:
         log.info(f"🔁 Refreshing public JSON status for LIVE match {match_id}...")
-        collect_operational(OperationalDomain.MATCH_STATUS, target_id=match_id)
+        collect_scheduled(OperationalDomain.MATCH_STATUS, target_id=match_id)
 
     conn.close()
 
@@ -66,8 +67,9 @@ def scrape_today_matches(now: datetime | None = None):
         match_ids = _today_match_ids(conn, now)
     finally:
         conn.close()
-    from collection.source_policy import OperationalDomain, collect_operational
-    return [collect_operational(OperationalDomain.MATCH_STATUS, target_id=match_id) for match_id in match_ids]
+    from collection.source_policy import OperationalDomain
+    from scheduler.collection import collect_scheduled
+    return [collect_scheduled(OperationalDomain.MATCH_STATUS, target_id=match_id) for match_id in match_ids]
 
 def register_live_match_day_scraper(scheduler, now: datetime | None = None):
     def today_has_matches():

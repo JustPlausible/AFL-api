@@ -54,12 +54,17 @@ services:
       - .env
     environment:
       DB_PATH: "${DB_PATH:-/app/data/afl_players.db}"
+      # SQLite supports exactly one Scheduler replica. This startup assertion
+      # is deliberately not a distributed lock.
+      AFL_SCHEDULER_REPLICAS: "1"
       PYTHONUNBUFFERED: "1"
     ulimits:
       nofile:
         soft: 65535
         hard: 65535
     volumes:
+      # Mount the containing directory: SQLite WAL and SHM sidecars must live
+      # beside the database. Drain/stop Scheduler writers for restore/cold copy.
       - afl-api-data:/app/data
       - afl-api-logs:/app/logs
     restart: unless-stopped

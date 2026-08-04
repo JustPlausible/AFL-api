@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import threading
 from dataclasses import replace
 from datetime import datetime
 from decimal import Decimal
@@ -7,6 +8,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import config
+from db.migration_runner import migrate_database
+from scheduler.write_lane import SchedulerWriteLane
 
 from afl_json.client import AflJsonInvalidResponse, AflJsonResourceUnavailable
 from afl_json.player_stats import (
@@ -245,6 +249,28 @@ def test_final_supersedes_live_is_idempotent_and_cannot_be_downgraded():
                        "team_provider_id FROM cfs_player_stats "
                        "WHERE champion_data_player_id='CD_I1'").fetchone()
     assert row == (2, "CONCLUDED", 2, None)
+
+
+def test_final_snapshot_cannot_be_downgraded_by_later_contending_lane_write(tmp_path, monkeypatch):
+    path = tmp_path / "contended-stats.db"
+    monkeypatch.setattr(config, "DB_PATH", str(path))
+    migrate_database(path)
+    final = collect("match_player_stats_concluded.json", "2026-07-25T12:00:00+00:00")
+    stale_live = collect("match_player_stats_live_partial.json", "2026-07-25T13:00:00+00:00")
+    lane = SchedulerWriteLane()
+    entered, release = threading.Event(), threading.Event()
+    first = threading.Thread(target=lambda: lane.execute(
+        "stats.final", 1,
+        lambda conn: (upsert_player_stats(conn, final), entered.set(), release.wait())[0]))
+    first.start(); assert entered.wait(1)
+    second = threading.Thread(target=lambda: lane.execute(
+        "stats.stale", 1, lambda conn: upsert_player_stats(conn, stale_live)))
+    second.start(); release.set(); first.join(2); second.join(2)
+    with sqlite3.connect(path) as conn:
+        assert conn.execute(
+            "SELECT goals,snapshot_authority FROM cfs_player_stats "
+            "WHERE champion_data_player_id='CD_I1'"
+        ).fetchone() == (2, 2)
 
 
 def test_missing_team_identity_does_not_erase_existing_verified_identity():

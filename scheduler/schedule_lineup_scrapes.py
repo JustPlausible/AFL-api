@@ -9,14 +9,16 @@ from scheduler.time_policy import MetadataTimestampError, match_day_timezone, pa
 log = setup_logger("refresh_afl_lineups", "refresh_afl_lineups.log")
 
 def run_lineup_round_scraper(round_id: int):
-    from collection.source_policy import OperationalDomain, collect_operational
+    from collection.source_policy import OperationalDomain
+    from scheduler.collection import collect_scheduled
     log.info(f"🚀 [Lineups] Running persistent HTML lineup collection for round {round_id}")
-    return collect_operational(OperationalDomain.LINEUPS, target_id=round_id)
+    return collect_scheduled(OperationalDomain.LINEUPS, target_id=round_id)
 
 def run_lineup_match_scraper(match_id: int):
-    from collection.source_policy import OperationalDomain, collect_operational, round_for_match
+    from collection.source_policy import OperationalDomain, round_for_match
+    from scheduler.collection import collect_scheduled
     log.info(f"🚀 [Lineups] Running persistent HTML lineup collection for match {match_id}")
-    return collect_operational(OperationalDomain.LINEUPS,
+    return collect_scheduled(OperationalDomain.LINEUPS,
                                target_id=round_for_match(match_id))
 
 def register_lineup_jobs(scheduler):

@@ -5,6 +5,7 @@ import pytest
 
 import config
 from afl_json import AflJsonAuthenticationError, AflJsonInvalidResponse
+from afl_json import MatchStatusResolution, PlayerStatsCollectionResult, PlayerStatsStatus
 from afl_json.rosters import RosterCollectionResult, RosterStatus
 from collection import source_policy
 from collection.source_policy import OperationalDomain, policy_for
@@ -14,6 +15,8 @@ from scheduler.schedule_lineup_scrapes import run_lineup_round_scraper
 from scheduler.schedule_stat_scrapes import run_stats_scraper
 from scheduler import scheduled_tasks
 from scheduler import schedule_match_scrapes
+from scheduler.collection import collect_scheduled
+from scheduler.registry import execute_registered_job, upsert_job
 
 
 def _database(tmp_path, monkeypatch):
@@ -82,7 +85,9 @@ def test_live_match_refresh_is_narrow_public_status_between_metadata_runs(tmp_pa
                         lambda domain, **kwargs: calls.append((domain, kwargs)))
     monkeypatch.setattr(schedule_match_scrapes.time, "sleep", lambda _seconds: None)
     schedule_match_scrapes.refresh_live_matches()
-    assert calls == [(OperationalDomain.MATCH_STATUS, {"target_id": 10})]
+    assert len(calls) == 1 and calls[0][0] is OperationalDomain.MATCH_STATUS
+    assert calls[0][1]["target_id"] == 10
+    assert callable(calls[0][1]["write_executor"])
 
 
 def test_operational_lineups_persist_and_report_written_rows(tmp_path, monkeypatch):
@@ -110,6 +115,71 @@ def test_empty_lineup_collection_is_not_reported_as_persisted(tmp_path, monkeypa
     assert outcome.status == "unavailable"
     assert outcome.persistence_performed is False
     assert outcome.rows_read == outcome.rows_written == 0
+
+
+def test_scheduler_stats_orders_audit_network_parse_persist_and_final_audit(tmp_path, monkeypatch):
+    _database(tmp_path, monkeypatch)
+    events = []
+    opened = []
+    real_open = source_policy.get_db_connection
+    def tracked_open():
+        conn = real_open(); opened.append(conn); return conn
+    monkeypatch.setattr(source_policy, "get_db_connection", tracked_open)
+
+    class Client:
+        def __enter__(self): return self
+        def __exit__(self, *_): pass
+        def get(self, *_args, **_kwargs):
+            assert all(not conn.in_transaction for conn in opened)
+            events.append("network")
+            return object()
+    def reconcile(conn, client, **kwargs):
+        client.get("status")
+        return MatchStatusResolution("CD_M10", 10, "SCHEDULED", "LIVE", "LIVE",
+                                     "direct_match_detail", True, ())
+    class Collector:
+        def __init__(self, client): self.client = client
+        def collect(self, *_args, **_kwargs):
+            self.client.get("stats"); events.append("parsed")
+            return PlayerStatsCollectionResult("CD_M10", PlayerStatsStatus.LIVE_PARTIAL,
+                                               [], [], "now")
+    monkeypatch.setattr(source_policy, "reconcile_match_status", reconcile)
+    monkeypatch.setattr(source_policy, "MatchPlayerStatsCollector", Collector)
+    monkeypatch.setattr(source_policy, "persist_match_status_resolution",
+                        lambda conn, result: events.append("status_persist"))
+    monkeypatch.setattr(source_policy, "upsert_player_stats",
+                        lambda conn, result: events.append("stats_persist") or 0)
+
+    def execute(operation, target, callback):
+        events.append(operation)
+        with real_open() as conn:
+            return callback(conn)
+    source_policy.collect_operational(
+        OperationalDomain.MATCH_PLAYER_STATS, target_id=10,
+        client_factory=Client, write_executor=execute,
+    )
+    assert events == ["scrape_runs.start", "network", "network", "parsed",
+                      "cfs_player_stats.persist_match", "status_persist", "stats_persist",
+                      "scrape_runs.complete"]
+
+
+def test_failed_scheduled_persistence_finalises_audit_and_registry(tmp_path, monkeypatch):
+    _database(tmp_path, monkeypatch)
+    upsert_job("failure-job", "lineup", None)
+    monkeypatch.setattr("scraper.scrape_afl_lineups.scrape_team_lineups",
+                        lambda **kwargs: [{"match_id": 10, "afl_id": 101}])
+    monkeypatch.setattr("db.import_to_db.save_lineups_to_db",
+                        lambda *_args: (_ for _ in ()).throw(RuntimeError("persist failed")))
+    with pytest.raises(RuntimeError, match="persist failed"):
+        execute_registered_job(
+            "failure-job", lambda: collect_scheduled(OperationalDomain.LINEUPS, target_id=1))
+    with sqlite3.connect(config.DB_PATH) as conn:
+        assert conn.execute(
+            "SELECT status FROM scheduler_job_registry WHERE job_id='failure-job'"
+        ).fetchone()[0] == "failed"
+        assert conn.execute(
+            "SELECT status FROM scrape_runs WHERE correlation_id='failure-job'"
+        ).fetchone()[0] == "failed"
 
 
 class _Client:

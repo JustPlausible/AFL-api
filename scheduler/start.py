@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import signal
 import threading
 from contextlib import asynccontextmanager
@@ -36,6 +37,7 @@ from scheduler.schedule_stat_scrapes import (
     register_stat_scrape_jobs,
 )
 from scheduler.scheduled_tasks import scheduler
+from scheduler.write_lane import write_lane
 from utils.log import setup_logger
 
 SUPPORTED_UVICORN_COMMAND = "python -m uvicorn scheduler.start:app --host 0.0.0.0 --port 8000"
@@ -48,6 +50,13 @@ log.debug("🟢 scheduler/start.py loaded!")
 _bootstrap_lock = threading.Lock()
 _jobs_registered = False
 _scheduler_thread: threading.Thread | None = None
+WRITE_LANE_DRAIN_TIMEOUT_SECONDS = 30.0
+
+
+def _validate_single_scheduler_configuration() -> None:
+    replicas = int(os.environ.get("AFL_SCHEDULER_REPLICAS", "1"))
+    if replicas != 1:
+        raise RuntimeError("Unsupported deployment: AFL_SCHEDULER_REPLICAS must be exactly 1 for SQLite")
 
 
 # 🔁 Register all dynamic (non-cron) jobs
@@ -70,6 +79,7 @@ def bootstrap_scheduler() -> None:
     """Run one-time scheduler startup work without starting APScheduler twice."""
     global _jobs_registered
     with _bootstrap_lock:
+        _validate_single_scheduler_configuration()
         if _jobs_registered:
             log.info("Scheduler bootstrap already completed; skipping duplicate registration.")
             return
@@ -114,6 +124,7 @@ def start_scheduler_for_app() -> None:
         if _scheduler_thread and _scheduler_thread.is_alive():
             log.info("APScheduler thread is already alive; not starting a duplicate instance.")
             return
+        _validate_single_scheduler_configuration()
         if not _jobs_registered:
             migrate_database()
             register_all_jobs()
@@ -128,6 +139,8 @@ def shutdown_scheduler(wait: bool = True) -> None:
     if scheduler.state != STATE_STOPPED:
         log.info("🛑 Shutting down APScheduler...")
         scheduler.shutdown(wait=wait)
+    if wait and not write_lane.drain(timeout=WRITE_LANE_DRAIN_TIMEOUT_SECONDS):
+        raise RuntimeError("Scheduler write lane did not drain")
 
 
 @asynccontextmanager

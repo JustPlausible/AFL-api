@@ -16,7 +16,6 @@ from __future__ import annotations
 import importlib
 import json
 import re
-import os
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -25,6 +24,8 @@ from typing import Any, Callable
 from apscheduler.triggers.date import DateTrigger
 
 from db.connection import get_db_connection
+from db.scrape_runs import scheduler_job_context
+from scheduler.write_lane import write_lane
 from utils.log import setup_logger
 
 log = setup_logger("scheduler_registry", "scheduler_registry.log")
@@ -100,22 +101,22 @@ def upsert_job(job_id: str, job_type: str, scheduled_run_time: datetime | None, 
         conn.close()
 
 def mark_running(job_id: str) -> None:
-    conn = get_db_connection(); now = utc_now()
-    try:
-        conn.execute("UPDATE scheduler_job_registry SET status=?, last_attempt_time=?, attempt_count=attempt_count+1, last_error_summary=NULL, updated_at=? WHERE job_id=?", (RUNNING, now, now, job_id)); conn.commit()
-    finally: conn.close()
+    now = utc_now()
+    write_lane.execute("scheduler_registry.mark_running", job_id, lambda conn: conn.execute(
+        "UPDATE scheduler_job_registry SET status=?, last_attempt_time=?, attempt_count=attempt_count+1, last_error_summary=NULL, updated_at=? WHERE job_id=?",
+        (RUNNING, now, now, job_id)))
 
 def mark_succeeded(job_id: str) -> None:
-    conn = get_db_connection(); now = utc_now()
-    try:
-        conn.execute("UPDATE scheduler_job_registry SET status=?, last_success_time=?, last_error_summary=NULL, updated_at=? WHERE job_id=?", (SUCCEEDED, now, now, job_id)); conn.commit()
-    finally: conn.close()
+    now = utc_now()
+    write_lane.execute("scheduler_registry.mark_succeeded", job_id, lambda conn: conn.execute(
+        "UPDATE scheduler_job_registry SET status=?, last_success_time=?, last_error_summary=NULL, updated_at=? WHERE job_id=?",
+        (SUCCEEDED, now, now, job_id)))
 
 def mark_failed(job_id: str, exc: BaseException | str) -> None:
-    conn = get_db_connection(); now = utc_now()
-    try:
-        conn.execute("UPDATE scheduler_job_registry SET status=?, last_error_summary=?, updated_at=? WHERE job_id=?", (FAILED, summarize_error(exc), now, job_id)); conn.commit()
-    finally: conn.close()
+    now = utc_now()
+    write_lane.execute("scheduler_registry.mark_failed", job_id, lambda conn: conn.execute(
+        "UPDATE scheduler_job_registry SET status=?, last_error_summary=?, updated_at=? WHERE job_id=?",
+        (FAILED, summarize_error(exc), now, job_id)))
 
 def record_planning_failure(
     job_id: str, job_type: str, reason_code: str, *, match_id: int | None = None, round_id: int | str | None = None
@@ -152,15 +153,8 @@ def mark_skipped(job_id: str, reason: str) -> None:
 def execute_registered_job(job_id: str, func: Callable[..., Any], *args: Any) -> Any:
     try:
         mark_running(job_id)
-        previous_job_id = os.environ.get("AFL_SCHEDULER_JOB_ID")
-        os.environ["AFL_SCHEDULER_JOB_ID"] = job_id
-        try:
+        with scheduler_job_context(job_id):
             result = func(*args)
-        finally:
-            if previous_job_id is None:
-                os.environ.pop("AFL_SCHEDULER_JOB_ID", None)
-            else:
-                os.environ["AFL_SCHEDULER_JOB_ID"] = previous_job_id
         if isinstance(result, subprocess.CompletedProcess) and result.returncode:
             raise subprocess.CalledProcessError(result.returncode, result.args, stderr=result.stderr)
         mark_succeeded(job_id)
