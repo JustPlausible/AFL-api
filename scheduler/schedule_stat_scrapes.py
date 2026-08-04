@@ -3,14 +3,12 @@
 from apscheduler.triggers.date import DateTrigger
 from datetime import datetime, timedelta, timezone
 from utils.log import setup_logger
-import pytz
 from db.connection import get_db_connection
-from scheduler.registry import add_registered_job, stats_match_job_id
+from scheduler.registry import add_registered_job, record_planning_failure, stats_match_job_id
+from scheduler.time_policy import MetadataTimestampError, match_day_timezone, parse_metadata_timestamp
 
 # Dedicated logger for scheduler processes (not scraper internals)
 scheduler_log = setup_logger("scheduler_jobs", "scheduler_jobs.log")
-
-AWST = pytz.timezone("Australia/Perth")
 
 def run_stats_scraper(match_id: int):
     """Run the policy-selected canonical CFS collector for an internal match ID."""
@@ -42,14 +40,13 @@ def register_stat_scrape_jobs(scheduler):
     cursor.execute("""
         SELECT match_id, start_time_utc
         FROM matches
-        WHERE status IN ('UPCOMING', 'LIVE') AND start_time_utc IS NOT NULL
+        WHERE status IN ('UPCOMING', 'LIVE')
     """)
 
     for match_id, start_time_utc in cursor.fetchall():
         try:
-            # Ensure UTC → AWST with proper timezone awareness
-            start_dt = datetime.fromisoformat(start_time_utc).replace(tzinfo=timezone.utc)
-            match_start = start_dt.astimezone(AWST)
+            start_dt = parse_metadata_timestamp(start_time_utc)
+            match_start = start_dt.astimezone(match_day_timezone())
             scrape_time = match_start + timedelta(seconds=10)
 
             add_registered_job(
@@ -63,6 +60,11 @@ def register_stat_scrape_jobs(scheduler):
 
             scheduler_log.info(f"📝 Scheduled job 'stats_match_{match_id}' for {scrape_time.isoformat()} AWST")
 
+        except MetadataTimestampError as e:
+            record_planning_failure(
+                stats_match_job_id(match_id), "player_stats", e.reason_code, match_id=match_id
+            )
+            scheduler_log.error("Failed to plan stats job for match %s: %s", match_id, e.reason_code)
         except Exception as e:
             scheduler_log.error(f"❌ Failed to schedule job for match {match_id}: {e}")
 

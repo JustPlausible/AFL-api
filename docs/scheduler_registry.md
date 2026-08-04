@@ -40,6 +40,81 @@ Conservative recovery rules:
 
 An individual reconciliation error is logged and counted but does not crash scheduler startup.
 
+## Timestamp and match-day policy
+
+Scheduler planning treats AFL/public metadata timestamps as instants. ISO-8601
+values ending in `Z` or carrying an explicit positive or negative offset are
+accepted, and their offsets are preserved while the instant is converted to
+UTC. Missing, blank, malformed, and offset-free (naive) values are rejected;
+the scheduler never guesses UTC or the host timezone for ambiguous source data.
+
+Rejected match timestamps produce a durable registry row with `failed` status,
+no attempt increment, the safe match or round identifier, and one of the stable
+summaries `planning_failed:timestamp_missing`,
+`planning_failed:timestamp_malformed`, or `planning_failed:timestamp_naive`.
+These rows are visible through `/scheduler/jobs`, the Admin Schedule page, and
+normal registry queries. Raw source values are not copied into the diagnostic.
+
+The AFL match-day calendar is controlled by the `AFL_MATCH_DAY_TIMEZONE`
+environment setting, which defaults to the IANA zone `Australia/Perth`.
+Application code converts local midnight boundaries to aware UTC instants and
+compares parsed timestamps; it does not use SQLite `localtime` or the host
+timezone. This setting defines day membership and the civil times derived from
+fixtures. It is separate from APScheduler's trigger timezone, which remains
+`Australia/Perth` for the current cron and interval scheduler configuration.
+Date-triggered jobs carry aware instants, so their execution time is unaffected
+by the display/trigger timezone.
+
+### Observed CFS timestamp forms
+
+The checked-in CFS captures were inspected before finalising Issue #130. The
+representative `matchItem` capture and the full/minimal round-roster captures
+contain 11 `utcStartTime` occurrences, all in a naive form such as
+`2026-07-23T09:30:00`. They contain no `utcStartTime` value ending in `Z` and no
+`utcStartTime` value with an explicit positive or negative offset. In the same
+CFS match objects, the paired `date` field uses an explicit zero offset such as
+`2026-07-23T09:30:00.000+0000`, while `venueLocalStartTime` is naive. Other CFS
+fields such as `lastUpdated` also use the explicit `+0000` form.
+
+For all 11 inspected match occurrences, aware `date` and naive
+`utcStartTime` have identical clock components and resolve to the same instant
+under the verified CFS `utcStartTime` semantics. Each `venueLocalStartTime`
+also resolves to that instant when combined with the independently captured
+venue IANA timezone. This consistency is evidence, not permission for the
+scheduler to infer a timezone from the venue-local value.
+
+The observed CFS payload is therefore a **mixture by field**: its `date` is the
+only self-contained scheduled-start instant, `utcStartTime` is naive, and
+`venueLocalStartTime` is a naive civil time. This is evidence only: no CFS field
+is wired into scheduler planning, no CFS-specific parser or fallback is added,
+and the generic parser continues to reject naive values. Public AFL JSON test
+fixtures are a separate source contract and currently spell `utcStartTime`
+with `Z`.
+
+The APScheduler trigger timezone is not read from any CFS field. It remains
+application configuration hard-coded as `local_tz =
+pytz.timezone("Australia/Perth")` in `scheduler/scheduled_tasks.py`, and that
+value is passed to `BlockingScheduler(timezone=local_tz)`.
+
+### Scheduler fixture-time source trace
+
+Current scheduler registration does **not** parse a CFS timestamp field. Its
+fixture instant comes from `matches.start_time_utc`. The canonical AFL JSON
+bootstrap populates that column from public AFL JSON `utcStartTime`; the public
+JSON `startTime` is retained in the normalised/source record but is not selected
+for scheduler planning. CFS match-roster and match-item collection does not
+populate `matches.start_time_utc`, so CFS `date`, `utcStartTime`, and
+`venueLocalStartTime` do not currently pass through the strict scheduler parser.
+The legacy HTML fixture importer can also populate the column with its own
+aware UTC result, independently of all five JSON fields.
+
+The CFS fixture test parses only aware `date` to verify the captured instant and
+match day. It does not establish new source authority or production behaviour.
+If a future issue introduces a CFS-backed scheduling path, that work must define
+the source contract, validate `utcStartTime`, persist a stable conflict reason,
+and establish venue-timezone authority before interpreting
+`venueLocalStartTime`.
+
 ## Operator checks
 
 Use `/scheduler/jobs` or the admin Schedule page to compare `apscheduler_state` with `persisted_status`. `apscheduler_state` describes the current in-memory APScheduler view (`scheduled`, `paused`, or `absent`). `persisted_status` describes the durable application registry.
