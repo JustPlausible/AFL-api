@@ -1,5 +1,10 @@
 # Engineering status and scheduler-readiness review
 
+> **Document relationship:** This review remains the evidence-based assessment
+> of the current implementation. The human-authored
+> [scheduler workflow design](workflows/scheduler_workflow_design.md) defines the
+> intended scheduler behaviour and implementation direction.
+
 ## Review identity and method
 
 | Item | Current value |
