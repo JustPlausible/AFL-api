@@ -4,6 +4,9 @@ from apscheduler.triggers.interval import IntervalTrigger
 from utils.log import setup_logger
 from db.connection import get_db_connection
 from scheduler.registry import add_registered_job, live_match_day_job_id, live_match_refresh_job_id
+from scheduler.registry import match_refresh_job_id, record_planning_failure
+from scheduler.time_policy import MetadataTimestampError, match_day_bounds, parse_metadata_timestamp
+from datetime import datetime
 import random
 import time
 
@@ -38,30 +41,41 @@ def refresh_live_matches():
 
     conn.close()
 
-def scrape_today_matches():
+def _today_match_ids(conn, now: datetime | None = None) -> list[int]:
+    """Select matches in the configured AFL day without database timezone logic."""
+    start, end = match_day_bounds(now)
+    selected = []
+    for match_id, raw_start in conn.execute("SELECT match_id, start_time_utc FROM matches"):
+        try:
+            instant = parse_metadata_timestamp(raw_start)
+        except MetadataTimestampError as exc:
+            record_planning_failure(
+                match_refresh_job_id(match_id), "match_refresh", exc.reason_code, match_id=match_id
+            )
+            log.error("Failed to plan match-day refresh for match %s: %s", match_id, exc.reason_code)
+            continue
+        if start <= instant < end:
+            selected.append(match_id)
+    return selected
+
+
+def scrape_today_matches(now: datetime | None = None):
     log.info("🔁 Live match-day public JSON status collection running...")
     conn = get_db_connection()
     try:
-        rows = conn.execute("""
-            SELECT match_id FROM matches
-            WHERE date(start_time_utc) = date('now', 'localtime')
-        """).fetchall()
+        match_ids = _today_match_ids(conn, now)
     finally:
         conn.close()
     from collection.source_policy import OperationalDomain, collect_operational
-    return [collect_operational(OperationalDomain.MATCH_STATUS, target_id=row[0]) for row in rows]
+    return [collect_operational(OperationalDomain.MATCH_STATUS, target_id=match_id) for match_id in match_ids]
 
-def register_live_match_day_scraper(scheduler):
+def register_live_match_day_scraper(scheduler, now: datetime | None = None):
     def today_has_matches():
         conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT COUNT(*) FROM matches
-            WHERE date(start_time_utc) = date('now', 'localtime')
-        """)
-        count = cursor.fetchone()[0]
-        conn.close()
-        return count > 0
+        try:
+            return bool(_today_match_ids(conn, now))
+        finally:
+            conn.close()
 
     if today_has_matches():
         add_registered_job(

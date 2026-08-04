@@ -680,6 +680,16 @@ criteria they deliver.
 
 ## Design history
 
+### Implemented prerequisite: scheduler time correctness
+
+Issue #130 establishes the time foundation without implementing the later
+planner/controller stages in this design. AFL metadata instants are parsed by a
+single aware policy, the configured AFL match day defaults to
+`Australia/Perth` and is calculated in application code, and unsafe timestamp
+planning is represented by a concise failure in the existing registry. This is
+intentionally not the durable per-domain planning model, polling controller,
+lease, or SQLite coordination policy described by later stages above.
+
 This workflow was developed through iterative architectural design
 between the project maintainer and AI-assisted design review.
 

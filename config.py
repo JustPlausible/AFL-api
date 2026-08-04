@@ -23,6 +23,7 @@ AFL_COMPETITION_CODE = os.getenv("AFL_COMPETITION_CODE", "AFL")
 AFL_COMPETITION_PROVIDER_ID = os.getenv("AFL_COMPETITION_PROVIDER_ID", "CD_C014")
 AFL_SEASON_YEAR = os.getenv("AFL_SEASON_YEAR")
 AFL_BASE_URL = os.getenv("AFL_BASE_URL", "https://www.afl.com.au")
+AFL_MATCH_DAY_TIMEZONE = os.getenv("AFL_MATCH_DAY_TIMEZONE", "Australia/Perth")
 
 # Scraper Behaviour
 SCRAPER_TIMEOUT = int(os.getenv("SCRAPER_TIMEOUT", 10))

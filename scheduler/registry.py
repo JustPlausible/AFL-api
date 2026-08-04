@@ -117,6 +117,32 @@ def mark_failed(job_id: str, exc: BaseException | str) -> None:
         conn.execute("UPDATE scheduler_job_registry SET status=?, last_error_summary=?, updated_at=? WHERE job_id=?", (FAILED, summarize_error(exc), now, job_id)); conn.commit()
     finally: conn.close()
 
+def record_planning_failure(
+    job_id: str, job_type: str, reason_code: str, *, match_id: int | None = None, round_id: int | str | None = None
+) -> None:
+    """Persist a safe, queryable scheduler planning failure without an attempt."""
+    conn = get_db_connection(); now = utc_now()
+    try:
+        conn.execute("""
+            INSERT INTO scheduler_job_registry
+              (job_id, job_type, match_id, round_id, status, last_error_summary, args_json, trigger_type, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, '[]', 'date', ?)
+            ON CONFLICT(job_id) DO UPDATE SET
+              job_type=excluded.job_type,
+              match_id=excluded.match_id,
+              round_id=excluded.round_id,
+              scheduled_run_time=NULL,
+              status=excluded.status,
+              last_error_summary=excluded.last_error_summary,
+              func_ref=NULL,
+              args_json='[]',
+              trigger_type='date',
+              updated_at=excluded.updated_at
+        """, (job_id, job_type, match_id, None if round_id is None else str(round_id), FAILED,
+              summarize_error(f"planning_failed:{reason_code}"), now))
+        conn.commit()
+    finally: conn.close()
+
 def mark_skipped(job_id: str, reason: str) -> None:
     conn = get_db_connection(); now = utc_now()
     try:
