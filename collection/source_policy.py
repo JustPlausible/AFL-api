@@ -12,18 +12,24 @@ import logging
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Callable
+from typing import Any, Callable, Protocol
 
 import config
 from afl_json import (
     AflJsonClient, MatchPlayerStatsCollector, MatchRosterCollector,
     PlayerStatsStatus, PublicAflCollector, RosterStatus,
-    persist_afl_metadata, reconcile_match_status, upsert_player_stats,
+    persist_afl_metadata, persist_match_status_resolution, reconcile_match_status,
+    upsert_player_stats,
 )
 from db.connection import get_db_connection
 from db.scrape_runs import TRIGGER_SCHEDULER, audited_scrape_run
 
 logger = logging.getLogger("operational_collection")
+
+
+class PersistenceExecutor(Protocol):
+    def __call__(self, operation_name: str, target_id: object,
+                 callback: Callable[[Any], Any]) -> Any: ...
 
 
 class OperationalDomain(str, Enum):
@@ -133,6 +139,7 @@ def collect_operational(
     domain: OperationalDomain | str, *, target_id: int | None = None,
     trigger_source: str = TRIGGER_SCHEDULER, correlation_id: str | None = None,
     client_factory: Callable[[], AflJsonClient] = AflJsonClient,
+    write_executor: PersistenceExecutor | None = None,
 ) -> CollectionOutcome:
     """Run the policy-selected collector without implicit dual execution."""
     selected = policy_for(domain)
@@ -163,7 +170,8 @@ def collect_operational(
             )
         with audited_scrape_run(
             selected.domain.value, target_type=target_type, target_identifier=target_id,
-            trigger_source=trigger_source, correlation_id=correlation_id, conn=conn,
+            trigger_source=trigger_source, correlation_id=correlation_id,
+            conn=None if write_executor else conn, write_executor=write_executor,
         ) as audit:
             if selected.domain is OperationalDomain.LINEUPS:
                 if target_id is None:
@@ -174,7 +182,9 @@ def collect_operational(
                     round_number=target_id, trigger_source=trigger_source,
                     correlation_id=correlation_id,
                 )
-                written = save_lineups_to_db(records, conn, target_id)
+                persist = lambda db: save_lineups_to_db(records, db, target_id)
+                written = (write_executor("lineups.persist_round", target_id, persist)
+                           if write_executor else persist(conn))
                 status = "success" if written else "unavailable"
                 outcome = CollectionOutcome(selected.domain.value, selected.source_family,
                     selected.collector, written > 0, False, None, status,
@@ -188,7 +198,9 @@ def collect_operational(
                             competition_provider_id=config.AFL_COMPETITION_PROVIDER_ID,
                             season=season,
                         )
-                        summary = persist_afl_metadata(conn, result)
+                        persist = lambda db: persist_afl_metadata(db, result)
+                        summary = (write_executor("metadata.persist", target_id, persist)
+                                   if write_executor else persist(conn))
                         outcome = CollectionOutcome(selected.domain.value, selected.source_family,
                             selected.collector, True, False, None, "success",
                             summary.records_read, summary.inserted + summary.updated, target_id)
@@ -207,10 +219,17 @@ def collect_operational(
                             raise ValueError("match status requires an internal match ID")
                         provider_id, _ = _match_context(conn, target_id)
                         result = reconcile_match_status(
-                            conn, client, match_provider_id=provider_id, afl_match_id=target_id
+                            conn, client, match_provider_id=provider_id,
+                            afl_match_id=target_id, persist=write_executor is None,
                         )
-                        conn.commit()
-                        written = int(result.canonical_refreshed)
+                        if write_executor:
+                            written = int(write_executor(
+                                "match_status.persist", target_id,
+                                lambda db: persist_match_status_resolution(db, result),
+                            ))
+                        else:
+                            conn.commit()
+                            written = int(result.canonical_refreshed)
                         outcome = CollectionOutcome(selected.domain.value, selected.source_family,
                             selected.collector, written > 0, False, None, "success", 1, written, target_id)
                     else:
@@ -218,14 +237,20 @@ def collect_operational(
                             raise ValueError("match player statistics require an internal match ID")
                         provider_id, stored_status = _match_context(conn, target_id)
                         resolution = reconcile_match_status(
-                            conn, client, match_provider_id=provider_id, afl_match_id=target_id
+                            conn, client, match_provider_id=provider_id,
+                            afl_match_id=target_id, persist=write_executor is None,
                         )
                         result = MatchPlayerStatsCollector(client).collect(
                             provider_id, afl_match_id=target_id,
                             canonical_match_status=resolution.resolved_status or stored_status,
                         )
-                        written = upsert_player_stats(conn, result)
-                        conn.commit()
+                        def persist_stats(db):
+                            persist_match_status_resolution(db, resolution)
+                            return upsert_player_stats(db, result)
+                        written = (write_executor("cfs_player_stats.persist_match", target_id, persist_stats)
+                                   if write_executor else upsert_player_stats(conn, result))
+                        if not write_executor:
+                            conn.commit()
                         status = "unavailable" if result.status is PlayerStatsStatus.UNAVAILABLE else "success"
                         outcome = CollectionOutcome(selected.domain.value, selected.source_family,
                             selected.collector, written > 0, False, None, status,

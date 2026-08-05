@@ -144,7 +144,9 @@ def test_scheduler_round_invocation_uses_persistent_html_policy(monkeypatch):
 
     schedule_lineup_scrapes.run_lineup_round_scraper(9)
 
-    assert calls == [(source_policy.OperationalDomain.LINEUPS, {"target_id": 9})]
+    assert len(calls) == 1 and calls[0][0] is source_policy.OperationalDomain.LINEUPS
+    assert calls[0][1]["target_id"] == 9
+    assert callable(calls[0][1]["write_executor"])
 
 
 def test_scheduler_match_invocation_resolves_round_for_persistent_html_policy(monkeypatch):
@@ -156,7 +158,9 @@ def test_scheduler_match_invocation_resolves_round_for_persistent_html_policy(mo
 
     schedule_lineup_scrapes.run_lineup_match_scraper(7043)
 
-    assert calls == [(source_policy.OperationalDomain.LINEUPS, {"target_id": 9})]
+    assert len(calls) == 1 and calls[0][0] is source_policy.OperationalDomain.LINEUPS
+    assert calls[0][1]["target_id"] == 9
+    assert callable(calls[0][1]["write_executor"])
 
 
 def test_scheduler_propagates_policy_failure_without_html_fallback(monkeypatch):

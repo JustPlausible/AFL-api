@@ -62,6 +62,7 @@ def reconcile_match_status(
     match_provider_id: str,
     afl_match_id: int | None = None,
     clock: Callable[[], datetime] | None = None,
+    persist: bool = True,
 ) -> MatchStatusResolution:
     """Resolve a match row, then consult direct detail only when it can advance it."""
     row = conn.execute(
@@ -118,17 +119,42 @@ def reconcile_match_status(
 
     refreshed = bool(row and direct_status and resolved == direct_status
                      and direct_status != stored_status)
-    if refreshed:
+    resolution = MatchStatusResolution(
+        match_provider_id, effective_match_id, stored_status, direct_status,
+        resolved, source, refreshed, tuple(diagnostics),
+    )
+    if refreshed and persist:
+        persist_match_status_resolution(conn, resolution, clock=clock)
+    return resolution
+
+
+def persist_match_status_resolution(
+    conn: sqlite3.Connection, resolution: MatchStatusResolution,
+    *, clock: Callable[[], datetime] | None = None,
+) -> bool:
+    """Persist an already-collected resolution without allowing regression."""
+    if not resolution.canonical_refreshed or not resolution.direct_status:
+        return False
+    row = conn.execute(
+        "SELECT status FROM matches WHERE match_provider_id = ? LIMIT 1",
+        (resolution.match_provider_id,),
+    ).fetchone()
+    current = normalise_match_status(row[0]) if row else None
+    if current == resolution.direct_status:
+        return False
+    if later_match_status(current, resolution.direct_status) != resolution.direct_status:
+        return False
+    if row:
         columns = {column[1] for column in conn.execute("PRAGMA table_info(matches)")}
         if "updated_at" in columns:
             now = (clock or (lambda: datetime.now(timezone.utc)))().astimezone(timezone.utc).isoformat()
             conn.execute("UPDATE matches SET status = ?, updated_at = ? WHERE match_provider_id = ?",
-                         (direct_status, now, match_provider_id))
+                         (resolution.direct_status, now, resolution.match_provider_id))
         else:
             conn.execute("UPDATE matches SET status = ? WHERE match_provider_id = ?",
-                         (direct_status, match_provider_id))
-    return MatchStatusResolution(match_provider_id, effective_match_id, stored_status, direct_status,
-                                 resolved, source, refreshed, tuple(diagnostics))
+                         (resolution.direct_status, resolution.match_provider_id))
+        return True
+    return False
 
 
 def _direct_status(payload: Any, afl_match_id: int, match_provider_id: str) -> str | None:

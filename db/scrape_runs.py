@@ -1,17 +1,21 @@
 """Shared audit helpers for scraper run lifecycle records."""
 from __future__ import annotations
 
+import logging
 import os
 import re
 import sqlite3
 import uuid
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from db.connection import get_db_connection
+
+logger = logging.getLogger("scrape_runs")
 
 STATUS_RUNNING = "running"
 STATUS_COMPLETED = "completed"
@@ -24,6 +28,11 @@ TRIGGER_SCHEDULER = "scheduler"
 TRIGGER_ADMIN_MANUAL = "admin_manual"
 TRIGGER_STARTUP_RECOVERY = "startup_recovery"
 TRIGGER_SOURCES = {TRIGGER_CLI, TRIGGER_SCHEDULER, TRIGGER_ADMIN_MANUAL, TRIGGER_STARTUP_RECOVERY}
+
+# Environment variables remain a supported process-entry hint, but mutable
+# per-job/per-audit state must be context-local because APScheduler uses threads.
+_scheduler_job_id: ContextVar[str | None] = ContextVar("scheduler_job_id", default=None)
+_audit_depth: ContextVar[int] = ContextVar("scrape_run_audit_depth", default=0)
 
 MAX_ERROR_SUMMARY_LENGTH = 500
 _REDACTED = "<redacted>"
@@ -64,11 +73,22 @@ def utc_now() -> str:
 def infer_trigger_source(trigger_source: str | None = None, correlation_id: str | None = None) -> str:
     if trigger_source:
         return trigger_source
-    return TRIGGER_SCHEDULER if (correlation_id or os.getenv("AFL_SCHEDULER_JOB_ID")) else TRIGGER_CLI
+    return TRIGGER_SCHEDULER if (correlation_id or _scheduler_job_id.get()
+                                 or os.getenv("AFL_SCHEDULER_JOB_ID")) else TRIGGER_CLI
 
 
 def infer_correlation_id(correlation_id: str | None = None) -> str | None:
-    return correlation_id or os.getenv("AFL_SCHEDULER_JOB_ID") or None
+    return correlation_id or _scheduler_job_id.get() or os.getenv("AFL_SCHEDULER_JOB_ID") or None
+
+
+@contextmanager
+def scheduler_job_context(job_id: str) -> Iterator[None]:
+    """Set Scheduler audit correlation without leaking across worker threads."""
+    token = _scheduler_job_id.set(job_id)
+    try:
+        yield
+    finally:
+        _scheduler_job_id.reset(token)
 
 
 def validate_status(status: str) -> str:
@@ -243,27 +263,32 @@ def recover_stale_running_runs(*, older_than: datetime, reason: str = "Startup r
 
 
 @contextmanager
-def audited_scrape_run(scrape_type: str, *, target_type: str | None = None, target_identifier: Any = None, trigger_source: str | None = None, correlation_id: str | None = None, conn: sqlite3.Connection | None = None) -> Iterator[dict[str, Any]]:
-    if os.getenv("AFL_SCRAPE_RUN_ACTIVE"):
+def audited_scrape_run(scrape_type: str, *, target_type: str | None = None, target_identifier: Any = None, trigger_source: str | None = None, correlation_id: str | None = None, conn: sqlite3.Connection | None = None,
+                       write_executor: Callable[[str, object, Callable[[sqlite3.Connection], Any]], Any] | None = None) -> Iterator[dict[str, Any]]:
+    if _audit_depth.get() > 0 or os.getenv("AFL_SCRAPE_RUN_ACTIVE"):
         yield {"run_id": None, "rows_read": None, "rows_written": None}
         return
-    run_id = start_scrape_run(scrape_type, target_type=target_type, target_identifier=target_identifier, trigger_source=trigger_source, correlation_id=correlation_id, conn=conn)
+    start = lambda db: start_scrape_run(scrape_type, target_type=target_type, target_identifier=target_identifier, trigger_source=trigger_source, correlation_id=correlation_id, conn=db)
+    run_id = (write_executor("scrape_runs.start", target_identifier, start)
+              if write_executor else start(conn))
     counts: dict[str, Any] = {"run_id": run_id, "rows_read": None, "rows_written": None}
-    previous_active = os.environ.get("AFL_SCRAPE_RUN_ACTIVE")
-    os.environ["AFL_SCRAPE_RUN_ACTIVE"] = "1"
+    depth_token = _audit_depth.set(_audit_depth.get() + 1)
     try:
         yield counts
     except Exception as exc:
         if run_id is not None:
-            fail_scrape_run(run_id, exc, conn=conn)
+            finish = lambda db: fail_scrape_run(run_id, exc, conn=db)
+            try:
+                (write_executor("scrape_runs.fail", run_id, finish)
+                 if write_executor else finish(conn))
+            except Exception:
+                logger.exception("scrape_run failure finalisation failed run_id=%s", run_id)
         raise
     else:
         if run_id is not None:
-            complete_scrape_run(run_id, rows_read=counts.get("rows_read"),
-                                rows_written=counts.get("rows_written"),
-                                partial=counts.get("status") == "partial", conn=conn)
+            finish = lambda db: complete_scrape_run(
+                run_id, rows_read=counts.get("rows_read"), rows_written=counts.get("rows_written"),
+                partial=counts.get("status") == "partial", conn=db)
+            (write_executor("scrape_runs.complete", run_id, finish) if write_executor else finish(conn))
     finally:
-        if previous_active is None:
-            os.environ.pop("AFL_SCRAPE_RUN_ACTIVE", None)
-        else:
-            os.environ["AFL_SCRAPE_RUN_ACTIVE"] = previous_active
+        _audit_depth.reset(depth_token)

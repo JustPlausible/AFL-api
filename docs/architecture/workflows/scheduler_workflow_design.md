@@ -1,5 +1,7 @@
 # Scheduler Workflow Design
 
+**Implemented SQLite prerequisite:** [connection and write coordination policy](../sqlite_coordination_policy.md)
+
 **Status:** Draft for implementation review
 
 **Related assessment:** [Scheduler-readiness review](../project_status_scheduler_readiness.md)

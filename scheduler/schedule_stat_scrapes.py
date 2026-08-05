@@ -12,9 +12,10 @@ scheduler_log = setup_logger("scheduler_jobs", "scheduler_jobs.log")
 
 def run_stats_scraper(match_id: int):
     """Run the policy-selected canonical CFS collector for an internal match ID."""
-    from collection.source_policy import OperationalDomain, collect_operational
+    from collection.source_policy import OperationalDomain
+    from scheduler.collection import collect_scheduled
     scheduler_log.info(f"📈 Running CFS stat collector for match {match_id}")
-    return collect_operational(OperationalDomain.MATCH_PLAYER_STATS, target_id=match_id)
+    return collect_scheduled(OperationalDomain.MATCH_PLAYER_STATS, target_id=match_id)
 
 def was_scraped_recently(match_id: int, conn, window_minutes: int = 5) -> bool:
     cursor = conn.cursor()

@@ -54,7 +54,8 @@ from .player_stats import (
 )
 from .match_status import (
     MatchLifecycle, MatchStatusDiagnostic, MatchStatusResolution,
-    later_match_status, normalise_match_status, reconcile_match_status,
+    later_match_status, normalise_match_status, persist_match_status_resolution,
+    reconcile_match_status,
 )
 from .bootstrap import BootstrapSummary, persist_afl_metadata
 from .player_persistence import (
@@ -113,6 +114,7 @@ __all__ = [
     "MatchStatusResolution",
     "later_match_status",
     "normalise_match_status",
+    "persist_match_status_resolution",
     "reconcile_match_status",
     "BootstrapSummary",
     "persist_afl_metadata",
