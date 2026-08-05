@@ -8,27 +8,28 @@ from types import SimpleNamespace
 import pytest
 
 from afl_json.client import AflJsonAuthenticationError
-from afl_json.player_stats import MatchPlayerStatsCollector, PlayerStatsStatus, normalise_player_stats
+from afl_json.player_stats import PlayerStatsStatus, normalise_player_stats
 from db.migration_runner import migrate_database
-from scheduler.match_windows import MatchWindowSettings, reconcile, window_id
+from scheduler.match_windows import MatchWindowSettings, reconcile
 from scheduler.player_stat_polling import PlayerStatPollingSettings, PlayerStatPollingWorker, deterministic_jitter
 
 NOW = datetime(2026, 8, 5, 3, 0, tzinfo=timezone.utc)
 
 class DirectLane:
-    def __init__(self, path): self.path = path; self.active = 0; self.max_active = 0; self.network_during_write = False
+    def __init__(self, path): self.path = path; self.active = 0; self.max_active = 0; self.network_during_write = False; self.lock = threading.Lock()
     def execute(self, op, target, cb): return self._run(cb)
     def execute_immediate(self, op, target, cb): return self._run(cb, immediate=True)
     def _run(self, cb, immediate=False):
-        self.active += 1; self.max_active=max(self.max_active,self.active)
-        conn=sqlite3.connect(self.path, timeout=10); conn.row_factory=sqlite3.Row; conn.execute("PRAGMA foreign_keys=ON")
-        try:
-            if immediate: conn.execute("BEGIN IMMEDIATE")
-            result=cb(conn); conn.commit(); return result
-        except Exception:
-            conn.rollback(); raise
-        finally:
-            conn.close(); self.active -= 1
+        with self.lock:
+            self.active += 1; self.max_active=max(self.max_active,self.active)
+            conn=sqlite3.connect(self.path, timeout=10); conn.row_factory=sqlite3.Row; conn.execute("PRAGMA foreign_keys=ON")
+            try:
+                if immediate: conn.execute("BEGIN IMMEDIATE")
+                result=cb(conn); conn.commit(); return result
+            except Exception:
+                conn.rollback(); raise
+            finally:
+                conn.close(); self.active -= 1
 
 @pytest.fixture
 def db(tmp_path, monkeypatch):
@@ -80,7 +81,7 @@ def test_due_live_window_claimed_collected_persisted_and_rescheduled(db):
     row=conn.execute("SELECT status,next_due_at,cadence_profile,lease_token FROM match_stat_windows").fetchone()
     assert row["status"] == "awaiting_final" and row["lease_token"] is None
     assert row["next_due_at"] == (NOW + timedelta(seconds=60)).isoformat()
-    assert row["cadence_profile"] == "live"
+    assert row["cadence_profile"] == "live_partial"
     assert lane.max_active == 1
 
 def test_live_default_cadence_is_sixty_seconds_and_restart_persists_next_due(db):
@@ -94,7 +95,7 @@ def test_live_default_cadence_is_sixty_seconds_and_restart_persists_next_due(db)
 def test_lifecycle_phases_and_deterministic_jitter():
     s=settings(jitter_seconds=5)
     assert deterministic_jitter("a","live",30) != deterministic_jitter("b","live",30)
-    for lifecycle, status, expected in [("LIVE", PlayerStatsStatus.LIVE_PARTIAL, "live"),("CONCLUDED", PlayerStatsStatus.UNAVAILABLE, "unpublished_or_unavailable"),("POSTGAME", PlayerStatsStatus.CONCLUDED, "post_match_awaiting_final")]:
+    for lifecycle, status, expected in [("LIVE", PlayerStatsStatus.LIVE_PARTIAL, "live_partial"),("CONCLUDED", PlayerStatsStatus.UNAVAILABLE, "unpublished_or_unavailable"),("POSTGAME", PlayerStatsStatus.CONCLUDED, "post_match_awaiting_final")]:
         from scheduler.player_stat_polling import cadence_for
         assert cadence_for({"lifecycle": lifecycle}, status, s)[1] == expected
 
@@ -136,3 +137,123 @@ def test_controls_allowlist_and_drain(db):
     assert PlayerStatPollingWorker(settings=settings(enabled=False), client_pool=Pool(Client(live_payload())), lane=DirectLane(path), clock=lambda: NOW).run_once() == []
     assert PlayerStatPollingWorker(settings=settings(allowed_matches=("999",)), client_pool=Pool(Client(live_payload())), lane=DirectLane(path), clock=lambda: NOW).run_once() == []
     assert PlayerStatPollingWorker(settings=settings(drain=True), client_pool=Pool(Client(live_payload())), lane=DirectLane(path), clock=lambda: NOW).run_once() == []
+
+def add_two_due_live_matches(conn):
+    add_match(conn, match_id=8001, provider="CD_M1", status="LIVE")
+    add_match(conn, match_id=8002, provider="CD_M2", status="LIVE")
+    reconcile(conn, now=NOW, settings=window_settings()); conn.commit()
+
+
+def test_run_once_executes_different_matches_concurrently_with_serialized_writes(db):
+    conn,path=db; add_two_due_live_matches(conn)
+    barrier = threading.Barrier(2)
+    state = {"active": 0, "max_active": 0}
+    lock = threading.Lock()
+
+    class ConcurrentCollector:
+        def __init__(self, client, *, clock): self.clock = clock
+        def collect(self, match_provider_id, **kwargs):
+            with lock:
+                state["active"] += 1
+                state["max_active"] = max(state["max_active"], state["active"])
+            barrier.wait(timeout=5)
+            try:
+                return normalise_player_stats(live_payload("LIVE"), match_provider_id, collected_at=NOW.isoformat(), afl_match_id=kwargs.get("afl_match_id"), canonical_match_status="LIVE")
+            finally:
+                with lock: state["active"] -= 1
+
+    lane = DirectLane(path)
+    out = PlayerStatPollingWorker(settings=settings(max_workers=2, claim_limit=2, network_concurrency=2), window_settings=window_settings(), client_pool=Pool(Client(live_payload())), collector_factory=ConcurrentCollector, clock=lambda: NOW, lane=lane).run_once()
+    assert len(out) == 2
+    assert state["max_active"] == 2
+    assert lane.max_active == 1
+    assert conn.execute("SELECT COUNT(DISTINCT match_provider_id) FROM cfs_player_stats").fetchone()[0] == 2
+
+
+def test_pre_match_window_does_not_call_cfs_before_authoritative_live(db):
+    conn,path=db; add_match(conn, status="SCHEDULED", start=(NOW + timedelta(minutes=30)).isoformat())
+    reconcile(conn, now=NOW, settings=window_settings()); conn.commit()
+    client = Client(live_payload())
+    out = PlayerStatPollingWorker(settings=settings(), window_settings=window_settings(), client_pool=Pool(client), clock=lambda: NOW, lane=DirectLane(path)).run_once()[0]
+    assert out["status"] == "awaiting_authoritative_live"
+    assert client.calls == 0
+    assert conn.execute("SELECT COUNT(*) FROM cfs_player_stats").fetchone()[0] == 0
+
+
+def test_process_client_pool_uses_public_shared_token_boundary_and_closes_all_thread_clients():
+    pool = __import__("scheduler.player_stat_polling", fromlist=["SchedulerCfsClientPool"]).SchedulerCfsClientPool(token_acquirer=lambda: "token")
+    clients = []
+    def get_client(): clients.append(pool.client())
+    threads = [threading.Thread(target=get_client) for _ in range(2)]
+    for t in threads: t.start()
+    for t in threads: t.join()
+    assert len({id(c.session) for c in clients}) == 2
+    assert clients[0].token_provider is clients[1].token_provider
+    pool.close()
+    with pytest.raises(RuntimeError):
+        pool.client()
+
+
+def test_domain_auth_pause_blocks_other_matches_without_token_hammering(db):
+    conn,path=db; add_match(conn, match_id=8001, provider="CD_M1", status="LIVE"); add_match(conn, match_id=8002, provider="CD_M2", status="LIVE")
+    reconcile(conn, now=NOW, settings=window_settings()); conn.commit()
+    err=AflJsonAuthenticationError("cookie: secret", endpoint="match_player_statistics", status_code=401)
+    client = Client(error=err)
+    worker = PlayerStatPollingWorker(settings=settings(claim_limit=1, max_workers=1), window_settings=window_settings(), client_pool=Pool(client), clock=lambda: NOW, lane=DirectLane(path))
+    assert worker.run_once()[0]["status"] == "auth_failed_paused"
+    assert worker.status()["auth_paused"] is True
+    assert worker.run_once() == []
+    assert client.calls == 1
+    assert conn.execute("SELECT COUNT(*) FROM scrape_runs WHERE reason_code='auth_domain_paused'").fetchone()[0] == 1
+
+
+def test_increasing_backoff_uses_persisted_failure_history(db):
+    conn,path=db; add_match(conn); reconcile(conn, now=NOW, settings=window_settings()); conn.commit()
+    conn.execute("UPDATE match_stat_windows SET consecutive_failure_count=2"); conn.commit()
+    err=AflJsonAuthenticationError("authorization: Bearer token", endpoint="match_player_statistics", status_code=401)
+    PlayerStatPollingWorker(settings=settings(auth_pause=timedelta(minutes=10)), window_settings=window_settings(), client_pool=Pool(Client(error=err)), clock=lambda: NOW, lane=DirectLane(path)).run_once()
+    due=datetime.fromisoformat(conn.execute("SELECT next_due_at FROM match_stat_windows").fetchone()[0])
+    assert due == NOW + timedelta(minutes=40)
+
+
+def test_empty_and_unknown_results_are_typed_backoff_not_ordinary_success(db):
+    conn,path=db; add_match(conn); reconcile(conn, now=NOW, settings=window_settings()); conn.commit()
+    worker=PlayerStatPollingWorker(settings=settings(), window_settings=window_settings(), client_pool=Pool(Client({"matchStatus":"LIVE","homeTeamPlayerStats":[],"awayTeamPlayerStats":[]})), clock=lambda: NOW, lane=DirectLane(path))
+    out=worker.run_once()[0]
+    row=conn.execute("SELECT status,consecutive_failure_count,cadence_profile FROM match_stat_windows").fetchone()
+    assert out["status"] == "rejected_backoff"
+    assert row[:] == ("backoff", 1, "empty_result")
+
+
+def test_lost_lease_before_persistence_fails_audit_without_window_mutation(db):
+    conn,path=db; add_match(conn); reconcile(conn, now=NOW, settings=window_settings()); conn.commit()
+    class StealingCollector:
+        def __init__(self, client, *, clock): pass
+        def collect(self, match_provider_id, **kwargs):
+            steal=sqlite3.connect(path); steal.execute("UPDATE match_stat_windows SET lease_token='stolen'"); steal.commit(); steal.close()
+            return normalise_player_stats(live_payload("LIVE"), match_provider_id, collected_at=NOW.isoformat(), afl_match_id=kwargs.get("afl_match_id"), canonical_match_status="LIVE")
+    out=PlayerStatPollingWorker(settings=settings(), window_settings=window_settings(), client_pool=Pool(Client(live_payload())), collector_factory=StealingCollector, clock=lambda: NOW, lane=DirectLane(path)).run_once()[0]
+    assert out["status"] == "lost_lease"
+    assert conn.execute("SELECT status FROM scrape_runs ORDER BY started_at DESC LIMIT 1").fetchone()[0] == "failed"
+    assert conn.execute("SELECT attempt_count, lease_token FROM match_stat_windows").fetchone()[:] == (0, "stolen")
+
+
+def test_status_reports_operational_state_and_windows(db):
+    conn,path=db; add_match(conn); reconcile(conn, now=NOW, settings=window_settings()); conn.commit()
+    worker=PlayerStatPollingWorker(settings=settings(), window_settings=window_settings(), client_pool=Pool(Client(live_payload())), clock=lambda: NOW, lane=DirectLane(path))
+    status=worker.status()
+    assert status["enabled"] is True
+    assert status["active_attempt_count"] == 0
+    assert status["live_cadence_seconds"] == 60
+
+def test_read_only_status_endpoint_includes_operational_state_and_window_rows(db, monkeypatch):
+    conn,path=db; add_match(conn); reconcile(conn, now=NOW, settings=window_settings()); conn.commit()
+    import scheduler.player_stat_polling as polling
+    worker=PlayerStatPollingWorker(settings=settings(), window_settings=window_settings(), client_pool=Pool(Client(live_payload())), clock=lambda: NOW, lane=DirectLane(path))
+    monkeypatch.setattr(polling, "_worker_singleton", worker, raising=False)
+    from scheduler.api import polling_status
+    body=polling_status()
+    assert body["read_only"] is True
+    assert body["operational"]["active_attempt_count"] == 0
+    assert body["operational"]["live_cadence_seconds"] == 60
+    assert body["windows"][0]["match_provider_id"] == "CD_M1"

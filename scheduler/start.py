@@ -38,6 +38,7 @@ from scheduler.schedule_stat_scrapes import (
 )
 from scheduler.scheduled_tasks import scheduler
 from scheduler.write_lane import write_lane
+from scheduler.player_stat_polling import shutdown_player_stat_polling_worker
 from scheduler.match_windows import MatchWindowSettings, reconcile as reconcile_match_windows
 from utils.log import setup_logger
 
@@ -146,6 +147,7 @@ def start_scheduler_for_app() -> None:
 
 def shutdown_scheduler(wait: bool = True) -> None:
     """Stop APScheduler and wait for executors so interpreter shutdown is clean."""
+    shutdown_player_stat_polling_worker()
     if scheduler.state != STATE_STOPPED:
         log.info("🛑 Shutting down APScheduler...")
         scheduler.shutdown(wait=wait)

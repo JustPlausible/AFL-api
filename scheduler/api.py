@@ -100,8 +100,9 @@ def list_match_windows():
 
 @app.get("/scheduler/player-stat-polling")
 def polling_status():
-    from scheduler.player_stat_polling import PlayerStatPollingSettings
-    settings = PlayerStatPollingSettings.from_config()
+    from scheduler.player_stat_polling import get_player_stat_polling_worker
+    worker = get_player_stat_polling_worker()
+    settings = worker.settings
     conn = get_read_only_db_connection()
     try:
         rows = inspection_rows(conn)
@@ -109,6 +110,7 @@ def polling_status():
         conn.close()
     return {
         "read_only": True,
+        "operational": worker.status(),
         "enabled": settings.enabled,
         "kill_switch": settings.kill_switch,
         "drain": settings.drain,

@@ -53,6 +53,11 @@ class SchedulerWriteLane:
         with self._state:
             return self._pending
 
+    @property
+    def active_count(self) -> int:
+        with self._state:
+            return self._active
+
     def execute(self, operation_name: str, target_id: object, callback: Callable[[sqlite3.Connection], T]) -> T:
         return self._execute(operation_name, target_id, callback, begin_immediate=False)
 

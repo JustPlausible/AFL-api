@@ -58,13 +58,13 @@ A match-domain closes only after CFS has written an authoritative concluded snap
 
 ### Concurrency, SQLite, and source authority
 
-The conservative defaults are two collection workers, two CFS/player-stat network permits, one in-process owner per match, and one serialized Scheduler write lane. Network collection happens before the persistence callback enters the write lane; the write callback performs only short SQLite work: CFS upsert, finality inspection, audit finalisation, and window rescheduling/release. Writer wait and transaction timing continue to be emitted by `scheduler.write_lane` diagnostics.
+The conservative defaults are two collection workers, two CFS/player-stat network permits, one in-process owner per match, and one serialized Scheduler write lane. One planner wake-up may execute different claimed matches concurrently, but the existing lease model prevents two active attempts for the same match. Network collection happens before the persistence callback enters the write lane; the write callback performs only short SQLite work: CFS upsert, finality inspection, audit finalisation, and window rescheduling/release. If lease ownership is lost before persistence, the attempt is failed in `scrape_runs` and the stale owner does not mutate the window. Writer wait and transaction timing continue to be emitted by `scheduler.write_lane` diagnostics.
 
 CFS JSON remains the operational authority for player statistics. Accepted records are passed to the existing `upsert_player_stats` writer and therefore write only `cfs_player_stats`. The worker never invokes HTML fallback and never writes `player_stats`. Existing snapshot-authority protections prevent stale or lower-authority observations from regressing authoritative final data; lower-authority observations after completion are audited and ignored for persistence.
 
 ### CFS client lifecycle
 
-The scheduler process owns a `SchedulerCfsClientPool`. It uses per-thread HTTP sessions to avoid sharing an unsafe `requests.Session` across uncontrolled threads, while sharing one process-local `WMCTokenProvider` so the CFS token is acquired lazily and reused. The underlying client still performs exactly one refresh after a 401. Owned sessions are closed on worker shutdown, and diagnostics use the existing audit redaction helpers rather than logging credentials, cookies, authorization headers, or tokens.
+The scheduler process owns one process-lifetime `PlayerStatPollingWorker` and `SchedulerCfsClientPool`, acquired by the APScheduler wake-up and closed during scheduler shutdown. The pool uses per-thread HTTP sessions to avoid sharing an unsafe `requests.Session` across uncontrolled threads, while sharing one process-local synchronized `WMCTokenProvider` through an explicit public token-acquisition boundary so the CFS token is acquired lazily and reused. The underlying client still performs exactly one refresh after a 401. All owned sessions are closed on worker shutdown, and diagnostics use the existing audit redaction helpers rather than logging credentials, cookies, authorization headers, or tokens.
 
 ### Controls and operations
 
@@ -83,7 +83,7 @@ Disable, drain, and kill-switch controls do not delete planner history, leases, 
 
 * Unpublished or temporarily unavailable CFS data should show `final_stats_unavailable_or_partial` or an unavailable cadence with zero writes and no failure increment.
 * HTTP 429 and transient transport/server failures should move the window to backoff with a bounded future `next_due_at`; unrelated due matches continue.
-* Repeated authentication failure should appear as an auth pause/backoff state with redacted diagnostics.
+* Repeated authentication failure should appear as an auth pause/backoff state with redacted diagnostics; the process-level auth circuit prevents new claims during the cooldown so one bad token state does not hammer CFS across matches.
 * SQLite lock pressure should be investigated with `scheduler.write_lane` wait/transaction diagnostics before increasing concurrency.
 * Interrupted attempts are recovered by the existing lease-expiry reconciliation and replanned from current match/window/finality state.
 * Bounded-horizon expiry remains visibly incomplete (`polling_horizon_exceeded`) and requires operator reconciliation rather than automatic completion.

@@ -56,8 +56,8 @@ def check_for_match_day():
 
 @scheduler.scheduled_job(IntervalTrigger(seconds=15), id="player_stat_polling_planner", name="CFS player-stat polling planner", max_instances=1, coalesce=True, misfire_grace_time=10)
 def player_stat_polling_planner():
-    from scheduler.player_stat_polling import PlayerStatPollingWorker
-    return PlayerStatPollingWorker().run_once()
+    from scheduler.player_stat_polling import get_player_stat_polling_worker
+    return get_player_stat_polling_worker().run_once()
 
 
 # Start the scheduler loop
