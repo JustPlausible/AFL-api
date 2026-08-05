@@ -1,0 +1,226 @@
+"""Conservative lifecycle-driven CFS player-stat polling worker."""
+from __future__ import annotations
+
+import hashlib
+import threading
+import time
+import uuid
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from typing import Any, Callable
+
+import config
+from afl_json.client import (AflJsonAuthenticationError, AflJsonClient, AflJsonHttpError,
+                             AflJsonInvalidResponse, AflJsonTransportError,
+                             HttpPolicy, WMCTokenProvider)
+from afl_json.player_stats import MatchPlayerStatsCollector, PlayerStatsStatus, upsert_player_stats
+from db.scrape_runs import (complete_scrape_run, fail_scrape_run, record_scrape_decision,
+                            scheduler_job_context, start_scrape_run)
+from scheduler.match_windows import (FinalityState, MatchWindowSettings, ReasonCode,
+                                     _dt, _finality, _iso, claim_due_windows, release_window)
+from scheduler.write_lane import write_lane
+
+Clock = Callable[[], datetime]
+Jitter = Callable[[str, str, int], timedelta]
+
+
+@dataclass(frozen=True)
+class PlayerStatPollingSettings:
+    enabled: bool = False
+    kill_switch: bool = False
+    drain: bool = False
+    max_workers: int = 2
+    network_concurrency: int = 2
+    claim_limit: int = 2
+    live_cadence: timedelta = timedelta(seconds=60)
+    pre_match_cadence: timedelta = timedelta(minutes=5)
+    post_match_cadence: timedelta = timedelta(minutes=2)
+    unavailable_cadence: timedelta = timedelta(minutes=5)
+    transient_backoff: timedelta = timedelta(minutes=5)
+    rate_limit_backoff: timedelta = timedelta(minutes=10)
+    auth_pause: timedelta = timedelta(minutes=30)
+    max_backoff: timedelta = timedelta(hours=1)
+    jitter_seconds: int = 5
+    allowed_competitions: tuple[str, ...] = ()
+    allowed_seasons: tuple[str, ...] = ()
+    allowed_matches: tuple[str, ...] = ()
+
+    @classmethod
+    def from_config(cls) -> "PlayerStatPollingSettings":
+        return cls(
+            enabled=config.AFL_PLAYER_STAT_POLLING_ENABLED,
+            kill_switch=config.AFL_PLAYER_STAT_POLLING_KILL_SWITCH,
+            drain=config.AFL_PLAYER_STAT_POLLING_DRAIN,
+            max_workers=config.AFL_PLAYER_STAT_POLLING_MAX_WORKERS,
+            network_concurrency=config.AFL_PLAYER_STAT_POLLING_NETWORK_CONCURRENCY,
+            claim_limit=config.AFL_PLAYER_STAT_POLLING_CLAIM_LIMIT,
+            live_cadence=timedelta(seconds=config.AFL_PLAYER_STAT_POLLING_LIVE_SECONDS),
+            pre_match_cadence=timedelta(seconds=config.AFL_PLAYER_STAT_POLLING_PRE_MATCH_SECONDS),
+            post_match_cadence=timedelta(seconds=config.AFL_PLAYER_STAT_POLLING_POST_MATCH_SECONDS),
+            unavailable_cadence=timedelta(seconds=config.AFL_PLAYER_STAT_POLLING_UNAVAILABLE_SECONDS),
+            transient_backoff=timedelta(seconds=config.AFL_PLAYER_STAT_POLLING_TRANSIENT_BACKOFF_SECONDS),
+            rate_limit_backoff=timedelta(seconds=config.AFL_PLAYER_STAT_POLLING_RATE_LIMIT_BACKOFF_SECONDS),
+            auth_pause=timedelta(seconds=config.AFL_PLAYER_STAT_POLLING_AUTH_PAUSE_SECONDS),
+            max_backoff=timedelta(seconds=config.AFL_PLAYER_STAT_POLLING_MAX_BACKOFF_SECONDS),
+            jitter_seconds=config.AFL_PLAYER_STAT_POLLING_JITTER_SECONDS,
+            allowed_competitions=tuple(config.AFL_PLAYER_STAT_POLLING_ALLOWED_COMPETITIONS),
+            allowed_seasons=tuple(config.AFL_PLAYER_STAT_POLLING_ALLOWED_SEASONS),
+            allowed_matches=tuple(config.AFL_PLAYER_STAT_POLLING_ALLOWED_MATCHES),
+        )
+
+
+def deterministic_jitter(series_id: str, phase: str, seconds: int) -> timedelta:
+    if seconds <= 0:
+        return timedelta(0)
+    digest = hashlib.sha256(f"{series_id}:{phase}".encode()).digest()
+    return timedelta(seconds=int.from_bytes(digest[:4], "big") % (seconds + 1))
+
+
+class SchedulerCfsClientPool:
+    """Per-thread Sessions with one process-local token provider."""
+    def __init__(self, *, policy: HttpPolicy | None = None):
+        base = AflJsonClient(policy=policy)
+        lock = threading.Lock()
+        provider = WMCTokenProvider(lambda: base._acquire_token())
+        original_get = provider.get_token
+        def locked_get() -> str:
+            with lock:
+                return original_get()
+        provider.get_token = locked_get  # type: ignore[method-assign]
+        self._bootstrap = base
+        self._provider = provider
+        self._policy = policy
+        self._local = threading.local()
+
+    def client(self) -> AflJsonClient:
+        client = getattr(self._local, "client", None)
+        if client is None:
+            client = AflJsonClient(policy=self._policy, token_provider=self._provider)
+            self._local.client = client
+        return client
+
+    def close(self) -> None:
+        client = getattr(self._local, "client", None)
+        if client is not None:
+            client.close()
+        self._bootstrap.close()
+
+
+def _allowed(row: dict[str, Any], settings: PlayerStatPollingSettings) -> bool:
+    return ((not settings.allowed_competitions or str(row.get("competition_id")) in settings.allowed_competitions)
+            and (not settings.allowed_seasons or str(row.get("season_id")) in settings.allowed_seasons)
+            and (not settings.allowed_matches or str(row.get("match_id")) in settings.allowed_matches or str(row.get("match_provider_id")) in settings.allowed_matches))
+
+
+def cadence_for(row: dict[str, Any], status: PlayerStatsStatus | None, settings: PlayerStatPollingSettings) -> tuple[timedelta, str]:
+    lifecycle = str(row.get("lifecycle") or "").upper()
+    if status is PlayerStatsStatus.UNAVAILABLE:
+        return settings.unavailable_cadence, "unpublished_or_unavailable"
+    if lifecycle == "LIVE":
+        return settings.live_cadence, "live"
+    if lifecycle in {"POSTGAME", "CONCLUDED"}:
+        return settings.post_match_cadence, "post_match_awaiting_final"
+    return settings.pre_match_cadence, "pre_match_awaiting_live"
+
+
+def _safe_summary(exc: BaseException) -> str:
+    from db.scrape_runs import sanitize_error_summary
+    return sanitize_error_summary(exc)
+
+
+class PlayerStatPollingWorker:
+    def __init__(self, *, settings: PlayerStatPollingSettings | None = None,
+                 window_settings: MatchWindowSettings | None = None,
+                 client_pool: SchedulerCfsClientPool | None = None,
+                 collector_factory=MatchPlayerStatsCollector,
+                 clock: Clock | None = None,
+                 jitter: Jitter = deterministic_jitter,
+                 lane=write_lane):
+        self.settings = settings or PlayerStatPollingSettings.from_config()
+        self.window_settings = window_settings or MatchWindowSettings.from_config()
+        self.client_pool = client_pool or SchedulerCfsClientPool()
+        self.collector_factory = collector_factory
+        self.clock = clock or (lambda: datetime.now(timezone.utc))
+        self.jitter = jitter
+        self.lane = lane
+        self._network = threading.BoundedSemaphore(max(1, self.settings.network_concurrency))
+
+    def claim_due(self) -> list[dict[str, Any]]:
+        now = self.clock().astimezone(timezone.utc)
+        if not self.settings.enabled or self.settings.kill_switch or self.settings.drain:
+            reason = "disabled" if not self.settings.enabled else "kill_switch" if self.settings.kill_switch else "drain"
+            record_scrape_decision("cfs_player_stats_poll", target_type="domain", target_identifier="player_stats", reason_code=reason, decision_class="safe", correlation_id=f"poll_skip_{reason}_{int(now.timestamp())}", trigger_source="scheduler")
+            return []
+        claimed = claim_due_windows(f"player-stat-poller:{uuid.uuid4().hex[:8]}", limit=min(self.settings.claim_limit, self.settings.max_workers), now=now, settings=self.window_settings, lane=self.lane)
+        accepted=[]
+        for row in claimed:
+            if _allowed(row, self.settings):
+                accepted.append(row)
+            else:
+                self.lane.execute("player_stats_poll.release_disallowed", row["window_id"], lambda conn, r=row: release_window(conn, r["window_id"], r["lease_token"], now=now))
+        return accepted
+
+    def run_once(self) -> list[dict[str, Any]]:
+        results=[]
+        for row in self.claim_due():
+            results.append(self.run_claim(row))
+        return results
+
+    def run_claim(self, row: dict[str, Any]) -> dict[str, Any]:
+        now = self.clock().astimezone(timezone.utc)
+        attempt = row["attempt_id"]; job_id = row["scheduler_job_id"]
+        if str(row.get("lifecycle") or "").upper() != "LIVE" and row.get("collection_phase") == "live":
+            pass
+        run_id = start_scrape_run("cfs_player_stats_poll", target_type="match", target_identifier=row["match_id"], trigger_source="scheduler", correlation_id=attempt)
+        started = time.monotonic(); result = None
+        try:
+            with scheduler_job_context(job_id):
+                with self._network:
+                    result = self.collector_factory(self.client_pool.client(), clock=self.clock).collect(row["match_provider_id"], afl_match_id=row.get("afl_match_id"), canonical_match_status=row.get("lifecycle"))
+            network_ms = int((time.monotonic() - started) * 1000)
+            return self._persist_success(row, result, run_id, network_ms)
+        except AflJsonAuthenticationError as exc:
+            return self._persist_failure(row, run_id, exc, self.settings.auth_pause, "auth_failed_paused")
+        except AflJsonHttpError as exc:
+            backoff = self.settings.rate_limit_backoff if exc.status_code == 429 else self.settings.transient_backoff
+            return self._persist_failure(row, run_id, exc, backoff, "http_429" if exc.status_code == 429 else "http_failure")
+        except (AflJsonTransportError, AflJsonInvalidResponse, ValueError) as exc:
+            return self._persist_failure(row, run_id, exc, self.settings.transient_backoff, "collector_failure")
+        except BaseException as exc:
+            return self._persist_failure(row, run_id, exc, self.settings.transient_backoff, "interrupted")
+
+    def _persist_success(self, row, result, run_id: str, network_ms: int) -> dict[str, Any]:
+        now = self.clock().astimezone(timezone.utc)
+        cadence, phase_reason = cadence_for(row, result.status, self.settings)
+        next_due = now + cadence + self.jitter(row["window_id"], phase_reason, self.settings.jitter_seconds)
+        def op(conn):
+            before_finality, before_auth = _finality(conn, row["match_provider_id"])
+            if before_finality is FinalityState.AUTHORITATIVE_COMPLETE and result.status is not PlayerStatsStatus.CONCLUDED:
+                written = 0
+                finality, auth = before_finality, before_auth
+            else:
+                written = upsert_player_stats(conn, result)
+                finality, auth = _finality(conn, row["match_provider_id"])
+            complete = finality is FinalityState.AUTHORITATIVE_COMPLETE
+            status = "complete" if complete else "awaiting_final"
+            reason = ReasonCode.AUTHORITATIVE_FINAL_CONFIRMED.value if complete else (ReasonCode.ATTEMPT_SUCCEEDED_NON_FINAL.value if result.status is not PlayerStatsStatus.UNAVAILABLE else ReasonCode.FINAL_STATS_UNAVAILABLE_OR_PARTIAL.value)
+            conn.execute("""UPDATE match_stat_windows SET status=?, collection_phase=CASE WHEN ? THEN 'complete' ELSE collection_phase END, next_due_at=?, cadence_profile=?, attempt_count=attempt_count+1, consecutive_failure_count=0, last_attempted_at=?, last_successful_collection_at=?, last_successful_write_at=CASE WHEN ? > 0 THEN ? ELSE last_successful_write_at END, last_observed_snapshot_authority=?, finality_state=?, reason_code=?, diagnostic_summary=?, lease_owner=NULL, lease_token=NULL, lease_claimed_at=NULL, lease_expires_at=NULL, updated_at=? WHERE window_id=? AND lease_token=?""",
+                         (status, complete, None if complete else _iso(next_due), phase_reason, _iso(now), _iso(now), written, _iso(now), auth, finality.value, reason, f"outcome={result.status.value}; records={len(result.records)}; rejected={result.rejected_records}; network_ms={network_ms}; next_due={_iso(next_due) if not complete else None}", _iso(now), row["window_id"], row["lease_token"]))
+            complete_scrape_run(run_id, rows_read=len(result.records), rows_written=written, partial=(result.status in {PlayerStatsStatus.LIVE_PARTIAL, PlayerStatsStatus.UNKNOWN}), conn=conn)
+            return {"status": "complete" if complete else "rescheduled", "rows_written": written, "next_due_at": None if complete else _iso(next_due), "scrape_run_id": run_id}
+        return self.lane.execute("player_stats_poll.persist_success", row["window_id"], op)
+
+    def _persist_failure(self, row, run_id: str, exc: BaseException, backoff: timedelta, reason: str) -> dict[str, Any]:
+        now = self.clock().astimezone(timezone.utc)
+        bounded = min(backoff, self.settings.max_backoff)
+        next_due = now + bounded + self.jitter(row["window_id"], reason, self.settings.jitter_seconds)
+        summary = _safe_summary(exc)
+        def op(conn):
+            conn.execute("""UPDATE match_stat_windows SET status=CASE WHEN ?='auth_failed_paused' THEN 'backoff' ELSE 'backoff' END, next_due_at=?, cadence_profile=?, attempt_count=attempt_count+1, consecutive_failure_count=consecutive_failure_count+1, last_attempted_at=?, reason_code=?, diagnostic_summary=?, lease_owner=NULL, lease_token=NULL, lease_claimed_at=NULL, lease_expires_at=NULL, updated_at=? WHERE window_id=? AND lease_token=?""",
+                         (reason, _iso(next_due), reason, _iso(now), ReasonCode.ATTEMPT_FAILED_BACKOFF.value, f"{reason}: {summary}; next_due={_iso(next_due)}", _iso(now), row["window_id"], row["lease_token"]))
+            fail_scrape_run(run_id, exc, conn=conn)
+            return {"status": reason, "next_due_at": _iso(next_due), "scrape_run_id": run_id}
+        return self.lane.execute("player_stats_poll.persist_failure", row["window_id"], op)
+
+    def close(self) -> None:
+        self.client_pool.close()

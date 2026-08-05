@@ -96,3 +96,28 @@ def list_match_windows():
         return inspection_rows(conn)
     finally:
         conn.close()
+
+
+@app.get("/scheduler/player-stat-polling")
+def polling_status():
+    from scheduler.player_stat_polling import PlayerStatPollingSettings
+    settings = PlayerStatPollingSettings.from_config()
+    conn = get_read_only_db_connection()
+    try:
+        rows = inspection_rows(conn)
+    finally:
+        conn.close()
+    return {
+        "read_only": True,
+        "enabled": settings.enabled,
+        "kill_switch": settings.kill_switch,
+        "drain": settings.drain,
+        "max_workers": settings.max_workers,
+        "network_concurrency": settings.network_concurrency,
+        "live_cadence_seconds": int(settings.live_cadence.total_seconds()),
+        "jitter_seconds": settings.jitter_seconds,
+        "allowed_competitions": settings.allowed_competitions,
+        "allowed_seasons": settings.allowed_seasons,
+        "allowed_matches": settings.allowed_matches,
+        "windows": rows,
+    }
