@@ -257,8 +257,19 @@ def test_read_only_status_endpoint_includes_operational_state_and_window_rows(db
     body=polling_status()
     assert body["read_only"] is True
     assert body["operational"]["active_attempt_count"] == 0
+    assert body["operational"]["submitted_attempt_count"] == 0
+    assert body["operational"]["queued_attempt_count"] == 0
+    assert body["operational"]["accepting_claims"] is True
+    assert body["operational"]["lifecycle_state"] == "running"
+    assert body["operational"]["network_waiting_count"] == 0
+    assert body["operational"]["active_network_request_count"] == 0
+    assert body["operational"]["network_concurrency"] == 2
+    assert body["operational"]["write_lane_pending"] is None
+    assert body["operational"]["write_lane_active"] is None
     assert body["operational"]["live_cadence_seconds"] == 60
     assert body["windows"][0]["match_provider_id"] == "CD_M1"
+    rendered=str(body).lower()
+    assert "authorization" not in rendered and "cookie" not in rendered and "wmctok" not in rendered
 
 
 def test_real_client_second_401_opens_domain_auth_pause_after_one_refresh(db):
@@ -336,6 +347,41 @@ def test_process_lifetime_executor_is_reused_and_closed(db):
     assert worker._executor is executor
     worker.close()
     assert executor._shutdown is True
+
+
+def test_close_is_idempotent_and_status_reports_closed_worker(db):
+    conn,path=db; add_match(conn); reconcile(conn, now=NOW, settings=window_settings()); conn.commit()
+    class CountingPool(Pool):
+        def __init__(self, client): super().__init__(client); self.close_calls=0
+        def close(self): self.close_calls += 1; super().close()
+    pool=CountingPool(Client(live_payload()))
+    worker=PlayerStatPollingWorker(settings=settings(), window_settings=window_settings(), client_pool=pool, clock=lambda: NOW, lane=DirectLane(path))
+    worker.close(); worker.close()
+    status=worker.status()
+    assert pool.close_calls == 1
+    assert status["accepting_claims"] is False
+    assert status["lifecycle_state"] == "closed"
+    assert status["submitted_attempt_count"] == status["queued_attempt_count"] == 0
+    assert worker.run_once() == []
+
+
+def test_run_once_waits_for_its_bounded_batch_and_reports_submission(db):
+    conn,path=db; add_match(conn); reconcile(conn, now=NOW, settings=window_settings()); conn.commit()
+    entered=threading.Event(); release=threading.Event()
+    class BlockingCollector:
+        def __init__(self, client, *, clock): pass
+        def collect(self, match_provider_id, **kwargs):
+            entered.set(); release.wait(timeout=5)
+            return normalise_player_stats(live_payload(), match_provider_id, collected_at=NOW.isoformat(), canonical_match_status="LIVE")
+    worker=PlayerStatPollingWorker(settings=settings(), window_settings=window_settings(), client_pool=Pool(Client()), collector_factory=BlockingCollector, clock=lambda: NOW, lane=DirectLane(path))
+    runner=threading.Thread(target=worker.run_once); runner.start(); assert entered.wait(timeout=5)
+    assert runner.is_alive()
+    status=worker.status()
+    assert status["submitted_attempt_count"] == status["active_attempt_count"] == 1
+    assert status["queued_attempt_count"] == 0
+    release.set(); runner.join(timeout=5)
+    assert not runner.is_alive() and worker.status()["submitted_attempt_count"] == 0
+    worker.close()
 
 
 def test_horizon_reconcile_stops_unresolved_window_without_network_request(db):

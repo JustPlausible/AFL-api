@@ -183,6 +183,8 @@ class PlayerStatPollingWorker:
             thread_name_prefix="cfs-player-stat",
         )
         self._accepting_claims = True
+        self._lifecycle_state = "running"
+        self._submitted_attempt_count = 0
         self._active_attempts: dict[str, dict[str, Any]] = {}
         self._network_waiters = 0
         self._active_network_requests = 0
@@ -195,6 +197,9 @@ class PlayerStatPollingWorker:
             auth_until = self._auth_paused_until
             waiting = self._network_waiters
             network_active = self._active_network_requests
+            accepting = self._accepting_claims
+            lifecycle_state = self._lifecycle_state
+            submitted = self._submitted_attempt_count
         return {
             "enabled": self.settings.enabled,
             "kill_switch": self.settings.kill_switch,
@@ -203,6 +208,10 @@ class PlayerStatPollingWorker:
             "network_concurrency": self.settings.network_concurrency,
             "active_attempt_count": len(active),
             "active_attempts": active,
+            "submitted_attempt_count": submitted,
+            "queued_attempt_count": max(0, submitted - len(active)),
+            "accepting_claims": accepting,
+            "lifecycle_state": lifecycle_state,
             "network_waiting_count": waiting,
             "active_network_request_count": network_active,
             "network_permits_in_use": network_active,
@@ -244,7 +253,13 @@ class PlayerStatPollingWorker:
             if not claims:
                 return []
             futures = [self._executor.submit(self.run_claim, row) for row in claims]
-        return [future.result() for future in as_completed(futures)]
+            with self._state:
+                self._submitted_attempt_count += len(futures)
+        try:
+            return [future.result() for future in as_completed(futures)]
+        finally:
+            with self._state:
+                self._submitted_attempt_count -= len(futures)
 
     @contextmanager
     def _network_permit(self):
@@ -374,9 +389,14 @@ class PlayerStatPollingWorker:
         """Drain submitted attempts before closing their thread-owned sessions."""
         with self._lifecycle:
             with self._state:
+                if self._lifecycle_state == "closed":
+                    return
                 self._accepting_claims = False
+                self._lifecycle_state = "closing"
             self._executor.shutdown(wait=True, cancel_futures=False)
             self.client_pool.close()
+            with self._state:
+                self._lifecycle_state = "closed"
 
 
 _worker_lock = threading.Lock()
