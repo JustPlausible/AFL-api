@@ -326,3 +326,50 @@ def test_claim_due_windows_rolls_back_on_callback_failure(db, monkeypatch):
         claim_due_windows("prod-owner", now=NOW, settings=settings())
     assert one(conn)["status"] == "due"
     assert one(conn)["lease_owner"] is None
+
+
+def test_final_authoritative_success_records_attempt_audit_and_clears_lease(db):
+    conn, path = db; add_match(conn, status="CONCLUDED", start=(NOW - timedelta(hours=1)).isoformat())
+    reconcile(conn, now=NOW, settings=settings()); conn.commit()
+    lease = claim_due_windows("owner", now=NOW, settings=settings(), lane=DirectLane(path))[0]
+    conn.execute("UPDATE match_stat_windows SET consecutive_failure_count=3 WHERE window_id=?", (lease["window_id"],)); conn.commit()
+    add_final_stats(conn, count=40)
+    assert record_attempt_success(conn, lease["window_id"], lease["lease_token"], now=NOW + timedelta(minutes=1), rows_written=7, final=True)
+    row = one(conn)
+    assert row["status"] == "complete"
+    assert row["collection_phase"] == "complete"
+    assert row["finality_state"] == "authoritative_complete"
+    assert row["attempt_count"] == 1
+    assert row["consecutive_failure_count"] == 0
+    assert row["last_attempted_at"] == (NOW + timedelta(minutes=1)).isoformat()
+    assert row["last_successful_collection_at"] == (NOW + timedelta(minutes=1)).isoformat()
+    assert row["last_successful_write_at"] == (NOW + timedelta(minutes=1)).isoformat()
+    assert row["last_observed_snapshot_authority"] == 2
+    assert row["lease_owner"] is None and row["lease_token"] is None
+
+
+def test_final_success_without_rows_preserves_previous_write_timestamp(db):
+    conn, path = db; add_match(conn, status="CONCLUDED", start=(NOW - timedelta(hours=1)).isoformat())
+    reconcile(conn, now=NOW, settings=settings()); conn.commit()
+    lease = claim_due_windows("owner", now=NOW, settings=settings(), lane=DirectLane(path))[0]
+    previous = (NOW - timedelta(minutes=30)).isoformat()
+    conn.execute("UPDATE match_stat_windows SET last_successful_write_at=? WHERE window_id=?", (previous, lease["window_id"])); conn.commit()
+    add_final_stats(conn, count=40)
+    assert record_attempt_success(conn, lease["window_id"], lease["lease_token"], now=NOW, rows_written=0, final=True)
+    assert one(conn)["last_successful_write_at"] == previous
+
+
+def test_stale_final_token_and_partial_finality_do_not_update_audit(db):
+    conn, path = db; add_match(conn, status="CONCLUDED", start=(NOW - timedelta(hours=1)).isoformat())
+    reconcile(conn, now=NOW, settings=settings()); conn.commit()
+    first = claim_due_windows("owner1", now=NOW, settings=settings(), lane=DirectLane(path))[0]
+    second = claim_due_windows("owner2", now=NOW + timedelta(minutes=5), settings=settings(), lane=DirectLane(path))[0]
+    add_final_stats(conn, count=40)
+    assert record_attempt_success(conn, first["window_id"], first["lease_token"], now=NOW, rows_written=5, final=True) is False
+    assert one(conn)["attempt_count"] == 0
+    conn.execute("DELETE FROM cfs_player_stats"); conn.commit(); add_final_stats(conn, count=10, sides=("home",))
+    assert record_attempt_success(conn, second["window_id"], second["lease_token"], now=NOW, rows_written=5, final=True) is False
+    row = one(conn)
+    assert row["status"] == "leased"
+    assert row["attempt_count"] == 0
+    assert row["last_attempted_at"] is None

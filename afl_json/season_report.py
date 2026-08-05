@@ -40,7 +40,7 @@ MIN_CONCLUDED_AUTHORITATIVE_PLAYER_ROWS = 20
 
 
 @dataclass(frozen=True, slots=True)
-class MatchAuthoritativeStatsFinality:
+class MatchAuthoritativeStatsEvidence:
     match_provider_id: str | None
     authoritative_rows: int
     authoritative_sides: int
@@ -49,29 +49,75 @@ class MatchAuthoritativeStatsFinality:
     min_authority: int | None
     max_authority: int | None
 
-    @property
-    def has_authoritative_snapshot(self) -> bool:
-        return self.authoritative_rows > 0
+
+@dataclass(frozen=True, slots=True)
+class MatchAuthoritativeStatsFinality:
+    evidence: MatchAuthoritativeStatsEvidence
+    has_authoritative_snapshot: bool
+    is_partial_authoritative_snapshot: bool
+    has_satisfactory_concluded_coverage: bool
 
     @property
-    def is_partial_authoritative_snapshot(self) -> bool:
-        return self.has_authoritative_snapshot and (
-            self.min_authority != self.max_authority or self.authoritative_sides < 2
-        )
+    def match_provider_id(self) -> str | None:
+        return self.evidence.match_provider_id
 
     @property
-    def has_satisfactory_concluded_coverage(self) -> bool:
-        return (
-            self.has_authoritative_snapshot
-            and not self.is_partial_authoritative_snapshot
-            and self.authoritative_rows >= MIN_CONCLUDED_AUTHORITATIVE_PLAYER_ROWS
+    def authoritative_rows(self) -> int:
+        return self.evidence.authoritative_rows
+
+    @property
+    def authoritative_sides(self) -> int:
+        return self.evidence.authoritative_sides
+
+    @property
+    def authoritative_home_rows(self) -> int:
+        return self.evidence.authoritative_home_rows
+
+    @property
+    def authoritative_away_rows(self) -> int:
+        return self.evidence.authoritative_away_rows
+
+    @property
+    def min_authority(self) -> int | None:
+        return self.evidence.min_authority
+
+    @property
+    def max_authority(self) -> int | None:
+        return self.evidence.max_authority
+
+
+def evaluate_authoritative_stats_finality(evidence: MatchAuthoritativeStatsEvidence) -> MatchAuthoritativeStatsFinality:
+    """Pure CFS authority/coverage predicate shared by planner and season report."""
+    has_authoritative = evidence.authoritative_rows > 0
+    partial = has_authoritative and (
+        evidence.min_authority != evidence.max_authority or evidence.authoritative_sides < 2
+    )
+    satisfactory = (
+        has_authoritative
+        and not partial
+        and evidence.authoritative_rows >= MIN_CONCLUDED_AUTHORITATIVE_PLAYER_ROWS
+    )
+    return MatchAuthoritativeStatsFinality(evidence, has_authoritative, partial, satisfactory)
+
+
+def authoritative_stats_finality_from_row(match_provider_id: str | None, row: Any | None) -> MatchAuthoritativeStatsFinality:
+    if row is None:
+        evidence = MatchAuthoritativeStatsEvidence(match_provider_id, 0, 0, 0, 0, None, None)
+    else:
+        evidence = MatchAuthoritativeStatsEvidence(
+            match_provider_id, int(row["authoritative_rows"] or 0),
+            int(row["authoritative_sides"] or 0), int(row["authoritative_home_rows"] or 0),
+            int(row["authoritative_away_rows"] or 0), row["min_authority"], row["max_authority"],
         )
+    return evaluate_authoritative_stats_finality(evidence)
 
 
 def authoritative_stats_finality_for_match(conn: sqlite3.Connection, match_provider_id: str | None) -> MatchAuthoritativeStatsFinality:
-    """Return the same concluded CFS authority/coverage decision used by season completeness."""
+    """Gather one match's CFS evidence, then apply the shared finality predicate."""
     if not match_provider_id:
-        return MatchAuthoritativeStatsFinality(None, 0, 0, 0, 0, None, None)
+        return evaluate_authoritative_stats_finality(
+            MatchAuthoritativeStatsEvidence(None, 0, 0, 0, 0, None, None)
+        )
     row = conn.execute(
         "SELECT SUM(snapshot_authority=2) authoritative_rows,"
         "COUNT(DISTINCT CASE WHEN snapshot_authority=2 THEN side END) authoritative_sides,"
@@ -81,10 +127,7 @@ def authoritative_stats_finality_for_match(conn: sqlite3.Connection, match_provi
         "FROM cfs_player_stats WHERE match_provider_id=?",
         (match_provider_id,),
     ).fetchone()
-    return MatchAuthoritativeStatsFinality(
-        match_provider_id, int(row[0] or 0), int(row[1] or 0), int(row[2] or 0),
-        int(row[3] or 0), row[4], row[5],
-    )
+    return authoritative_stats_finality_from_row(match_provider_id, row)
 
 
 @dataclass(frozen=True, slots=True)
@@ -267,8 +310,12 @@ class SeasonCompletenessReporter:
             f"WHERE match_provider_id IN ({placeholders}) GROUP BY match_provider_id", provider_ids
         ).fetchall()
         stats_by_match = {row["match_provider_id"]: row for row in stats}
-        authoritative = {key: row for key, row in stats_by_match.items()
-                         if row["authoritative_rows"] > 0}
+        finality_by_match = {
+            provider_id: authoritative_stats_finality_from_row(provider_id, row)
+            for provider_id, row in stats_by_match.items()
+        }
+        authoritative = {key: finality for key, finality in finality_by_match.items()
+                         if finality.has_authoritative_snapshot}
         partial_matches: set[int] = set()
         suspicious_matches: set[int] = set()
         memberships = self.conn.execute(
@@ -285,8 +332,8 @@ class SeasonCompletenessReporter:
             "concluded_matches": len(concluded),
             "concluded_matches_with_authoritative_stats": sum(
                 row["match_provider_id"] in authoritative for row in concluded),
-            "authoritative_stat_rows": sum(row["authoritative_rows"]
-                                           for row in authoritative.values()),
+            "authoritative_stat_rows": sum(finality.authoritative_rows
+                                           for finality in authoritative.values()),
             "legacy_stat_rows": legacy, "season_memberships": memberships["total"],
             "memberships_without_team": memberships["missing"] or 0,
         })
@@ -350,7 +397,8 @@ class SeasonCompletenessReporter:
                           "Scheduled time or venue is not published.", match_id=row["match_id"],
                           evidence_source="matches(start_time_utc,venue)")
             stat = stats_by_match.get(row["match_provider_id"])
-            if lifecycle == "CONCLUDED" and (not stat or stat["authoritative_rows"] == 0):
+            finality = finality_by_match.get(row["match_provider_id"], authoritative_stats_finality_from_row(row["match_provider_id"], stat))
+            if lifecycle == "CONCLUDED" and not finality.has_authoritative_snapshot:
                 self._add(result, "match.final_without_authoritative_stats", Severity.WARNING, "matches",
                           "Concluded match has no authoritative CFS snapshot.", match_id=row["match_id"],
                           expected="snapshot_authority=2", observed=0,
@@ -358,28 +406,26 @@ class SeasonCompletenessReporter:
                           remediation=(f"python cli.py --collect-match-player-stats {row['match_provider_id']} "
                                        f"--afl-match-id {row['match_id']}" if row["match_provider_id"] else
                                        f"python cli.py --sync-afl-season {result.metadata.requested_season_year}"))
-            elif lifecycle == "CONCLUDED" and stat and (
-                    stat["min_authority"] != stat["max_authority"]
-                    or stat["authoritative_sides"] < 2):
+            elif lifecycle == "CONCLUDED" and finality.is_partial_authoritative_snapshot:
                 partial_matches.add(row["match_id"])
                 self._add(result, "match.partial_authoritative_stats", Severity.WARNING, "statistics",
                           "Statistic snapshot is mixed-authority or one-sided.", match_id=row["match_id"],
                           expected="two sides at concluded authority", observed={
-                              "total": stat["authoritative_rows"],
-                              "home": stat["authoritative_home_rows"],
-                              "away": stat["authoritative_away_rows"],
+                              "total": finality.authoritative_rows,
+                              "home": finality.authoritative_home_rows,
+                              "away": finality.authoritative_away_rows,
                           },
                           evidence_source="cfs_player_stats")
-            elif (lifecycle == "CONCLUDED" and stat
-                  and stat["authoritative_rows"] < MIN_CONCLUDED_AUTHORITATIVE_PLAYER_ROWS):
+            elif (lifecycle == "CONCLUDED" and finality.has_authoritative_snapshot
+                  and not finality.has_satisfactory_concluded_coverage):
                 suspicious_matches.add(row["match_id"])
                 self._add(result, "stats.suspicious_player_count", Severity.WARNING, "statistics",
                           "Two-sided concluded snapshot has implausibly few player rows.",
                           match_id=row["match_id"],
                           expected={"minimum_total": MIN_CONCLUDED_AUTHORITATIVE_PLAYER_ROWS},
-                          observed={"total": stat["authoritative_rows"],
-                                    "home": stat["authoritative_home_rows"],
-                                    "away": stat["authoritative_away_rows"]},
+                          observed={"total": finality.authoritative_rows,
+                                    "home": finality.authoritative_home_rows,
+                                    "away": finality.authoritative_away_rows},
                           evidence_source="cfs_player_stats")
             if lifecycle != "CONCLUDED" and stat and stat["max_authority"] == 2:
                 self._add(result, "stats.authority_lifecycle_conflict", Severity.ERROR, "statistics",

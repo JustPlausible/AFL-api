@@ -296,19 +296,32 @@ def claim_due_windows(owner: str, *, limit: int = 1, now: datetime | None = None
     return executor("match_windows.claim", owner, op)
 
 
-def complete_window(conn: sqlite3.Connection, window: str, token: str, *, now: datetime) -> bool:
+def _record_final_success(conn: sqlite3.Connection, window: str, token: str, *, now: datetime, rows_written: int) -> bool:
     row = conn.execute("SELECT match_provider_id FROM match_stat_windows WHERE window_id=? AND lease_token=?", (window, token)).fetchone()
-    if row is None or _finality(conn, row["match_provider_id"])[0] is not FinalityState.AUTHORITATIVE_COMPLETE:
+    finality, authority = _finality(conn, row["match_provider_id"] if row else None)
+    if row is None or finality is not FinalityState.AUTHORITATIVE_COMPLETE:
         return False
-    cur=conn.execute("UPDATE match_stat_windows SET status='complete', collection_phase='complete', finality_state='authoritative_complete', reason_code=?, lease_owner=NULL, lease_token=NULL, lease_claimed_at=NULL, lease_expires_at=NULL, updated_at=? WHERE window_id=? AND lease_token=?", (ReasonCode.AUTHORITATIVE_FINAL_CONFIRMED.value, _iso(now), window, token))
+    cur = conn.execute("""
+        UPDATE match_stat_windows SET
+          status='complete', collection_phase='complete', finality_state='authoritative_complete',
+          reason_code=?, attempt_count=attempt_count+1, consecutive_failure_count=0,
+          last_attempted_at=?, last_successful_collection_at=?,
+          last_successful_write_at=CASE WHEN ? > 0 THEN ? ELSE last_successful_write_at END,
+          last_observed_snapshot_authority=?,
+          lease_owner=NULL, lease_token=NULL, lease_claimed_at=NULL, lease_expires_at=NULL, updated_at=?
+        WHERE window_id=? AND lease_token=?
+    """, (ReasonCode.AUTHORITATIVE_FINAL_CONFIRMED.value, _iso(now), _iso(now),
+          rows_written, _iso(now), authority, _iso(now), window, token))
     return cur.rowcount == 1
 
 
+def complete_window(conn: sqlite3.Connection, window: str, token: str, *, now: datetime) -> bool:
+    return _record_final_success(conn, window, token, now=now, rows_written=0)
+
+
 def record_attempt_success(conn: sqlite3.Connection, window: str, token: str, *, now: datetime, rows_written: int, final: bool = False) -> bool:
-    if final and not complete_window(conn, window, token, now=now):
-        return False
     if final:
-        return True
+        return _record_final_success(conn, window, token, now=now, rows_written=rows_written)
     status = 'awaiting_final'; phase = 'final_confirmation'; reason = ReasonCode.ATTEMPT_SUCCEEDED_NON_FINAL.value
     cur=conn.execute("UPDATE match_stat_windows SET status=?, collection_phase=?, attempt_count=attempt_count+1, consecutive_failure_count=0, last_attempted_at=?, last_successful_collection_at=?, last_successful_write_at=CASE WHEN ? > 0 THEN ? ELSE last_successful_write_at END, reason_code=?, lease_owner=NULL, lease_token=NULL, lease_claimed_at=NULL, lease_expires_at=NULL, updated_at=? WHERE window_id=? AND lease_token=?", (status, phase, _iso(now), _iso(now), rows_written, _iso(now), reason, _iso(now), window, token))
     return cur.rowcount == 1
