@@ -10,6 +10,8 @@ from scheduler.scheduled_tasks import scheduler  # same scheduler you already us
 from scheduler.schedule_refresh_jobs import register_refresh_jobs
 from scheduler.schedule_lineup_scrapes import register_lineup_jobs
 from scheduler.registry import registry_rows
+from db.connection import get_read_only_db_connection
+from scheduler.match_windows import inspection_rows
 from utils.log import log
 from scheduler.manual_triggers import router as manual_triggers_router
 
@@ -85,3 +87,12 @@ def refresh_all_jobs():
     register_lineup_jobs(scheduler)
     register_refresh_jobs(scheduler)
     return {"status": "ok", "message": "All jobs re-registered"}
+
+
+@app.get("/scheduler/match-windows")
+def list_match_windows():
+    conn = get_read_only_db_connection()
+    try:
+        return inspection_rows(conn)
+    finally:
+        conn.close()

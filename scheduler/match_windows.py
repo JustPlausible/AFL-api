@@ -1,0 +1,299 @@
+"""Durable lifecycle-driven match-window planning and lease state.
+
+A match window is a polling series.  It is intentionally separate from an
+APScheduler job (one attempt) and a scrape_runs row (one collection audit).
+Transitions are machine-code driven; display text is never used for recovery.
+"""
+from __future__ import annotations
+
+import sqlite3
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from enum import Enum
+from typing import Any, Callable, Iterable
+
+import config
+from afl_json.match_status import normalise_match_status
+from scheduler.time_policy import MetadataTimestampError, parse_metadata_timestamp
+from scheduler.write_lane import write_lane
+
+ACTIVE_STATUSES = ("planned", "due", "leased", "backoff", "awaiting_final", "disabled")
+TERMINAL_STATUSES = ("complete", "failed_terminal", "cancelled", "not_applicable")
+PLANNER_VERSION = "match_window_planner_v1"
+DEFAULT_POLICY_VERSION = "cfs_match_stats_v1"
+
+
+class MatchWindowStatus(str, Enum):
+    PLANNED = "planned"
+    DUE = "due"
+    LEASED = "leased"
+    BACKOFF = "backoff"
+    AWAITING_FINAL = "awaiting_final"
+    COMPLETE = "complete"
+    FAILED_TERMINAL = "failed_terminal"
+    DISABLED = "disabled"
+    CANCELLED = "cancelled"
+    NOT_APPLICABLE = "not_applicable"
+
+
+class CollectionPhase(str, Enum):
+    NOT_STARTED = "not_started"
+    PRE_MATCH = "pre_match"
+    LIVE = "live"
+    POST_GAME = "post_game"
+    FINAL_CONFIRMATION = "final_confirmation"
+    COMPLETE = "complete"
+    NONE = "none"
+
+
+class FinalityState(str, Enum):
+    NOT_APPLICABLE = "not_applicable"
+    UNCONFIRMED = "unconfirmed"
+    PARTIAL = "partial"
+    AUTHORITATIVE_COMPLETE = "authoritative_complete"
+
+
+class CadenceProfile(str, Enum):
+    NONE = "none"
+    PRE_MATCH_PLACEHOLDER = "pre_match_placeholder"
+    LIVE_PLACEHOLDER = "live_placeholder"
+    POST_GAME_PLACEHOLDER = "post_game_placeholder"
+    FINAL_PLACEHOLDER = "final_placeholder"
+
+
+class ReasonCode(str, Enum):
+    FUTURE_OUTSIDE_WINDOW = "future_outside_window"
+    APPROACHING_START = "approaching_start"
+    LIVE = "live"
+    AWAITING_FINAL = "awaiting_final"
+    AUTHORITATIVE_FINAL_CONFIRMED = "authoritative_final_confirmed"
+    FINAL_STATS_UNAVAILABLE_OR_PARTIAL = "final_stats_unavailable_or_partial"
+    POSTPONED = "postponed"
+    CANCELLED = "cancelled"
+    UNKNOWN_LIFECYCLE = "unknown_lifecycle"
+    CONTRADICTORY_LIFECYCLE = "contradictory_lifecycle"
+    MISSING_START_TIME = "missing_start_time"
+    MISSING_PROVIDER_IDENTITY = "missing_provider_identity"
+    POLLING_HORIZON_EXCEEDED = "polling_horizon_exceeded"
+    FEATURE_DISABLED = "feature_disabled"
+    UNSUPPORTED_COMPETITION_OR_SEASON = "unsupported_competition_or_season"
+    LEASE_EXPIRED_RECLAIMED = "lease_expired_reclaimed"
+    ATTEMPT_FAILED_BACKOFF = "attempt_failed_backoff"
+    ATTEMPT_SUCCEEDED_NON_FINAL = "attempt_succeeded_non_final"
+    RELEASED = "released"
+
+
+@dataclass(frozen=True)
+class MatchWindowSettings:
+    enabled: bool = True
+    pre_match_window: timedelta = timedelta(hours=2)
+    post_match_horizon: timedelta = timedelta(hours=12)
+    lease_duration: timedelta = timedelta(minutes=15)
+    reconciliation_interval: timedelta = timedelta(minutes=30)
+    supported_competitions: tuple[str, ...] = ()
+    supported_seasons: tuple[str, ...] = ()
+    policy_version: str = DEFAULT_POLICY_VERSION
+    planner_version: str = PLANNER_VERSION
+
+    @classmethod
+    def from_config(cls) -> "MatchWindowSettings":
+        def seconds(name: str, default: int) -> timedelta:
+            import os
+            return timedelta(seconds=int(os.getenv(name, str(default))))
+        import os
+        def csv(name: str) -> tuple[str, ...]:
+            return tuple(v.strip() for v in os.getenv(name, "").split(",") if v.strip())
+        enabled = os.getenv("AFL_MATCH_WINDOW_PLANNER_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
+        settings = cls(
+            enabled=enabled,
+            pre_match_window=seconds("AFL_MATCH_WINDOW_PRE_MATCH_SECONDS", 7200),
+            post_match_horizon=seconds("AFL_MATCH_WINDOW_POST_HORIZON_SECONDS", 43200),
+            lease_duration=seconds("AFL_MATCH_WINDOW_LEASE_SECONDS", 900),
+            reconciliation_interval=seconds("AFL_MATCH_WINDOW_RECONCILE_SECONDS", 1800),
+            supported_competitions=csv("AFL_MATCH_WINDOW_SUPPORTED_COMPETITIONS"),
+            supported_seasons=csv("AFL_MATCH_WINDOW_SUPPORTED_SEASONS"),
+            policy_version=os.getenv("AFL_MATCH_WINDOW_POLICY_VERSION", DEFAULT_POLICY_VERSION),
+        )
+        settings.validate()
+        return settings
+
+    def validate(self) -> None:
+        if min(self.pre_match_window, self.post_match_horizon, self.lease_duration, self.reconciliation_interval) < timedelta(0):
+            raise ValueError("match-window durations must be non-negative")
+        if self.lease_duration <= timedelta(0):
+            raise ValueError("match-window lease duration must be positive")
+
+
+@dataclass(frozen=True)
+class Decision:
+    status: MatchWindowStatus
+    phase: CollectionPhase
+    next_due: datetime | None
+    cadence: CadenceProfile
+    finality: FinalityState
+    reason: ReasonCode
+    snapshot_authority: int | None = None
+    diagnostic: str | None = None
+
+
+def window_id(match_id: int, policy_version: str = DEFAULT_POLICY_VERSION) -> str:
+    return f"mw_cfs_stats_{int(match_id)}_{policy_version}"
+
+
+def attempt_id(series_id: str, generation: int, attempt_count: int) -> str:
+    return f"{series_id}_attempt_{generation}_{attempt_count + 1}"
+
+
+def scheduler_job_id(series_id: str, generation: int, attempt_count: int) -> str:
+    return f"mw_attempt_{series_id}_{generation}_{attempt_count + 1}"
+
+
+def _iso(dt: datetime | None) -> str | None:
+    return dt.astimezone(timezone.utc).isoformat() if dt else None
+
+
+def _dt(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    dt = datetime.fromisoformat(value)
+    return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).astimezone(timezone.utc)
+
+
+def _finality(conn: sqlite3.Connection, match_provider_id: str | None) -> tuple[FinalityState, int | None]:
+    if not match_provider_id:
+        return FinalityState.UNCONFIRMED, None
+    row = conn.execute("SELECT SUM(snapshot_authority=2) ar, COUNT(DISTINCT CASE WHEN snapshot_authority=2 THEN side END) sides, MAX(snapshot_authority) mx FROM cfs_player_stats WHERE match_provider_id=?", (match_provider_id,)).fetchone()
+    if not row or not row[2]:
+        return FinalityState.UNCONFIRMED, None
+    if (row[0] or 0) >= 36 and (row[1] or 0) >= 2:
+        return FinalityState.AUTHORITATIVE_COMPLETE, 2
+    return FinalityState.PARTIAL, row[2]
+
+
+def evaluate(row: sqlite3.Row, now: datetime, settings: MatchWindowSettings, finality: FinalityState, snapshot_authority: int | None) -> Decision:
+    if not settings.enabled:
+        return Decision(MatchWindowStatus.DISABLED, CollectionPhase.NONE, None, CadenceProfile.NONE, finality, ReasonCode.FEATURE_DISABLED, snapshot_authority)
+    comp = str(row["competition_id"] or "")
+    season = str(row["season_id"] or "")
+    if (settings.supported_competitions and comp not in settings.supported_competitions) or (settings.supported_seasons and season not in settings.supported_seasons):
+        return Decision(MatchWindowStatus.NOT_APPLICABLE, CollectionPhase.NONE, None, CadenceProfile.NONE, finality, ReasonCode.UNSUPPORTED_COMPETITION_OR_SEASON, snapshot_authority)
+    raw_status = row["status"]
+    status = normalise_match_status(raw_status)
+    if raw_status and str(raw_status).upper() in {"POSTPONED", "DELAYED"}:
+        return Decision(MatchWindowStatus.BACKOFF, CollectionPhase.NONE, None, CadenceProfile.NONE, finality, ReasonCode.POSTPONED, snapshot_authority)
+    if raw_status and str(raw_status).upper() in {"CANCELLED", "CANCELED", "ABANDONED"}:
+        return Decision(MatchWindowStatus.CANCELLED, CollectionPhase.NONE, None, CadenceProfile.NONE, finality, ReasonCode.CANCELLED, snapshot_authority)
+    if status is None:
+        return Decision(MatchWindowStatus.FAILED_TERMINAL, CollectionPhase.NONE, None, CadenceProfile.NONE, finality, ReasonCode.UNKNOWN_LIFECYCLE, snapshot_authority)
+    if not row["match_provider_id"] or row["match_id"] is None:
+        return Decision(MatchWindowStatus.FAILED_TERMINAL, CollectionPhase.NONE, None, CadenceProfile.NONE, finality, ReasonCode.MISSING_PROVIDER_IDENTITY, snapshot_authority)
+    try:
+        start = parse_metadata_timestamp(row["start_time_utc"])
+    except MetadataTimestampError as exc:
+        return Decision(MatchWindowStatus.FAILED_TERMINAL, CollectionPhase.NONE, None, CadenceProfile.NONE, finality, ReasonCode.MISSING_START_TIME, snapshot_authority, exc.reason_code)
+    window_start = start - settings.pre_match_window
+    horizon = start + settings.post_match_horizon
+    if status == "CONCLUDED" and finality is FinalityState.AUTHORITATIVE_COMPLETE:
+        return Decision(MatchWindowStatus.COMPLETE, CollectionPhase.COMPLETE, None, CadenceProfile.NONE, finality, ReasonCode.AUTHORITATIVE_FINAL_CONFIRMED, snapshot_authority)
+    if now > horizon and status == "CONCLUDED":
+        return Decision(MatchWindowStatus.FAILED_TERMINAL, CollectionPhase.FINAL_CONFIRMATION, None, CadenceProfile.NONE, finality, ReasonCode.POLLING_HORIZON_EXCEEDED, snapshot_authority)
+    if now < window_start:
+        return Decision(MatchWindowStatus.PLANNED, CollectionPhase.NOT_STARTED, window_start, CadenceProfile.PRE_MATCH_PLACEHOLDER, finality, ReasonCode.FUTURE_OUTSIDE_WINDOW, snapshot_authority)
+    if status == "SCHEDULED":
+        due = now if now >= window_start else window_start
+        return Decision(MatchWindowStatus.DUE if due <= now else MatchWindowStatus.PLANNED, CollectionPhase.PRE_MATCH, due, CadenceProfile.PRE_MATCH_PLACEHOLDER, finality, ReasonCode.APPROACHING_START, snapshot_authority)
+    if status == "LIVE":
+        return Decision(MatchWindowStatus.DUE, CollectionPhase.LIVE, now, CadenceProfile.LIVE_PLACEHOLDER, finality, ReasonCode.LIVE, snapshot_authority)
+    if status in {"POSTGAME", "CONCLUDED"}:
+        reason = ReasonCode.FINAL_STATS_UNAVAILABLE_OR_PARTIAL if status == "CONCLUDED" else ReasonCode.AWAITING_FINAL
+        return Decision(MatchWindowStatus.AWAITING_FINAL, CollectionPhase.FINAL_CONFIRMATION, now, CadenceProfile.FINAL_PLACEHOLDER, finality, reason, snapshot_authority)
+    return Decision(MatchWindowStatus.FAILED_TERMINAL, CollectionPhase.NONE, None, CadenceProfile.NONE, finality, ReasonCode.CONTRADICTORY_LIFECYCLE, snapshot_authority)
+
+
+@dataclass
+class ReconcileResult:
+    correlation_id: str
+    planned: int = 0
+    updated: int = 0
+    failed: int = 0
+    degraded: bool = False
+    failures: list[dict[str, Any]] | None = None
+
+
+def reconcile(conn: sqlite3.Connection, *, now: datetime | None = None, settings: MatchWindowSettings | None = None, correlation_id: str = "startup_reconciliation") -> ReconcileResult:
+    settings = settings or MatchWindowSettings.from_config()
+    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    result = ReconcileResult(correlation_id, failures=[])
+    rows = conn.execute("SELECT m.match_id, m.match_provider_id, m.season_id, r.competition_id AS competition_id, m.status, m.start_time_utc FROM matches m LEFT JOIN rounds r ON r.round_id=m.round_id ORDER BY m.match_id").fetchall()
+    for row in rows:
+        try:
+            finality, auth = _finality(conn, row["match_provider_id"])
+            decision = evaluate(row, now, settings, finality, auth)
+            wid = window_id(row["match_id"], settings.policy_version)
+            current = conn.execute("SELECT status, lease_expires_at FROM match_stat_windows WHERE window_id=?", (wid,)).fetchone()
+            status = decision.status.value
+            reason = decision.reason.value
+            lease_clear = current and current["status"] == MatchWindowStatus.LEASED.value and _dt(current["lease_expires_at"]) and _dt(current["lease_expires_at"]) <= now
+            if lease_clear:
+                reason = ReasonCode.LEASE_EXPIRED_RECLAIMED.value
+            conn.execute("""
+                INSERT INTO match_stat_windows(window_id, match_id, afl_match_id, match_provider_id, competition_id, season_id, policy_version, lifecycle, collection_phase, status, next_due_at, cadence_profile, last_observed_snapshot_authority, finality_state, reason_code, diagnostic_summary, planner_version, updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(window_id) DO UPDATE SET
+                  match_id=excluded.match_id, afl_match_id=excluded.afl_match_id, match_provider_id=excluded.match_provider_id,
+                  competition_id=excluded.competition_id, season_id=excluded.season_id, lifecycle=excluded.lifecycle,
+                  collection_phase=excluded.collection_phase, status=excluded.status, next_due_at=excluded.next_due_at,
+                  cadence_profile=excluded.cadence_profile, last_observed_snapshot_authority=excluded.last_observed_snapshot_authority,
+                  finality_state=excluded.finality_state, reason_code=excluded.reason_code, diagnostic_summary=excluded.diagnostic_summary,
+                  planner_version=excluded.planner_version,
+                  lease_owner=CASE WHEN ? THEN NULL ELSE match_stat_windows.lease_owner END,
+                  lease_token=CASE WHEN ? THEN NULL ELSE match_stat_windows.lease_token END,
+                  lease_claimed_at=CASE WHEN ? THEN NULL ELSE match_stat_windows.lease_claimed_at END,
+                  lease_expires_at=CASE WHEN ? THEN NULL ELSE match_stat_windows.lease_expires_at END,
+                  updated_at=excluded.updated_at
+            """, (wid, row["match_id"], row["match_id"], row["match_provider_id"], row["competition_id"], row["season_id"], settings.policy_version, normalise_match_status(row["status"]) or str(row["status"] or "UNKNOWN"), decision.phase.value, status, _iso(decision.next_due), decision.cadence.value, auth, decision.finality.value, reason, decision.diagnostic, settings.planner_version, _iso(now), bool(lease_clear), bool(lease_clear), bool(lease_clear), bool(lease_clear)))
+            result.planned += 0 if current else 1; result.updated += 1 if current else 0
+        except Exception as exc:
+            result.failed += 1; result.degraded = True; result.failures.append({"match_id": row["match_id"], "error": type(exc).__name__})
+    return result
+
+
+def claim_due_windows(owner: str, *, limit: int = 1, now: datetime | None = None, settings: MatchWindowSettings | None = None, lane=write_lane) -> list[dict[str, Any]]:
+    settings = settings or MatchWindowSettings.from_config(); now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    def op(conn: sqlite3.Connection):
+        conn.execute("BEGIN IMMEDIATE")
+        rows = conn.execute("""SELECT * FROM match_stat_windows WHERE status IN ('due','awaiting_final','backoff','leased') AND next_due_at IS NOT NULL AND next_due_at <= ? AND (lease_expires_at IS NULL OR lease_expires_at <= ?) ORDER BY next_due_at, window_id LIMIT ?""", (_iso(now), _iso(now), limit)).fetchall()
+        claimed=[]
+        for row in rows:
+            gen = int(row["lease_generation"] or 0) + 1; token = f"{owner}:{gen}:{int(now.timestamp())}"
+            cur = conn.execute("UPDATE match_stat_windows SET status='leased', lease_owner=?, lease_token=?, lease_generation=?, lease_claimed_at=?, lease_expires_at=?, reason_code=CASE WHEN lease_expires_at IS NOT NULL AND lease_expires_at <= ? THEN ? ELSE reason_code END, updated_at=? WHERE window_id=? AND (lease_expires_at IS NULL OR lease_expires_at <= ?)", (owner, token, gen, _iso(now), _iso(now + settings.lease_duration), _iso(now), ReasonCode.LEASE_EXPIRED_RECLAIMED.value, _iso(now), row["window_id"], _iso(now)))
+            if cur.rowcount == 1:
+                item=dict(row); item.update({"lease_owner": owner, "lease_token": token, "lease_generation": gen, "attempt_id": attempt_id(row["window_id"], gen, row["attempt_count"]), "scheduler_job_id": scheduler_job_id(row["window_id"], gen, row["attempt_count"])})
+                claimed.append(item)
+        return claimed
+    return lane.execute("match_windows.claim", owner, op)
+
+
+def complete_window(conn: sqlite3.Connection, window: str, token: str, *, now: datetime) -> bool:
+    cur=conn.execute("UPDATE match_stat_windows SET status='complete', collection_phase='complete', finality_state='authoritative_complete', reason_code=?, lease_owner=NULL, lease_token=NULL, lease_claimed_at=NULL, lease_expires_at=NULL, updated_at=? WHERE window_id=? AND lease_token=?", (ReasonCode.AUTHORITATIVE_FINAL_CONFIRMED.value, _iso(now), window, token))
+    return cur.rowcount == 1
+
+
+def record_attempt_success(conn: sqlite3.Connection, window: str, token: str, *, now: datetime, rows_written: int, final: bool = False) -> bool:
+    status = 'complete' if final else 'awaiting_final'; phase = 'complete' if final else 'final_confirmation'; reason = ReasonCode.AUTHORITATIVE_FINAL_CONFIRMED.value if final else ReasonCode.ATTEMPT_SUCCEEDED_NON_FINAL.value
+    cur=conn.execute("UPDATE match_stat_windows SET status=?, collection_phase=?, attempt_count=attempt_count+1, consecutive_failure_count=0, last_attempted_at=?, last_successful_collection_at=?, last_successful_write_at=CASE WHEN ? > 0 THEN ? ELSE last_successful_write_at END, reason_code=?, lease_owner=NULL, lease_token=NULL, lease_claimed_at=NULL, lease_expires_at=NULL, updated_at=? WHERE window_id=? AND lease_token=?", (status, phase, _iso(now), _iso(now), rows_written, _iso(now), reason, _iso(now), window, token))
+    return cur.rowcount == 1
+
+
+def record_attempt_failure(conn: sqlite3.Connection, window: str, token: str, *, now: datetime, backoff: timedelta = timedelta(minutes=10), reason: str | None = None) -> bool:
+    cur=conn.execute("UPDATE match_stat_windows SET status='backoff', attempt_count=attempt_count+1, consecutive_failure_count=consecutive_failure_count+1, last_attempted_at=?, next_due_at=?, reason_code=?, diagnostic_summary=substr(?,1,500), lease_owner=NULL, lease_token=NULL, lease_claimed_at=NULL, lease_expires_at=NULL, updated_at=? WHERE window_id=? AND lease_token=?", (_iso(now), _iso(now+backoff), ReasonCode.ATTEMPT_FAILED_BACKOFF.value, reason, _iso(now), window, token))
+    return cur.rowcount == 1
+
+
+def release_window(conn: sqlite3.Connection, window: str, token: str, *, now: datetime) -> bool:
+    cur=conn.execute("UPDATE match_stat_windows SET status='due', lease_owner=NULL, lease_token=NULL, lease_claimed_at=NULL, lease_expires_at=NULL, reason_code=?, updated_at=? WHERE window_id=? AND lease_token=?", (ReasonCode.RELEASED.value, _iso(now), window, token))
+    return cur.rowcount == 1
+
+
+def inspection_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    return [dict(r) for r in conn.execute("SELECT window_id, match_id, afl_match_id, match_provider_id, competition_id, season_id, lifecycle, collection_phase, status, next_due_at, cadence_profile, lease_owner, lease_claimed_at, lease_expires_at, last_attempted_at, last_successful_collection_at, last_successful_write_at, finality_state, attempt_count, consecutive_failure_count, reason_code FROM match_stat_windows ORDER BY next_due_at, match_id").fetchall()]

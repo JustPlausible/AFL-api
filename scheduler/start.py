@@ -38,6 +38,7 @@ from scheduler.schedule_stat_scrapes import (
 )
 from scheduler.scheduled_tasks import scheduler
 from scheduler.write_lane import write_lane
+from scheduler.match_windows import MatchWindowSettings, reconcile as reconcile_match_windows
 from utils.log import setup_logger
 
 SUPPORTED_UVICORN_COMMAND = "python -m uvicorn scheduler.start:app --host 0.0.0.0 --port 8000"
@@ -51,6 +52,13 @@ _bootstrap_lock = threading.Lock()
 _jobs_registered = False
 _scheduler_thread: threading.Thread | None = None
 WRITE_LANE_DRAIN_TIMEOUT_SECONDS = 30.0
+
+
+def _reconcile_match_windows_startup() -> None:
+    try:
+        write_lane.execute("match_windows.reconcile_startup", "startup", lambda conn: reconcile_match_windows(conn, settings=MatchWindowSettings.from_config()))
+    except FileNotFoundError:
+        log.warning("Match-window startup reconciliation skipped because the database is unavailable after migration")
 
 
 def _validate_single_scheduler_configuration() -> None:
@@ -84,6 +92,7 @@ def bootstrap_scheduler() -> None:
             log.info("Scheduler bootstrap already completed; skipping duplicate registration.")
             return
         migrate_database()
+        _reconcile_match_windows_startup()
         register_all_jobs()
         _jobs_registered = True
 
@@ -127,6 +136,7 @@ def start_scheduler_for_app() -> None:
         _validate_single_scheduler_configuration()
         if not _jobs_registered:
             migrate_database()
+            _reconcile_match_windows_startup()
             register_all_jobs()
             globals()["_jobs_registered"] = True
         log.info("📆 Starting APScheduler background thread for FastAPI lifecycle...")

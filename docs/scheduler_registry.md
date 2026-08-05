@@ -120,3 +120,8 @@ and establish venue-timezone authority before interpreting
 Use `/scheduler/jobs` or the admin Schedule page to compare `apscheduler_state` with `persisted_status`. `apscheduler_state` describes the current in-memory APScheduler view (`scheduled`, `paused`, or `absent`). `persisted_status` describes the durable application registry.
 
 For a missed or failed match-window job, search for the stable job ID (for example `stats_match_8216` or `lineups_match_8216`), compare its scheduled run time with APScheduler state, review `attempt_count`, `last_attempt_time`, `last_success_time`, and the concise `last_error_summary`, then decide whether a manual rerun is safe. Do not infer detailed scrape/import outcomes from this registry; those belong to Issue #26.
+
+
+## Match-window planner compatibility
+
+Player-stat scheduling is no longer described solely as a single `stats_match_<id>` job. Durable polling-series state lives in `match_stat_windows`; future individual attempts use distinct `mw_attempt_<window_id>_<lease_generation>_<attempt_number>` scheduler job IDs, while existing `stats_match_<id>` one-shot rows remain compatibility records and are not blindly replayed. See [durable match-window planner](architecture/match_window_planner.md).
