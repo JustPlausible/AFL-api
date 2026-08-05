@@ -119,3 +119,20 @@ def test_diagnostic_failure_does_not_replace_callback_result_or_error(tmp_path, 
     with pytest.raises(ValueError, match="original"):
         lane.execute("logged.failure", 2,
                      lambda conn: (_ for _ in ()).throw(ValueError("original")))
+
+
+def test_execute_immediate_owns_transaction_and_rolls_back(tmp_path, monkeypatch):
+    _database(tmp_path, monkeypatch)
+    lane = SchedulerWriteLane()
+    def assert_immediate(conn):
+        assert conn.in_transaction
+        conn.execute("CREATE TABLE immediate_ok(id INTEGER)")
+    lane.execute_immediate("immediate.ok", 1, assert_immediate)
+    with pytest.raises(RuntimeError):
+        lane.execute_immediate("immediate.fail", 2, lambda conn: (conn.execute("CREATE TABLE immediate_rollback(id INTEGER)"), (_ for _ in ()).throw(RuntimeError("boom"))))
+    reader = sqlite3.connect(config.DB_PATH)
+    try:
+        assert reader.execute("SELECT name FROM sqlite_master WHERE name='immediate_ok'").fetchone()
+        assert reader.execute("SELECT name FROM sqlite_master WHERE name='immediate_rollback'").fetchone() is None
+    finally:
+        reader.close()

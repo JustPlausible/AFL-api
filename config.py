@@ -51,3 +51,41 @@ def get_scraper_headers() -> dict:
 # Database Settings
 DB_PATH_RAW = os.getenv("DB_PATH", "data/afl_players.db")
 DB_PATH = str((PROJECT_ROOT / DB_PATH_RAW).resolve()) if not os.path.isabs(DB_PATH_RAW) else DB_PATH_RAW
+
+
+# Durable match-window planner (Issue #132). Reconciliation only; repeated polling is disabled until Issue #133.
+def _parse_bool_env(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    value = raw.strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be a boolean")
+
+
+def _parse_int_env(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer") from exc
+
+
+def _parse_csv_env(name: str) -> tuple[str, ...]:
+    return tuple(value.strip() for value in os.getenv(name, "").split(",") if value.strip())
+
+
+AFL_MATCH_WINDOW_PLANNER_ENABLED = _parse_bool_env("AFL_MATCH_WINDOW_PLANNER_ENABLED", True)
+AFL_MATCH_WINDOW_PRE_MATCH_SECONDS = _parse_int_env("AFL_MATCH_WINDOW_PRE_MATCH_SECONDS", 7200)
+AFL_MATCH_WINDOW_POST_HORIZON_SECONDS = _parse_int_env("AFL_MATCH_WINDOW_POST_HORIZON_SECONDS", 43200)
+AFL_MATCH_WINDOW_LEASE_SECONDS = _parse_int_env("AFL_MATCH_WINDOW_LEASE_SECONDS", 900)
+AFL_MATCH_WINDOW_RECONCILE_SECONDS = _parse_int_env("AFL_MATCH_WINDOW_RECONCILE_SECONDS", 1800)
+AFL_MATCH_WINDOW_EXPECTED_MATCH_SECONDS = _parse_int_env("AFL_MATCH_WINDOW_EXPECTED_MATCH_SECONDS", 10800)
+AFL_MATCH_WINDOW_SUPPORTED_COMPETITIONS = _parse_csv_env("AFL_MATCH_WINDOW_SUPPORTED_COMPETITIONS")
+AFL_MATCH_WINDOW_SUPPORTED_SEASONS = _parse_csv_env("AFL_MATCH_WINDOW_SUPPORTED_SEASONS")
+AFL_MATCH_WINDOW_POLICY_VERSION = os.getenv("AFL_MATCH_WINDOW_POLICY_VERSION", "cfs_match_stats_v1")

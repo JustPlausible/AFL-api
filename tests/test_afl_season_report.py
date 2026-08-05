@@ -354,3 +354,37 @@ def test_status_decision_table_uses_codes_not_only_severity(tmp_path):
     value = report(conn)
     assert calculate_status([]) is ReportStatus.COMPLETE
     assert value.status is ReportStatus.COMPLETE
+
+
+def _reset_stats(conn, *, authority=2, rows=20, sides=("home", "away"), mixed=False):
+    conn.execute("DELETE FROM cfs_player_stats")
+    for idx in range(1, rows + 1):
+        side = sides[(idx - 1) % len(sides)]
+        snapshot_authority = 1 if authority == 1 or (mixed and idx == 1) else 2
+        conn.execute("INSERT INTO cfs_player_stats(match_provider_id,champion_data_player_id,afl_match_id,team_provider_id,side,collected_at,source_endpoint,resolved_match_status,snapshot_authority,extra_stats_json,raw_player_json,canonical_player_id) VALUES('CD_M1',?,'8001','CD_T1',?,?,'match_player_stats','CONCLUDED',?,'{}','{}',NULL)",
+                     (f"CD_X{idx}", side, NOW.isoformat(), snapshot_authority))
+    conn.commit()
+
+
+@pytest.mark.parametrize("case,setup,expected_codes,satisfactory", [
+    ("no_rows", lambda conn: conn.execute("DELETE FROM cfs_player_stats") or conn.commit(), {"match.final_without_authoritative_stats"}, False),
+    ("non_authoritative_only", lambda conn: _reset_stats(conn, authority=1, rows=20), {"match.final_without_authoritative_stats"}, False),
+    ("one_side_authoritative", lambda conn: _reset_stats(conn, rows=20, sides=("home",)), {"match.partial_authoritative_stats"}, False),
+    ("mixed_authority", lambda conn: _reset_stats(conn, rows=20, mixed=True), {"match.partial_authoritative_stats"}, False),
+    ("below_floor", lambda conn: _reset_stats(conn, rows=19), {"stats.suspicious_player_count"}, False),
+    ("at_floor", lambda conn: _reset_stats(conn, rows=20), set(), True),
+    ("above_floor", lambda conn: _reset_stats(conn, rows=22), set(), True),
+])
+def test_season_report_uses_shared_authoritative_finality_contract(tmp_path, case, setup, expected_codes, satisfactory):
+    from afl_json.season_report import authoritative_stats_finality_for_match
+    _, conn = database(tmp_path / case)
+    setup(conn)
+    finality = authoritative_stats_finality_for_match(conn, "CD_M1")
+    value = report(conn)
+    observed_codes = codes(value)
+    assert finality.has_satisfactory_concluded_coverage is satisfactory
+    assert expected_codes.issubset(observed_codes)
+    if satisfactory:
+        assert "match.final_without_authoritative_stats" not in observed_codes
+        assert "match.partial_authoritative_stats" not in observed_codes
+        assert "stats.suspicious_player_count" not in observed_codes
