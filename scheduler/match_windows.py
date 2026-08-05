@@ -82,6 +82,12 @@ class ReasonCode(str, Enum):
     LEASE_EXPIRED_RECLAIMED = "lease_expired_reclaimed"
     ATTEMPT_FAILED_BACKOFF = "attempt_failed_backoff"
     ATTEMPT_SUCCEEDED_NON_FINAL = "attempt_succeeded_non_final"
+    AWAITING_AUTHORITATIVE_LIVE = "awaiting_authoritative_live"
+    AUTH_DOMAIN_PAUSED = "auth_domain_paused"
+    EMPTY_RESULT = "empty_result"
+    UNKNOWN_RESULT = "unknown_result"
+    LOST_LEASE = "lost_lease"
+    INTERRUPTED = "interrupted"
     RELEASED = "released"
 
 

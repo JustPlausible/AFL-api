@@ -6,6 +6,7 @@ import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
@@ -176,7 +177,15 @@ class PlayerStatPollingWorker:
         self.lane = lane
         self._network = threading.BoundedSemaphore(max(1, self.settings.network_concurrency))
         self._state = threading.Lock()
+        self._lifecycle = threading.Lock()
+        self._executor = ThreadPoolExecutor(
+            max_workers=max(1, self.settings.max_workers),
+            thread_name_prefix="cfs-player-stat",
+        )
+        self._accepting_claims = True
         self._active_attempts: dict[str, dict[str, Any]] = {}
+        self._network_waiters = 0
+        self._active_network_requests = 0
         self._auth_paused_until: datetime | None = None
 
     def status(self) -> dict[str, Any]:
@@ -184,6 +193,8 @@ class PlayerStatPollingWorker:
         with self._state:
             active = list(self._active_attempts.values())
             auth_until = self._auth_paused_until
+            waiting = self._network_waiters
+            network_active = self._active_network_requests
         return {
             "enabled": self.settings.enabled,
             "kill_switch": self.settings.kill_switch,
@@ -192,7 +203,9 @@ class PlayerStatPollingWorker:
             "network_concurrency": self.settings.network_concurrency,
             "active_attempt_count": len(active),
             "active_attempts": active,
-            "network_permits_in_use": len(active),
+            "network_waiting_count": waiting,
+            "active_network_request_count": network_active,
+            "network_permits_in_use": network_active,
             "auth_paused": bool(auth_until and auth_until > now),
             "auth_paused_until": _iso(auth_until) if auth_until else None,
             "write_lane_pending": getattr(self.lane, "pending_count", None),
@@ -207,12 +220,14 @@ class PlayerStatPollingWorker:
 
     def claim_due(self) -> list[dict[str, Any]]:
         now = self.clock().astimezone(timezone.utc)
-        if not self.settings.enabled or self.settings.kill_switch or self.settings.drain:
-            reason = "disabled" if not self.settings.enabled else "kill_switch" if self.settings.kill_switch else "drain"
+        with self._state:
+            accepting = self._accepting_claims
+        if not accepting or not self.settings.enabled or self.settings.kill_switch or self.settings.drain:
+            reason = "shutdown" if not accepting else "disabled" if not self.settings.enabled else "kill_switch" if self.settings.kill_switch else "drain"
             record_scrape_decision("cfs_player_stats_poll", target_type="domain", target_identifier="player_stats", reason_code=reason, decision_class="safe", correlation_id=f"poll_skip_{reason}_{int(now.timestamp())}", trigger_source="scheduler")
             return []
         if self._auth_pause_active(now):
-            record_scrape_decision("cfs_player_stats_poll", target_type="domain", target_identifier="player_stats", reason_code="auth_domain_paused", decision_class="safe", correlation_id=f"poll_skip_auth_paused_{int(now.timestamp())}", trigger_source="scheduler")
+            record_scrape_decision("cfs_player_stats_poll", target_type="domain", target_identifier="player_stats", reason_code=ReasonCode.AUTH_DOMAIN_PAUSED.value, decision_class="safe", correlation_id=f"poll_skip_auth_paused_{int(now.timestamp())}", trigger_source="scheduler")
             return []
         claimed = claim_due_windows(f"player-stat-poller:{uuid.uuid4().hex[:8]}", limit=min(self.settings.claim_limit, self.settings.max_workers), now=now, settings=self.window_settings, lane=self.lane)
         accepted: list[dict[str, Any]] = []
@@ -224,17 +239,27 @@ class PlayerStatPollingWorker:
         return accepted
 
     def run_once(self) -> list[dict[str, Any]]:
-        claims = self.claim_due()
-        if not claims:
-            return []
-        if len(claims) == 1:
-            return [self.run_claim(claims[0])]
-        results: list[dict[str, Any]] = []
-        with ThreadPoolExecutor(max_workers=max(1, self.settings.max_workers), thread_name_prefix="cfs-player-stat") as executor:
-            futures = [executor.submit(self.run_claim, row) for row in claims]
-            for future in as_completed(futures):
-                results.append(future.result())
-        return results
+        with self._lifecycle:
+            claims = self.claim_due()
+            if not claims:
+                return []
+            futures = [self._executor.submit(self.run_claim, row) for row in claims]
+        return [future.result() for future in as_completed(futures)]
+
+    @contextmanager
+    def _network_permit(self):
+        with self._state:
+            self._network_waiters += 1
+        self._network.acquire()
+        with self._state:
+            self._network_waiters -= 1
+            self._active_network_requests += 1
+        try:
+            yield
+        finally:
+            with self._state:
+                self._active_network_requests -= 1
+            self._network.release()
 
     def run_claim(self, row: dict[str, Any]) -> dict[str, Any]:
         attempt = row["attempt_id"]
@@ -256,7 +281,7 @@ class PlayerStatPollingWorker:
             started = time.monotonic()
             try:
                 with scheduler_job_context(job_id):
-                    with self._network:
+                    with self._network_permit():
                         result = self.collector_factory(self.client_pool.client(), clock=self.clock).collect(row["match_provider_id"], afl_match_id=row.get("afl_match_id"), canonical_match_status=row.get("lifecycle"))
                 network_ms = int((time.monotonic() - started) * 1000)
                 return self._persist_success(row, result, run_id, network_ms)
@@ -268,7 +293,7 @@ class PlayerStatPollingWorker:
             except (AflJsonTransportError, AflJsonInvalidResponse, ValueError) as exc:
                 return self._persist_failure(row, run_id, exc, _failure_backoff(row, self.settings.transient_backoff, self.settings), "collector_failure")
             except BaseException as exc:
-                return self._persist_failure(row, run_id, exc, _failure_backoff(row, self.settings.transient_backoff, self.settings), "interrupted")
+                return self._persist_failure(row, run_id, exc, _failure_backoff(row, self.settings.transient_backoff, self.settings), ReasonCode.INTERRUPTED.value)
         finally:
             with self._state:
                 self._active_attempts.pop(attempt, None)
@@ -277,8 +302,11 @@ class PlayerStatPollingWorker:
         now = self.clock().astimezone(timezone.utc)
         next_due = now + delay + self.jitter(row["window_id"], reason, self.settings.jitter_seconds)
         def op(conn):
+            reason_code = (ReasonCode.AWAITING_AUTHORITATIVE_LIVE.value
+                           if reason == "awaiting_authoritative_live"
+                           else ReasonCode.ATTEMPT_SUCCEEDED_NON_FINAL.value)
             cur = conn.execute("""UPDATE match_stat_windows SET status='due', next_due_at=?, cadence_profile=?, last_attempted_at=?, reason_code=?, diagnostic_summary=?, lease_owner=NULL, lease_token=NULL, lease_claimed_at=NULL, lease_expires_at=NULL, updated_at=? WHERE window_id=? AND lease_token=?""",
-                               (_iso(next_due), reason, _iso(now), ReasonCode.ATTEMPT_SUCCEEDED_NON_FINAL.value, reason, _iso(now), row["window_id"], row["lease_token"]))
+                               (_iso(next_due), reason, _iso(now), reason_code, reason, _iso(now), row["window_id"], row["lease_token"]))
             if cur.rowcount != 1:
                 fail_scrape_run(run_id, "lost lease before skip persistence", conn=conn)
                 return {"status": "lost_lease", "scrape_run_id": run_id}
@@ -292,6 +320,13 @@ class PlayerStatPollingWorker:
         cadence, phase_reason = cadence_for(row, result.status, self.settings)
         next_due = now + cadence + self.jitter(row["window_id"], phase_reason, self.settings.jitter_seconds)
         def op(conn):
+            owned = conn.execute(
+                "SELECT 1 FROM match_stat_windows WHERE window_id=? AND lease_token=?",
+                (row["window_id"], row["lease_token"]),
+            ).fetchone()
+            if owned is None:
+                fail_scrape_run(run_id, ReasonCode.LOST_LEASE.value, conn=conn)
+                return {"status": ReasonCode.LOST_LEASE.value, "rows_written": 0, "scrape_run_id": run_id}
             before_finality, before_auth = _finality(conn, row["match_provider_id"])
             if before_finality is FinalityState.AUTHORITATIVE_COMPLETE and result.status is not PlayerStatsStatus.CONCLUDED:
                 written = 0
@@ -302,7 +337,8 @@ class PlayerStatPollingWorker:
             complete = finality is FinalityState.AUTHORITATIVE_COMPLETE
             status = "complete" if complete else "backoff" if failure_like else "awaiting_final"
             reason = (ReasonCode.AUTHORITATIVE_FINAL_CONFIRMED.value if complete
-                      else ReasonCode.ATTEMPT_FAILED_BACKOFF.value if failure_like
+                      else ReasonCode.EMPTY_RESULT.value if result.status is PlayerStatsStatus.EMPTY
+                      else ReasonCode.UNKNOWN_RESULT.value if result.status is PlayerStatsStatus.UNKNOWN
                       else ReasonCode.FINAL_STATS_UNAVAILABLE_OR_PARTIAL.value if result.status is PlayerStatsStatus.UNAVAILABLE
                       else ReasonCode.ATTEMPT_SUCCEEDED_NON_FINAL.value)
             cur = conn.execute("""UPDATE match_stat_windows SET status=?, collection_phase=CASE WHEN ? THEN 'complete' ELSE collection_phase END, next_due_at=?, cadence_profile=?, attempt_count=attempt_count+1, consecutive_failure_count=CASE WHEN ? THEN consecutive_failure_count+1 ELSE 0 END, last_attempted_at=?, last_successful_collection_at=CASE WHEN ? THEN last_successful_collection_at ELSE ? END, last_successful_write_at=CASE WHEN ? > 0 THEN ? ELSE last_successful_write_at END, last_observed_snapshot_authority=?, finality_state=?, reason_code=?, diagnostic_summary=?, lease_owner=NULL, lease_token=NULL, lease_claimed_at=NULL, lease_expires_at=NULL, updated_at=? WHERE window_id=? AND lease_token=?""",
@@ -322,8 +358,11 @@ class PlayerStatPollingWorker:
             with self._state:
                 self._auth_paused_until = next_due
         def op(conn):
+            reason_code = (ReasonCode.AUTH_DOMAIN_PAUSED.value if set_auth_pause
+                           else ReasonCode.INTERRUPTED.value if reason == ReasonCode.INTERRUPTED.value
+                           else ReasonCode.ATTEMPT_FAILED_BACKOFF.value)
             cur = conn.execute("""UPDATE match_stat_windows SET status='backoff', next_due_at=?, cadence_profile=?, attempt_count=attempt_count+1, consecutive_failure_count=consecutive_failure_count+1, last_attempted_at=?, reason_code=?, diagnostic_summary=?, lease_owner=NULL, lease_token=NULL, lease_claimed_at=NULL, lease_expires_at=NULL, updated_at=? WHERE window_id=? AND lease_token=?""",
-                               (_iso(next_due), reason, _iso(now), ReasonCode.ATTEMPT_FAILED_BACKOFF.value, f"{reason}: {summary}; next_due={_iso(next_due)}", _iso(now), row["window_id"], row["lease_token"]))
+                               (_iso(next_due), reason, _iso(now), reason_code, f"{reason}: {summary}; next_due={_iso(next_due)}", _iso(now), row["window_id"], row["lease_token"]))
             if cur.rowcount != 1:
                 fail_scrape_run(run_id, "lost lease before failure persistence", conn=conn)
                 return {"status": "lost_lease", "next_due_at": _iso(next_due), "scrape_run_id": run_id}
@@ -332,7 +371,12 @@ class PlayerStatPollingWorker:
         return self.lane.execute("player_stats_poll.persist_failure", row["window_id"], op)
 
     def close(self) -> None:
-        self.client_pool.close()
+        """Drain submitted attempts before closing their thread-owned sessions."""
+        with self._lifecycle:
+            with self._state:
+                self._accepting_claims = False
+            self._executor.shutdown(wait=True, cancel_futures=False)
+            self.client_pool.close()
 
 
 _worker_lock = threading.Lock()

@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from afl_json.client import AflJsonAuthenticationError
+from afl_json.client import AflJsonAuthenticationError, AflJsonClient
 from afl_json.player_stats import PlayerStatsStatus, normalise_player_stats
 from db.migration_runner import migrate_database
 from scheduler.match_windows import MatchWindowSettings, reconcile
@@ -178,6 +178,7 @@ def test_pre_match_window_does_not_call_cfs_before_authoritative_live(db):
     assert out["status"] == "awaiting_authoritative_live"
     assert client.calls == 0
     assert conn.execute("SELECT COUNT(*) FROM cfs_player_stats").fetchone()[0] == 0
+    assert conn.execute("SELECT reason_code FROM match_stat_windows").fetchone()[0] == "awaiting_authoritative_live"
 
 
 def test_process_client_pool_uses_public_shared_token_boundary_and_closes_all_thread_clients():
@@ -236,6 +237,7 @@ def test_lost_lease_before_persistence_fails_audit_without_window_mutation(db):
     assert out["status"] == "lost_lease"
     assert conn.execute("SELECT status FROM scrape_runs ORDER BY started_at DESC LIMIT 1").fetchone()[0] == "failed"
     assert conn.execute("SELECT attempt_count, lease_token FROM match_stat_windows").fetchone()[:] == (0, "stolen")
+    assert conn.execute("SELECT COUNT(*) FROM cfs_player_stats").fetchone()[0] == 0
 
 
 def test_status_reports_operational_state_and_windows(db):
@@ -257,3 +259,107 @@ def test_read_only_status_endpoint_includes_operational_state_and_window_rows(db
     assert body["operational"]["active_attempt_count"] == 0
     assert body["operational"]["live_cadence_seconds"] == 60
     assert body["windows"][0]["match_provider_id"] == "CD_M1"
+
+
+def test_real_client_second_401_opens_domain_auth_pause_after_one_refresh(db):
+    conn,path=db; add_match(conn); reconcile(conn, now=NOW, settings=window_settings()); conn.commit()
+
+    class Response:
+        headers = {}
+        def __init__(self, status, payload): self.status_code=status; self.payload=payload; self.text=""
+        def json(self): return self.payload
+    class Session:
+        def __init__(self): self.responses=iter([Response(401, {}), Response(401, {})]); self.calls=[]
+        def request(self, method, url, **kwargs):
+            kwargs["headers"] = dict(kwargs["headers"])
+            self.calls.append((method,url,kwargs)); return next(self.responses)
+        def close(self): pass
+
+    session=Session(); tokens=iter(["old", "new"])
+    from afl_json.client import WMCTokenProvider
+    real_client=AflJsonClient(session=session, token_provider=WMCTokenProvider(lambda: next(tokens)))
+    class RealClientCollector:
+        def __init__(self, client, *, clock): self.client=client
+        def collect(self, match_provider_id, **kwargs):
+            return self.client.get("match_player_statistics", path_parameters={"match_provider_id": match_provider_id})
+    worker=PlayerStatPollingWorker(settings=settings(), window_settings=window_settings(), client_pool=Pool(real_client), collector_factory=RealClientCollector, clock=lambda: NOW, lane=DirectLane(path))
+    assert worker.run_once()[0]["status"] == "auth_failed_paused"
+    assert len(session.calls) == 2
+    assert session.calls[0][2]["headers"] != session.calls[1][2]["headers"]
+    assert worker.status()["auth_paused"] is True
+    assert conn.execute("SELECT reason_code FROM match_stat_windows").fetchone()[0] == "auth_domain_paused"
+    worker.close()
+
+
+def test_network_metrics_distinguish_active_request_waiter_and_attempts(db):
+    conn,path=db; add_two_due_live_matches(conn)
+    entered=threading.Event(); release=threading.Event()
+    class BlockingCollector:
+        def __init__(self, client, *, clock): pass
+        def collect(self, match_provider_id, **kwargs):
+            entered.set(); release.wait(timeout=5)
+            return normalise_player_stats(live_payload(), match_provider_id, collected_at=NOW.isoformat(), canonical_match_status="LIVE")
+    worker=PlayerStatPollingWorker(settings=settings(max_workers=2, claim_limit=2, network_concurrency=1), window_settings=window_settings(), client_pool=Pool(Client()), collector_factory=BlockingCollector, clock=lambda: NOW, lane=DirectLane(path))
+    runner=threading.Thread(target=worker.run_once); runner.start(); assert entered.wait(timeout=5)
+    for _ in range(100):
+        status=worker.status()
+        if status["network_waiting_count"] == 1: break
+        threading.Event().wait(.01)
+    assert status["active_attempt_count"] == 2
+    assert status["active_network_request_count"] == status["network_permits_in_use"] == 1
+    assert status["network_waiting_count"] == 1
+    release.set(); runner.join(timeout=5); worker.close()
+
+
+def test_shutdown_drains_active_attempt_before_closing_pool(db):
+    conn,path=db; add_match(conn); reconcile(conn, now=NOW, settings=window_settings()); conn.commit()
+    entered=threading.Event(); release=threading.Event(); pool=Pool(Client())
+    class BlockingCollector:
+        def __init__(self, client, *, clock): pass
+        def collect(self, match_provider_id, **kwargs):
+            entered.set(); release.wait(timeout=5)
+            return normalise_player_stats(live_payload(), match_provider_id, collected_at=NOW.isoformat(), canonical_match_status="LIVE")
+    worker=PlayerStatPollingWorker(settings=settings(), window_settings=window_settings(), client_pool=pool, collector_factory=BlockingCollector, clock=lambda: NOW, lane=DirectLane(path))
+    runner=threading.Thread(target=worker.run_once); runner.start(); assert entered.wait(timeout=5)
+    closer=threading.Thread(target=worker.close); closer.start(); threading.Event().wait(.05)
+    assert pool.closed is False and closer.is_alive()
+    release.set(); runner.join(timeout=5); closer.join(timeout=5)
+    assert pool.closed is True and not closer.is_alive()
+    assert worker.run_once() == []
+
+
+def test_process_lifetime_executor_is_reused_and_closed(db):
+    conn,path=db; add_match(conn); reconcile(conn, now=NOW, settings=window_settings()); conn.commit()
+    worker=PlayerStatPollingWorker(settings=settings(), window_settings=window_settings(), client_pool=Pool(Client(live_payload())), clock=lambda: NOW, lane=DirectLane(path))
+    executor=worker._executor
+    worker.run_once()
+    assert worker._executor is executor
+    worker.close()
+    assert executor._shutdown is True
+
+
+def test_horizon_reconcile_stops_unresolved_window_without_network_request(db):
+    conn,path=db; add_match(conn, status="CONCLUDED", start=(NOW-timedelta(hours=10)).isoformat())
+    reconcile(conn, now=NOW-timedelta(hours=7), settings=window_settings()); conn.commit()
+    reconcile(conn, now=NOW, settings=window_settings()); conn.commit()
+    client=Client(live_payload("CONCLUDED"))
+    worker=PlayerStatPollingWorker(settings=settings(), window_settings=window_settings(), client_pool=Pool(client), clock=lambda: NOW, lane=DirectLane(path))
+    assert worker.run_once() == []
+    row=conn.execute("SELECT status,finality_state,reason_code,next_due_at FROM match_stat_windows").fetchone()
+    assert row[:] == ("failed_terminal", "unconfirmed", "polling_horizon_exceeded", None)
+    assert client.calls == 0
+    worker.close()
+
+
+def test_restart_preserves_due_time_and_failure_backoff_but_not_process_auth_circuit(db):
+    conn,path=db; add_match(conn); reconcile(conn, now=NOW, settings=window_settings()); conn.commit()
+    err=AflJsonAuthenticationError("failed", endpoint="match_player_statistics", status_code=401)
+    first=PlayerStatPollingWorker(settings=settings(), window_settings=window_settings(), client_pool=Pool(Client(error=err)), clock=lambda: NOW, lane=DirectLane(path))
+    first.run_once(); stored=conn.execute("SELECT next_due_at,consecutive_failure_count FROM match_stat_windows").fetchone(); first.close()
+    replacement_client=Client(live_payload())
+    restarted=PlayerStatPollingWorker(settings=settings(), window_settings=window_settings(), client_pool=Pool(replacement_client), clock=lambda: NOW+timedelta(minutes=1), lane=DirectLane(path))
+    assert restarted.status()["auth_paused"] is False
+    assert restarted.run_once() == []
+    assert conn.execute("SELECT next_due_at,consecutive_failure_count FROM match_stat_windows").fetchone()[:] == stored[:]
+    assert replacement_client.calls == 0
+    restarted.close()
