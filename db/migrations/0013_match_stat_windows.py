@@ -17,7 +17,7 @@ def migrate(conn):
             policy_version TEXT NOT NULL,
             lifecycle TEXT NOT NULL,
             collection_phase TEXT NOT NULL CHECK(collection_phase IN ('not_started','pre_match','live','post_game','final_confirmation','complete','none')),
-            status TEXT NOT NULL CHECK(status IN ('planned','due','leased','backoff','awaiting_final','complete','failed_terminal','disabled','cancelled','not_applicable')),
+            status TEXT NOT NULL CHECK(status IN ('planned','due','leased','backoff','awaiting_final','planning_error','complete','failed_terminal','disabled','cancelled','not_applicable')),
             next_due_at TEXT,
             cadence_profile TEXT NOT NULL,
             attempt_count INTEGER NOT NULL DEFAULT 0,
@@ -32,6 +32,7 @@ def migrate(conn):
             lease_generation INTEGER NOT NULL DEFAULT 0,
             lease_claimed_at TEXT,
             lease_expires_at TEXT,
+            lifecycle_observed_at TEXT,
             reason_code TEXT NOT NULL,
             diagnostic_summary TEXT CHECK(length(diagnostic_summary) <= 500 OR diagnostic_summary IS NULL),
             planner_version TEXT NOT NULL,
@@ -43,7 +44,7 @@ def migrate(conn):
     conn.execute("""
         CREATE UNIQUE INDEX IF NOT EXISTS idx_match_stat_windows_active_policy
         ON match_stat_windows(match_id, policy_version)
-        WHERE status IN ('planned','due','leased','backoff','awaiting_final','disabled')
+        WHERE status IN ('planned','due','leased','backoff','awaiting_final','planning_error','disabled')
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_match_stat_windows_due ON match_stat_windows(status, next_due_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_match_stat_windows_lease_expiry ON match_stat_windows(status, lease_expires_at)")

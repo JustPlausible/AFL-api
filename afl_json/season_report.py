@@ -40,6 +40,54 @@ MIN_CONCLUDED_AUTHORITATIVE_PLAYER_ROWS = 20
 
 
 @dataclass(frozen=True, slots=True)
+class MatchAuthoritativeStatsFinality:
+    match_provider_id: str | None
+    authoritative_rows: int
+    authoritative_sides: int
+    authoritative_home_rows: int
+    authoritative_away_rows: int
+    min_authority: int | None
+    max_authority: int | None
+
+    @property
+    def has_authoritative_snapshot(self) -> bool:
+        return self.authoritative_rows > 0
+
+    @property
+    def is_partial_authoritative_snapshot(self) -> bool:
+        return self.has_authoritative_snapshot and (
+            self.min_authority != self.max_authority or self.authoritative_sides < 2
+        )
+
+    @property
+    def has_satisfactory_concluded_coverage(self) -> bool:
+        return (
+            self.has_authoritative_snapshot
+            and not self.is_partial_authoritative_snapshot
+            and self.authoritative_rows >= MIN_CONCLUDED_AUTHORITATIVE_PLAYER_ROWS
+        )
+
+
+def authoritative_stats_finality_for_match(conn: sqlite3.Connection, match_provider_id: str | None) -> MatchAuthoritativeStatsFinality:
+    """Return the same concluded CFS authority/coverage decision used by season completeness."""
+    if not match_provider_id:
+        return MatchAuthoritativeStatsFinality(None, 0, 0, 0, 0, None, None)
+    row = conn.execute(
+        "SELECT SUM(snapshot_authority=2) authoritative_rows,"
+        "COUNT(DISTINCT CASE WHEN snapshot_authority=2 THEN side END) authoritative_sides,"
+        "SUM(snapshot_authority=2 AND side='home') authoritative_home_rows,"
+        "SUM(snapshot_authority=2 AND side='away') authoritative_away_rows,"
+        "MIN(snapshot_authority) min_authority,MAX(snapshot_authority) max_authority "
+        "FROM cfs_player_stats WHERE match_provider_id=?",
+        (match_provider_id,),
+    ).fetchone()
+    return MatchAuthoritativeStatsFinality(
+        match_provider_id, int(row[0] or 0), int(row[1] or 0), int(row[2] or 0),
+        int(row[3] or 0), row[4], row[5],
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class Finding:
     code: str
     severity: Severity

@@ -54,6 +54,13 @@ class SchedulerWriteLane:
             return self._pending
 
     def execute(self, operation_name: str, target_id: object, callback: Callable[[sqlite3.Connection], T]) -> T:
+        return self._execute(operation_name, target_id, callback, begin_immediate=False)
+
+    def execute_immediate(self, operation_name: str, target_id: object, callback: Callable[[sqlite3.Connection], T]) -> T:
+        """Run a bounded callback inside a lane-owned BEGIN IMMEDIATE transaction."""
+        return self._execute(operation_name, target_id, callback, begin_immediate=True)
+
+    def _execute(self, operation_name: str, target_id: object, callback: Callable[[sqlite3.Connection], T], *, begin_immediate: bool) -> T:
         if getattr(self._local, "active", False):
             raise NestedWriteLaneError("nested Scheduler write-lane use is not allowed")
         queued_at = time.monotonic()
@@ -74,6 +81,8 @@ class SchedulerWriteLane:
             self._local.active = True
             try:
                 conn = get_db_connection()
+                if begin_immediate:
+                    conn.execute("BEGIN IMMEDIATE")
                 result = callback(conn)
                 conn.commit()
                 return result
