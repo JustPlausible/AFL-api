@@ -782,9 +782,11 @@ Runtime ownership is classified by one policy as active, gracefully stopped,
 stale/unclean, or unknown. The planner/heartbeat job defaults to 15 seconds;
 shutdown grace must span at least two heartbeats. A valid lease is always
 preserved. A recent owning-runtime heartbeat also preserves an expired lease
-when the attempt token or instance-prefixed lease owner proves ownership. Only
-stale/stopped/unknown ownership combined with lease or attempt staleness is
-recoverable.
+when the attempt token or instance-prefixed lease owner proves ownership **and**
+the attempt remains within the configured maximum attempt duration. An active
+heartbeat cannot protect a hung, over-duration attempt indefinitely; that
+attempt returns to the normal evidence-driven stale policy. A missing
+start/claim timestamp cannot establish this temporary active-owner protection.
 
 Recovery classifies attempts first and repairs each under a savepoint. It then
 performs one optimistic lease clear per window and invokes the existing scoped,
@@ -798,3 +800,10 @@ Dry-run reports `would_*` counters separately from actual mutation counters and
 performs no writes. Uncorrelated legacy one-shots, missing window/attempt IDs,
 and orphan registry/audit records are bounded unresolved compatibility findings;
 they are neither guessed, changed, nor replayed.
+
+Default startup reconciliation is operationally bounded to 500 candidate
+windows, 500 running registry rows, and 500 running scrape rows in its immediate
+transaction, ordered oldest first. Configure this with
+`AFL_RECOVERY_STARTUP_CANDIDATE_LIMIT` (valid range 1–10,000). Later startups
+continue an unchanged backlog idempotently. Manual explicit scopes may inspect
+older evidence and are not silently truncated by the startup limit.

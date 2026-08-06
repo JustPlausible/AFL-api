@@ -234,6 +234,23 @@ def test_0014_realistic_upgrade_preserves_rows_schema_and_dependent_objects(tmp_
         ("trigger", "registry_update_log"),
         ("view", "running_registry_view"),
     } <= objects
+    repository_indexes = {
+        "idx_scheduler_registry_status_time",
+        "idx_scheduler_registry_match",
+        "idx_scheduler_registry_round",
+        "idx_scrape_runs_started_at",
+        "idx_scrape_runs_type_status_started",
+        "idx_scrape_runs_status_started",
+        "idx_scrape_runs_correlation_id",
+        "idx_scrape_runs_reason_started",
+        "idx_scrape_runs_canonical_match_started",
+    }
+    assert repository_indexes <= {
+        row[1]
+        for row in conn.execute(
+            "SELECT type,name FROM sqlite_master WHERE type='index'"
+        )
+    }
     assert conn.execute("SELECT job_id FROM running_registry_view").fetchall() == [
         ("job-running",)
     ]

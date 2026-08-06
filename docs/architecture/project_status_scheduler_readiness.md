@@ -606,5 +606,31 @@ identity, planner-owned horizon/feature decisions, per-attempt savepoint
 isolation, and migration fidelity from a populated migration-0013 database.
 The migration rebuild remains necessary only because SQLite cannot add values to
 existing CHECK constraints; it copies every prior column and row, retains
-original defaults/constraints, captures and recreates explicit indexes,
-triggers, and dependent views, and adds focused correlation indexes.
+original defaults/constraints, captures and recreates the repository-known
+indexes, triggers, and dependent views exercised by migration tests, and adds
+focused correlation indexes. This is a repository compatibility guarantee, not
+a claim to preserve every dependency an arbitrary external SQLite consumer may
+have created.
+
+The final refinement bounds active-heartbeat protection by maximum attempt
+duration, blocks a window action for the run when its attempt repair savepoint
+fails, and requires exactly one correlated running registry row, scrape row,
+and owned window row in normal atomic finalisation. Startup examines at most the
+configured candidate limit (default 500) from each durable candidate source.
+
+#### Issue #134 file-to-requirement map
+
+| Files | Recovery requirement |
+|---|---|
+| `.env.example`, `config.py` | Conservative heartbeat, stale-state, grace, and bounded-startup configuration. |
+| `db/migrations/0014_interrupted_attempt_recovery.py`, `db/scrape_runs.py` | Backward-compatible attempt correlation, recovery evidence, runtime ownership, and model fields. |
+| `scheduler/player_stat_polling.py`, `scheduler/registry.py` | Immutable execution identity and atomic domain/control-plane terminalisation. |
+| `scheduler/recovery.py`, `scheduler/match_windows.py` | Shared startup/manual reconciler, optimistic lease repair, structured report, and planner-owned consequences. |
+| `scheduler/runtime.py`, `scheduler/scheduled_tasks.py`, `scheduler/start.py` | Process identity, heartbeat/graceful-stop evidence, and recovery-before-polling startup order. |
+| `tests/test_interrupted_attempt_recovery.py`, `tests/test_player_stat_polling.py`, `tests/test_migration_runner.py`, `tests/test_scheduler_startup.py`, `tests/test_scrape_runs.py` | Offline crash, evidence, concurrency, compatibility, migration, ordering, and durable-state verification. |
+| This workflow/readiness document, `docs/scheduler_registry.md`, `docs/scrape_run_audit.md` | Transaction, evidence, recovery-policy, and operator guidance. |
+
+No changed production path serves functionality outside interrupted-attempt
+recovery, its required correlation/atomicity and ownership evidence, startup or
+manual invocation, and compatibility. In particular, no collector, scheduling
+backend, or unrelated domain workflow is introduced.

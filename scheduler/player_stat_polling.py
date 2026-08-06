@@ -37,9 +37,11 @@ def _finish_polling_scrape(conn, run_id: str, *, now: datetime, status: str,
     duration_ms = max(0, int((now - started).total_seconds() * 1000))
     error_class = error.__class__.__name__ if isinstance(error, BaseException) else ("Error" if error else None)
     summary = sanitize_error_summary(error) if error else None
-    conn.execute("""UPDATE scrape_runs SET status=?,finished_at=?,duration_ms=?,rows_read=?,
+    updated = conn.execute("""UPDATE scrape_runs SET status=?,finished_at=?,duration_ms=?,rows_read=?,
         rows_written=?,error_class=?,error_summary=? WHERE run_id=? AND status='running'""",
         (status,finished,duration_ms,rows_read,rows_written,error_class,summary,run_id))
+    if updated.rowcount != 1:
+        raise RuntimeError(f"Expected one running scrape run for {run_id}")
 
 
 @dataclass(frozen=True)
@@ -333,9 +335,11 @@ class PlayerStatPollingWorker:
                 (run_id,"cfs_player_stats_poll",str(row["match_id"]),now,attempt,row["match_id"],
                  row.get("match_provider_id"),row["window_id"],execution.attempt_id,execution.job_id,
                  execution.lease_generation,execution.lease_token,INSTANCE_ID))
-            conn.execute("""UPDATE match_stat_windows SET last_attempt_id=?,last_scheduler_job_id=?,
+            updated = conn.execute("""UPDATE match_stat_windows SET last_attempt_id=?,last_scheduler_job_id=?,
                 last_scrape_run_id=?,updated_at=? WHERE window_id=? AND lease_token=?""",
                 (execution.attempt_id,execution.job_id,execution.run_id,now,row["window_id"],execution.lease_token))
+            if updated.rowcount != 1:
+                raise RuntimeError("Expected one owned match window at attempt start")
         self.lane.execute("player_stats_poll.start_attempt", row["window_id"], start_attempt)
         try:
             lifecycle = str(row.get("lifecycle") or "").upper()
@@ -348,8 +352,11 @@ class PlayerStatPollingWorker:
                         result = self.collector_factory(self.client_pool.client(), clock=self.clock).collect(row["match_provider_id"], afl_match_id=row.get("afl_match_id"), canonical_match_status=row.get("lifecycle"))
                 network_ms = int((time.monotonic() - started) * 1000)
                 received = _iso(self.clock().astimezone(timezone.utc))
-                self.lane.execute("player_stats_poll.response_received", run_id,
-                    lambda conn: conn.execute("UPDATE scrape_runs SET response_received_at=? WHERE run_id=? AND status='running'", (received,run_id)))
+                def checkpoint(conn):
+                    updated = conn.execute("UPDATE scrape_runs SET response_received_at=? WHERE run_id=? AND status='running'", (received,run_id))
+                    if updated.rowcount != 1:
+                        raise RuntimeError("Expected one running scrape run at response checkpoint")
+                self.lane.execute("player_stats_poll.response_received", run_id, checkpoint)
                 return self._persist_success(row, result, execution, network_ms)
             except AflJsonAuthenticationError as exc:
                 return self._persist_failure(row, execution, exc, _failure_backoff(row, self.settings.auth_pause, self.settings), "auth_failed_paused", set_auth_pause=True)
@@ -378,7 +385,9 @@ class PlayerStatPollingWorker:
                 self._record_lost_lease(conn, execution, now, "lost lease before skip persistence")
                 return {"status": "lost_lease", "scrape_run_id": run_id}
             _finish_polling_scrape(conn, run_id, now=now, status="completed", rows_read=0, rows_written=0)
-            conn.execute("UPDATE scheduler_job_registry SET status='succeeded',last_success_time=?,updated_at=?,attempt_persistence_evidence='uncommitted' WHERE job_id=? AND status='running'", (_iso(now),_iso(now),execution.job_id))
+            updated = conn.execute("UPDATE scheduler_job_registry SET status='succeeded',last_success_time=?,updated_at=?,attempt_persistence_evidence='uncommitted' WHERE job_id=? AND status='running'", (_iso(now),_iso(now),execution.job_id))
+            if updated.rowcount != 1:
+                raise RuntimeError("Expected one running registry row during skip finalisation")
             return {"status": reason, "next_due_at": _iso(next_due), "scrape_run_id": run_id}
         return self.lane.execute("player_stats_poll.persist_skip", row["window_id"], op)
 
@@ -419,8 +428,12 @@ class PlayerStatPollingWorker:
             audit_status = "partial" if result.status in {PlayerStatsStatus.LIVE_PARTIAL, PlayerStatsStatus.UNKNOWN, PlayerStatsStatus.EMPTY} else "completed"
             _finish_polling_scrape(conn, run_id, now=now, status=audit_status,
                                    rows_read=len(result.records), rows_written=written)
-            conn.execute("UPDATE scrape_runs SET persistence_committed_at=?,attempt_persistence_evidence='committed' WHERE run_id=?", (_iso(now),run_id))
-            conn.execute("UPDATE scheduler_job_registry SET status='succeeded',last_success_time=?,updated_at=?,attempt_persistence_evidence='committed' WHERE job_id=? AND status='running'", (_iso(now),_iso(now),execution.job_id))
+            marked = conn.execute("UPDATE scrape_runs SET persistence_committed_at=?,attempt_persistence_evidence='committed' WHERE run_id=?", (_iso(now),run_id))
+            if marked.rowcount != 1:
+                raise RuntimeError("Expected one scrape row during success finalisation")
+            updated = conn.execute("UPDATE scheduler_job_registry SET status='succeeded',last_success_time=?,updated_at=?,attempt_persistence_evidence='committed' WHERE job_id=? AND status='running'", (_iso(now),_iso(now),execution.job_id))
+            if updated.rowcount != 1:
+                raise RuntimeError("Expected one running registry row during success finalisation")
             return {"status": "complete" if complete else "rejected_backoff" if failure_like else "rescheduled", "rows_written": written, "next_due_at": None if complete else _iso(next_due), "scrape_run_id": run_id}
         return self.lane.execute("player_stats_poll.persist_success", row["window_id"], op)
 
@@ -442,19 +455,28 @@ class PlayerStatPollingWorker:
                 self._record_lost_lease(conn, execution, now, "lost lease before failure persistence")
                 return {"status": "lost_lease", "next_due_at": _iso(next_due), "scrape_run_id": run_id}
             _finish_polling_scrape(conn, run_id, now=now, status="failed", error=exc)
-            conn.execute("UPDATE scheduler_job_registry SET status='failed',last_error_summary=?,updated_at=?,attempt_persistence_evidence='uncommitted' WHERE job_id=? AND status='running'", (summary,_iso(now),execution.job_id))
+            marked = conn.execute("UPDATE scrape_runs SET attempt_persistence_evidence='uncommitted' WHERE run_id=?", (run_id,))
+            if marked.rowcount != 1:
+                raise RuntimeError("Expected one scrape row during failure finalisation")
+            updated = conn.execute("UPDATE scheduler_job_registry SET status='failed',last_error_summary=?,updated_at=?,attempt_persistence_evidence='uncommitted' WHERE job_id=? AND status='running'", (summary,_iso(now),execution.job_id))
+            if updated.rowcount != 1:
+                raise RuntimeError("Expected one running registry row during failure finalisation")
             return {"status": reason, "next_due_at": _iso(next_due), "scrape_run_id": run_id}
         return self.lane.execute("player_stats_poll.persist_failure", row["window_id"], op)
 
     @staticmethod
     def _record_lost_lease(conn, execution: AttemptExecution, now: datetime, reason: str) -> None:
         _finish_polling_scrape(conn, execution.run_id, now=now, status="failed", error=reason)
-        conn.execute("UPDATE scrape_runs SET attempt_persistence_evidence='unknown',reason_code=? WHERE run_id=?",
+        marked = conn.execute("UPDATE scrape_runs SET attempt_persistence_evidence='unknown',reason_code=? WHERE run_id=?",
                      (ReasonCode.LOST_LEASE.value, execution.run_id))
-        conn.execute("""UPDATE scheduler_job_registry SET status='interrupted',
+        if marked.rowcount != 1:
+            raise RuntimeError("Expected one scrape row during lost-lease finalisation")
+        updated = conn.execute("""UPDATE scheduler_job_registry SET status='interrupted',
             last_error_summary=?,updated_at=?,recovery_reason=?,attempt_persistence_evidence='unknown'
             WHERE job_id=? AND status='running'""",
             (sanitize_error_summary(reason), _iso(now), ReasonCode.LOST_LEASE.value, execution.job_id))
+        if updated.rowcount != 1:
+            raise RuntimeError("Expected one running registry row during lost-lease finalisation")
 
     def close(self) -> None:
         """Drain submitted attempts before closing their thread-owned sessions."""

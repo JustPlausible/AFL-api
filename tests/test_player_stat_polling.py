@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
 import sqlite3
+import subprocess
+import sys
 import threading
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -482,8 +485,8 @@ def test_atomic_finalisation_rollback_leaves_no_domain_or_completion_writes(db):
     ).run_once()
     assert conn.execute("SELECT COUNT(*) FROM cfs_player_stats").fetchone()[0] == 0
     assert conn.execute(
-        "SELECT status,persistence_committed_at FROM scrape_runs"
-    ).fetchone()[:] == ("failed", None)
+        "SELECT status,response_received_at,persistence_committed_at,attempt_persistence_evidence FROM scrape_runs"
+    ).fetchone()[:] == ("failed", NOW.isoformat(), None, "uncommitted")
     assert conn.execute(
         "SELECT status,attempt_persistence_evidence FROM scheduler_job_registry"
     ).fetchone()[:] == ("failed", "uncommitted")
@@ -491,3 +494,67 @@ def test_atomic_finalisation_rollback_leaves_no_domain_or_completion_writes(db):
         conn.execute("SELECT finality_state FROM match_stat_windows").fetchone()[0]
         == "unconfirmed"
     )
+    assert conn.execute("SELECT status,lease_token FROM match_stat_windows").fetchone()[:] == ("backoff", None)
+
+
+def test_failed_t4_and_failed_failure_finalisation_remain_running_unknown(db):
+    conn, path = db
+    add_match(conn); reconcile(conn, now=NOW, settings=window_settings()); conn.commit()
+
+    class FailureLane(DirectLane):
+        def execute(self, op, target, cb):
+            if op == "player_stats_poll.persist_failure":
+                raise RuntimeError("injected failure finalisation crash")
+            return super().execute(op, target, cb)
+
+    def crash(point):
+        if point == "after_domain_write":
+            raise RuntimeError("injected T4 crash")
+
+    worker = PlayerStatPollingWorker(settings=settings(), window_settings=window_settings(),
+        client_pool=Pool(Client(live_payload())), finalization_hook=crash,
+        clock=lambda: NOW, lane=FailureLane(path))
+    with pytest.raises(RuntimeError, match="failure finalisation"):
+        worker.run_once()
+    assert conn.execute("SELECT COUNT(*) FROM cfs_player_stats").fetchone()[0] == 0
+    assert conn.execute("SELECT status,response_received_at,attempt_persistence_evidence FROM scrape_runs").fetchone()[:] == ("running", NOW.isoformat(), None)
+    assert conn.execute("SELECT status,attempt_persistence_evidence FROM scheduler_job_registry").fetchone()[:] == ("running", None)
+    window = conn.execute("SELECT status,lease_token FROM match_stat_windows").fetchone()
+    assert window[0] == "leased" and window[1] is not None
+
+
+@pytest.mark.parametrize("mutation", [
+    "DELETE FROM scheduler_job_registry",
+    "UPDATE scheduler_job_registry SET status='failed'",
+    "DELETE FROM scrape_runs",
+    "UPDATE scrape_runs SET status='failed'",
+])
+def test_missing_or_preterminal_control_row_rolls_back_success(db, mutation):
+    conn, path = db
+    add_match(conn); reconcile(conn, now=NOW, settings=window_settings()); conn.commit()
+
+    class TamperLane(DirectLane):
+        tampered = False
+        def execute(self, op, target, cb):
+            if op == "player_stats_poll.persist_success" and not self.tampered:
+                with sqlite3.connect(self.path) as tamper:
+                    tamper.execute(mutation)
+                self.tampered = True
+            return super().execute(op, target, cb)
+
+    worker = PlayerStatPollingWorker(settings=settings(), window_settings=window_settings(),
+        client_pool=Pool(Client(live_payload())), clock=lambda: NOW, lane=TamperLane(path))
+    with pytest.raises((RuntimeError, ValueError)):
+        worker.run_once()
+    assert conn.execute("SELECT COUNT(*) FROM cfs_player_stats").fetchone()[0] == 0
+    assert conn.execute("SELECT status,lease_token FROM match_stat_windows").fetchone()[0] == "leased"
+
+
+def test_polling_import_has_no_runtime_database_side_effect_and_identity_is_process_specific(tmp_path):
+    database = tmp_path / "must-not-exist.db"
+    env = {**os.environ, "DB_PATH": str(database)}
+    command = [sys.executable, "-c", "from scheduler.runtime import INSTANCE_ID; import scheduler.player_stat_polling; print(INSTANCE_ID)"]
+    first = subprocess.run(command, env=env, text=True, capture_output=True, check=True)
+    second = subprocess.run(command, env=env, text=True, capture_output=True, check=True)
+    assert not database.exists()
+    assert first.stdout.strip() != second.stdout.strip()

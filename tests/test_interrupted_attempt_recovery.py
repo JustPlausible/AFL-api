@@ -250,6 +250,7 @@ def add_running_attempt(
     instance=None,
     with_scrape=True,
     with_registry=True,
+    started=OLD,
 ):
     conn = sqlite3.connect(path)
     wid = "mw_cfs_stats_1_v1"
@@ -261,15 +262,15 @@ def add_running_attempt(
         VALUES(?,'cfs_player_stats_poll',1,'running',?,1,?,?,?,?,?,?,?,?)""",
             (
                 job,
-                OLD,
+                started,
                 wid,
                 attempt,
                 run_id if with_scrape else None,
                 generation,
                 "token-1",
                 instance,
-                OLD,
-                OLD,
+                started,
+                started,
             ),
         )
     if with_scrape:
@@ -278,7 +279,7 @@ def add_running_attempt(
             trigger_source,status,started_at,correlation_id,window_id,attempt_id,
             scheduler_job_id,lease_generation,lease_token,scheduler_instance_id)
             VALUES(?,'cfs_player_stats_poll','match','1','scheduler','running',?,?,?,?,?,?,?,?)""",
-            (run_id, OLD, attempt, wid, attempt, job, generation, "token-1", instance),
+            (run_id, started, attempt, wid, attempt, job, generation, "token-1", instance),
         )
     conn.commit()
     conn.close()
@@ -303,6 +304,7 @@ def test_recent_owner_heartbeat_prevents_age_or_expiry_reclamation(recovery_db, 
         instance="active",
         with_scrape=kind != "registry",
         with_registry=kind != "scrape",
+        started=(NOW - timedelta(minutes=10)).isoformat(),
     )
     report = run(recovery_db)
     assert report.registry_rows_repaired == report.scrape_runs_repaired == 0
@@ -311,6 +313,26 @@ def test_recent_owner_heartbeat_prevents_age_or_expiry_reclamation(recovery_db, 
         == "token-1"
     )
     assert report.decisions[-1]["action"] == "active_preserved"
+
+
+def test_active_heartbeat_cannot_protect_expired_overlong_attempt(recovery_db):
+    path, _ = recovery_db
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "INSERT INTO scheduler_runtime_instances(instance_id,started_at,last_heartbeat_at) VALUES('active',?,?)",
+        (OLD, NOW.isoformat()),
+    )
+    conn.execute(
+        "UPDATE match_stat_windows SET lease_owner='active:worker',lease_expires_at=?",
+        (OLD,),
+    )
+    conn.commit()
+    conn.close()
+    add_running_attempt(path, instance="active", started=OLD)
+    report = run(recovery_db)
+    assert report.registry_rows_repaired == report.scrape_runs_repaired == 1
+    assert fetch(path, "SELECT status FROM scheduler_job_registry")[0][0] == "interrupted"
+    assert fetch(path, "SELECT lease_token FROM match_stat_windows")[0][0] is None
 
 
 @pytest.mark.parametrize(
@@ -531,10 +553,26 @@ def test_planner_stops_at_horizon_and_recovery_never_reopens_terminal(recovery_d
 def test_attempt_savepoint_isolates_one_mutation_failure(recovery_db):
     path, _ = recovery_db
     add_running_attempt(path, attempt="bad", job="bad", run_id="bad-run", generation=1)
-    add_running_attempt(
-        path, attempt="good", job="good", run_id="good-run", generation=2
-    )
     conn = sqlite3.connect(path)
+    conn.execute("""INSERT INTO matches(match_id,match_provider_id,round_id,home_team,away_team,status,start_time_utc)
+                    VALUES(2,'CD_M2',1,'C','D','CONCLUDED',?)""", (OLD,))
+    conn.execute("""INSERT INTO match_stat_windows(window_id,match_id,match_provider_id,
+        policy_version,lifecycle,collection_phase,status,next_due_at,cadence_profile,
+        finality_state,lease_owner,lease_token,lease_generation,lease_claimed_at,
+        lease_expires_at,reason_code,planner_version,updated_at)
+        VALUES('mw_cfs_stats_2_v1',2,'CD_M2','v1','CONCLUDED','final_confirmation','leased',?,
+        'final','unconfirmed','old-worker','token-2',1,?,?,'live','v1',?)""",
+        (OLD, OLD, OLD, OLD))
+    conn.execute("""INSERT INTO scheduler_job_registry(job_id,job_type,match_id,status,
+        last_attempt_time,attempt_count,window_id,attempt_id,scrape_run_id,
+        lease_generation,lease_token,created_at,updated_at)
+        VALUES('good','cfs_player_stats_poll',2,'running',?,1,'mw_cfs_stats_2_v1',
+        'good','good-run',1,'token-2',?,?)""", (OLD, OLD, OLD))
+    conn.execute("""INSERT INTO scrape_runs(run_id,scrape_type,target_type,target_identifier,
+        trigger_source,status,started_at,correlation_id,window_id,attempt_id,
+        scheduler_job_id,lease_generation,lease_token)
+        VALUES('good-run','cfs_player_stats_poll','match','2','scheduler','running',?,
+        'good','mw_cfs_stats_2_v1','good','good',1,'token-2')""", (OLD,))
     conn.execute("""CREATE TRIGGER fail_bad BEFORE UPDATE ON scheduler_job_registry
                     WHEN OLD.job_id='bad' BEGIN SELECT RAISE(FAIL,'token=secret'); END""")
     conn.commit()
@@ -545,6 +583,10 @@ def test_attempt_savepoint_isolates_one_mutation_failure(recovery_db):
         for r in fetch(path, "SELECT job_id,status FROM scheduler_job_registry")
     }
     assert states == {"bad": "running", "good": "interrupted"}
+    leases = {r[0]: r[1] for r in fetch(path, "SELECT window_id,lease_token FROM match_stat_windows")}
+    assert leases["mw_cfs_stats_1_v1"] == "token-1"
+    assert leases["mw_cfs_stats_2_v1"] is None
+    assert fetch(path, "SELECT status FROM scrape_runs WHERE run_id='bad-run'")[0][0] == "running"
     assert (
         report.per_item_failures
         and "secret" not in report.per_item_failures[0]["error"]
@@ -558,6 +600,7 @@ def test_attempt_savepoint_isolates_one_mutation_failure(recovery_db):
         {"registry_running_staleness": timedelta(minutes=5)},
         {"scrape_run_running_staleness": timedelta(minutes=5)},
         {"shutdown_grace_period": timedelta(seconds=15)},
+        {"startup_candidate_limit": 0},
     ],
 )
 def test_unsafe_threshold_relationships_are_rejected(replacement):
@@ -576,3 +619,36 @@ def test_unsafe_threshold_relationships_are_rejected(replacement):
 def test_maximum_attempt_must_cover_lease_duration():
     with pytest.raises(ValueError, match="lease"):
         settings().validate(lease_duration=timedelta(hours=1))
+
+
+def test_startup_reconciliation_bounds_uncorrelated_candidates(recovery_db):
+    path, lane = recovery_db
+    conn = sqlite3.connect(path)
+    for index in range(3):
+        conn.execute(
+            """INSERT INTO scheduler_job_registry(
+            job_id,job_type,status,last_attempt_time,created_at,updated_at)
+            VALUES(?, 'legacy', 'running', ?, ?, ?)""",
+            (f"legacy-{index}", OLD, OLD, OLD),
+        )
+    conn.commit()
+    conn.close()
+    bounded = RecoverySettings(
+        maximum_attempt_duration=timedelta(minutes=30),
+        registry_running_staleness=timedelta(minutes=30),
+        scrape_run_running_staleness=timedelta(minutes=30),
+        shutdown_grace_period=timedelta(minutes=2),
+        heartbeat_interval=timedelta(seconds=15),
+        startup_candidate_limit=1,
+    )
+    report = reconcile_interrupted_attempts(
+        trigger_source="startup",
+        now=NOW,
+        settings=bounded,
+        window_settings=MatchWindowSettings(policy_version="v1"),
+        lane=lane,
+        run_id="bounded-startup",
+    )
+    assert report.compatibility_records == 1
+    assert report.inspected_attempts == 1
+    assert len(fetch(path, "SELECT job_id FROM scheduler_job_registry WHERE status='running'")) == 3

@@ -56,6 +56,7 @@ class RecoverySettings:
     scrape_run_running_staleness: timedelta = timedelta(minutes=30)
     shutdown_grace_period: timedelta = timedelta(minutes=2)
     heartbeat_interval: timedelta = timedelta(seconds=15)
+    startup_candidate_limit: int = 500
 
     @classmethod
     def from_config(cls) -> "RecoverySettings":
@@ -65,6 +66,7 @@ class RecoverySettings:
             timedelta(seconds=config.AFL_RECOVERY_SCRAPE_RUN_STALE_SECONDS),
             timedelta(seconds=config.AFL_RECOVERY_SHUTDOWN_GRACE_SECONDS),
             timedelta(seconds=config.AFL_SCHEDULER_HEARTBEAT_SECONDS),
+            config.AFL_RECOVERY_STARTUP_CANDIDATE_LIMIT,
         )
         value.validate()
         return value
@@ -96,6 +98,8 @@ class RecoverySettings:
             raise ValueError(
                 "maximum attempt duration must not be shorter than the lease"
             )
+        if not 1 <= self.startup_candidate_limit <= 10_000:
+            raise ValueError("startup recovery candidate limit must be between 1 and 10000")
 
 
 @dataclass(frozen=True)
@@ -304,6 +308,7 @@ def _reconcile(
     settings: RecoverySettings,
     scope: RecoveryScope,
     window_settings: MatchWindowSettings,
+    startup_candidate_limit: int | None,
 ) -> None:
     """Classify attempts once, repair histories, then plan each affected window once."""
     _integrity(conn)
@@ -316,6 +321,14 @@ def _reconcile(
     if scope.window_id:
         window_sql += " AND w.window_id=?"
         params.append(scope.window_id)
+    if startup_candidate_limit is not None:
+        window_sql += """ AND (w.status='leased'
+            OR EXISTS (SELECT 1 FROM scheduler_job_registry cr
+                       WHERE cr.window_id=w.window_id AND cr.status='running')
+            OR EXISTS (SELECT 1 FROM scrape_runs cs
+                       WHERE cs.window_id=w.window_id AND cs.status='running'))
+            ORDER BY w.updated_at,w.window_id LIMIT ?"""
+        params.append(startup_candidate_limit)
     windows = {
         row["window_id"]: dict(row)
         for row in conn.execute(window_sql, params).fetchall()
@@ -332,12 +345,15 @@ def _reconcile(
         windows = {key: value for key, value in windows.items() if key in allowed}
 
     report.inspected_windows = len(windows)
-    registry = conn.execute(
-        "SELECT * FROM scheduler_job_registry WHERE status='running'"
-    ).fetchall()
-    scrapes = conn.execute(
-        "SELECT * FROM scrape_runs WHERE status='running'"
-    ).fetchall()
+    registry_sql = "SELECT * FROM scheduler_job_registry WHERE status='running' ORDER BY COALESCE(last_attempt_time,created_at),job_id"
+    scrape_sql = "SELECT * FROM scrape_runs WHERE status='running' ORDER BY started_at,run_id"
+    query_params: tuple[int, ...] = ()
+    if startup_candidate_limit is not None:
+        registry_sql += " LIMIT ?"
+        scrape_sql += " LIMIT ?"
+        query_params = (startup_candidate_limit,)
+    registry = conn.execute(registry_sql, query_params).fetchall()
+    scrapes = conn.execute(scrape_sql, query_params).fetchall()
     groups: dict[tuple[str, str], dict[str, Any]] = {}
 
     def in_time_scope(value: str | None) -> bool:
@@ -480,7 +496,16 @@ def _reconcile(
             )
             affected.setdefault(window_id, {})["active"] = True
             continue
-        if runtime_state is RuntimeOwnership.ACTIVE and (owns_lease or owner_matches):
+        attempt_started = _dt(started_at)
+        within_maximum = bool(
+            attempt_started
+            and attempt_started >= now - settings.maximum_attempt_duration
+        )
+        if (
+            runtime_state is RuntimeOwnership.ACTIVE
+            and (owns_lease or owner_matches)
+            and within_maximum
+        ):
             report.decisions.append(
                 {
                     "window_id": window_id,
@@ -617,6 +642,7 @@ def _reconcile(
         except Exception as exc:
             conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
             conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+            affected.setdefault(window_id, {})["blocked"] = True
             report.per_item_failures.append(
                 {"attempt_id": attempt_id, "error": sanitize_error_summary(exc)}
             )
@@ -625,7 +651,7 @@ def _reconcile(
     planned_match_ids: set[int] = set()
     for window_id, action in sorted(affected.items()):
         window = windows[window_id]
-        if action.get("active") or window["status"] in {
+        if action.get("active") or action.get("blocked") or window["status"] in {
             "complete",
             "cancelled",
             "not_applicable",
@@ -739,6 +765,7 @@ def reconcile_interrupted_attempts(
                 settings.shutdown_grace_period.total_seconds()
             ),
             "heartbeat_seconds": int(settings.heartbeat_interval.total_seconds()),
+            "startup_candidate_limit": settings.startup_candidate_limit,
         },
         {
             "canonical_match_id": scope.canonical_match_id,
@@ -758,6 +785,9 @@ def reconcile_interrupted_attempts(
             settings=settings,
             scope=scope,
             window_settings=window_settings,
+            startup_candidate_limit=(
+                settings.startup_candidate_limit if trigger_source == "startup" else None
+            ),
         ),
     )
     report.duration_ms = max(0, int((time.monotonic() - started) * 1000))
