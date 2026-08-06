@@ -230,11 +230,19 @@ class ReconcileResult:
     failures: list[dict[str, Any]] | None = None
 
 
-def reconcile(conn: sqlite3.Connection, *, now: datetime | None = None, settings: MatchWindowSettings | None = None, correlation_id: str = "startup_reconciliation") -> ReconcileResult:
+def reconcile(conn: sqlite3.Connection, *, now: datetime | None = None, settings: MatchWindowSettings | None = None, correlation_id: str = "startup_reconciliation", match_ids: set[int] | None = None) -> ReconcileResult:
     settings = settings or MatchWindowSettings.from_config()
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     result = ReconcileResult(correlation_id, failures=[])
-    rows = conn.execute("SELECT m.match_id, m.match_provider_id, m.season_id, r.competition_id AS competition_id, m.status, m.start_time_utc, NULL AS lifecycle_observed_at FROM matches m LEFT JOIN rounds r ON r.round_id=m.round_id ORDER BY m.match_id").fetchall()
+    sql = "SELECT m.match_id, m.match_provider_id, m.season_id, r.competition_id AS competition_id, m.status, m.start_time_utc, NULL AS lifecycle_observed_at FROM matches m LEFT JOIN rounds r ON r.round_id=m.round_id"
+    params: tuple[Any, ...] = ()
+    if match_ids is not None:
+        if not match_ids:
+            return result
+        placeholders = ",".join("?" for _ in match_ids)
+        sql += f" WHERE m.match_id IN ({placeholders})"
+        params = tuple(sorted(match_ids))
+    rows = conn.execute(sql + " ORDER BY m.match_id", params).fetchall()
     for row in rows:
         try:
             finality, auth = _finality(conn, row["match_provider_id"])

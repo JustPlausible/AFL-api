@@ -7,6 +7,16 @@ import signal
 import threading
 from contextlib import asynccontextmanager
 
+# A container may receive SIGTERM while this module is still importing heavy
+# scheduler dependencies.  Record it immediately so direct module execution can
+# exit cleanly instead of dying with the platform's default signal status.
+_early_stop_requested = False
+if __name__ == "__main__":
+    def _record_early_stop(signum, frame):  # pragma: no cover - timing dependent
+        global _early_stop_requested
+        _early_stop_requested = True
+    signal.signal(signal.SIGTERM, _record_early_stop)
+
 from apscheduler.events import (
     EVENT_JOB_ERROR,
     EVENT_JOB_EXECUTED,
@@ -189,6 +199,7 @@ def _install_shutdown_handlers() -> threading.Event:
         log.info("Received signal %s; requesting scheduler shutdown.", signum)
         stop_event.set()
         shutdown_scheduler(wait=True)
+        raise KeyboardInterrupt
 
     signal.signal(signal.SIGTERM, request_shutdown)
     signal.signal(signal.SIGINT, request_shutdown)
@@ -198,6 +209,8 @@ def _install_shutdown_handlers() -> threading.Event:
 def main() -> int:
     """Run `python -m scheduler.start` as a blocking standalone scheduler."""
     _install_shutdown_handlers()
+    if _early_stop_requested:
+        return 0
     try:
         start_scheduler_blocking()
     except (KeyboardInterrupt, SystemExit):

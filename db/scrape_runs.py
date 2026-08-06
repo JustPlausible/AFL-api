@@ -79,8 +79,9 @@ class ScrapeRun:
     recovery_at: str | None = None
     recovery_run_id: str | None = None
     recovery_reason: str | None = None
-    persistence_evidence: str | None = None
+    attempt_persistence_evidence: str | None = None
     superseded_by_attempt_id: str | None = None
+    match_authoritative_evidence: str | None = None
 
 
 def utc_now() -> str:

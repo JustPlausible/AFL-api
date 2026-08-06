@@ -157,7 +157,8 @@ counts from match-wide rows.
 ```sql
 SELECT run_id, window_id, attempt_id, scheduler_job_id, status,
        response_received_at, persistence_committed_at, rows_read, rows_written,
-       recovery_reason, persistence_evidence, superseded_by_attempt_id
+       recovery_reason, attempt_persistence_evidence,
+       match_authoritative_evidence, superseded_by_attempt_id
 FROM scrape_runs
 WHERE window_id = ?
 ORDER BY started_at;

@@ -5,10 +5,33 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import datetime, timezone
+from enum import Enum
 
 from scheduler.write_lane import write_lane
 
 INSTANCE_ID = f"scheduler-{os.getpid()}-{uuid.uuid4().hex[:12]}"
+
+
+class RuntimeOwnership(str, Enum):
+    ACTIVE = "active"
+    GRACEFULLY_STOPPED = "gracefully_stopped"
+    STALE_UNCLEAN = "stale_unclean"
+    UNKNOWN = "unknown"
+
+
+def runtime_ownership(row, *, now: datetime, heartbeat_timeout) -> RuntimeOwnership:
+    """Classify persisted ownership; age alone never overrides a live heartbeat."""
+    if row is None:
+        return RuntimeOwnership.UNKNOWN
+    stopped = row["stopped_at"]
+    if stopped or row["shutdown_kind"] == "graceful":
+        return RuntimeOwnership.GRACEFULLY_STOPPED
+    heartbeat = datetime.fromisoformat(row["last_heartbeat_at"])
+    if heartbeat.tzinfo is None:
+        heartbeat = heartbeat.replace(tzinfo=timezone.utc)
+    if heartbeat.astimezone(timezone.utc) >= now - heartbeat_timeout:
+        return RuntimeOwnership.ACTIVE
+    return RuntimeOwnership.STALE_UNCLEAN
 
 
 def _now() -> str:

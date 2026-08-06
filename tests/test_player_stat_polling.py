@@ -83,6 +83,7 @@ def test_due_live_window_claimed_collected_persisted_and_rescheduled(db):
     assert row["next_due_at"] == (NOW + timedelta(seconds=60)).isoformat()
     assert row["cadence_profile"] == "live_partial"
     assert lane.max_active == 1
+    assert_no_running_attempts(conn)
 
 def test_live_default_cadence_is_sixty_seconds_and_restart_persists_next_due(db):
     conn,path=db; add_match(conn); reconcile(conn, now=NOW, settings=window_settings()); conn.commit()
@@ -126,6 +127,7 @@ def test_final_complete_closes_and_live_cannot_regress(db):
     payload["homeTeamPlayerStats"]=[{"player":{"playerId":f"CD_H{i}"},"playerStats":{"stats":{"goals":1}}} for i in range(20)]
     payload["awayTeamPlayerStats"]=[{"player":{"playerId":f"CD_A{i}"},"playerStats":{"stats":{"goals":1}}} for i in range(20)]
     PlayerStatPollingWorker(settings=settings(), window_settings=window_settings(), client_pool=Pool(Client(payload)), clock=lambda: NOW, lane=DirectLane(path)).run_once()
+    assert_no_running_attempts(conn)
     assert conn.execute("SELECT status,finality_state FROM match_stat_windows").fetchone()[:] == ("complete","authoritative_complete")
     before=conn.execute("SELECT COUNT(*), MIN(snapshot_authority) FROM cfs_player_stats").fetchone()
     conn.execute("UPDATE match_stat_windows SET status='due', next_due_at=?, lease_token=NULL", (NOW.isoformat(),)); conn.commit()
@@ -179,6 +181,7 @@ def test_pre_match_window_does_not_call_cfs_before_authoritative_live(db):
     assert client.calls == 0
     assert conn.execute("SELECT COUNT(*) FROM cfs_player_stats").fetchone()[0] == 0
     assert conn.execute("SELECT reason_code FROM match_stat_windows").fetchone()[0] == "awaiting_authoritative_live"
+    assert_no_running_attempts(conn)
 
 
 def test_process_client_pool_uses_public_shared_token_boundary_and_closes_all_thread_clients():
@@ -238,6 +241,7 @@ def test_lost_lease_before_persistence_fails_audit_without_window_mutation(db):
     assert conn.execute("SELECT status FROM scrape_runs ORDER BY started_at DESC LIMIT 1").fetchone()[0] == "failed"
     assert conn.execute("SELECT attempt_count, lease_token FROM match_stat_windows").fetchone()[:] == (0, "stolen")
     assert conn.execute("SELECT COUNT(*) FROM cfs_player_stats").fetchone()[0] == 0
+    assert_no_running_attempts(conn)
 
 
 def test_status_reports_operational_state_and_windows(db):
@@ -409,3 +413,81 @@ def test_restart_preserves_due_time_and_failure_backoff_but_not_process_auth_cir
     assert conn.execute("SELECT next_due_at,consecutive_failure_count FROM match_stat_windows").fetchone()[:] == stored[:]
     assert replacement_client.calls == 0
     restarted.close()
+
+
+def assert_no_running_attempts(conn):
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM scheduler_job_registry WHERE status='running'"
+        ).fetchone()[0]
+        == 0
+    )
+    row = conn.execute(
+        "SELECT job_id,attempt_id,scrape_run_id,lease_token,lease_generation FROM scheduler_job_registry ORDER BY created_at DESC LIMIT 1"
+    ).fetchone()
+    audit = conn.execute(
+        "SELECT scheduler_job_id,attempt_id,run_id,lease_token,lease_generation FROM scrape_runs WHERE scrape_type='cfs_player_stats_poll' ORDER BY started_at DESC LIMIT 1"
+    ).fetchone()
+    assert row is not None and audit is not None
+    assert row[:] == (audit[0], audit[1], audit[2], audit[3], audit[4])
+
+
+@pytest.mark.parametrize(
+    "exception", [RuntimeError("unexpected"), ValueError("invalid response")]
+)
+def test_collection_failures_terminalise_the_explicit_registry_identity(db, exception):
+    conn, path = db
+    add_match(conn)
+    reconcile(conn, now=NOW, settings=window_settings())
+    conn.commit()
+
+    class RaisingCollector:
+        def __init__(self, client, *, clock):
+            pass
+
+        def collect(self, *args, **kwargs):
+            raise exception
+
+    PlayerStatPollingWorker(
+        settings=settings(),
+        window_settings=window_settings(),
+        client_pool=Pool(Client()),
+        collector_factory=RaisingCollector,
+        clock=lambda: NOW,
+        lane=DirectLane(path),
+    ).run_once()
+    assert_no_running_attempts(conn)
+    assert conn.execute(
+        "SELECT status,attempt_persistence_evidence FROM scheduler_job_registry"
+    ).fetchone()[:] == ("failed", "uncommitted")
+
+
+def test_atomic_finalisation_rollback_leaves_no_domain_or_completion_writes(db):
+    conn, path = db
+    add_match(conn)
+    reconcile(conn, now=NOW, settings=window_settings())
+    conn.commit()
+
+    def crash(point):
+        if point == "after_domain_write":
+            raise RuntimeError("injected finalisation crash")
+
+    PlayerStatPollingWorker(
+        settings=settings(),
+        window_settings=window_settings(),
+        client_pool=Pool(Client(live_payload())),
+        finalization_hook=crash,
+        clock=lambda: NOW,
+        lane=DirectLane(path),
+    ).run_once()
+    assert conn.execute("SELECT COUNT(*) FROM cfs_player_stats").fetchone()[0] == 0
+    assert conn.execute(
+        "SELECT status,persistence_committed_at FROM scrape_runs"
+    ).fetchone()[:] == ("failed", None)
+    assert conn.execute(
+        "SELECT status,attempt_persistence_evidence FROM scheduler_job_registry"
+    ).fetchone()[:] == ("failed", "uncommitted")
+    assert (
+        conn.execute("SELECT finality_state FROM match_stat_windows").fetchone()[0]
+        == "unconfirmed"
+    )

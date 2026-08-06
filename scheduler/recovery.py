@@ -21,6 +21,11 @@ from afl_json.match_status import normalise_match_status
 from afl_json.season_report import authoritative_stats_finality_for_match
 from db.migration_runner import migrate_database
 from db.scrape_runs import sanitize_error_summary
+from scheduler.match_windows import (
+    MatchWindowSettings,
+    reconcile as reconcile_match_windows,
+)
+from scheduler.runtime import RuntimeOwnership, runtime_ownership
 from scheduler.write_lane import write_lane
 
 
@@ -29,7 +34,6 @@ class RecoveryReason(str, Enum):
     REGISTRY_STARTED_BEFORE_SCRAPE_RUN = "registry_started_before_scrape_run"
     SCRAPE_STARTED_NO_COMPLETED_REQUEST = "scrape_started_no_completed_request"
     RESPONSE_RECEIVED_PERSISTENCE_UNPROVEN = "response_received_persistence_unproven"
-    PERSISTENCE_ROLLED_BACK = "persistence_rolled_back"
     INTERRUPTED_AFTER_PERSISTENCE_COMMIT = "interrupted_after_persistence_commit"
     INTERRUPTED_DURING_AUDIT_FINALISATION = "interrupted_during_audit_finalisation"
     INTERRUPTED_DURING_REGISTRY_FINALISATION = (
@@ -51,6 +55,7 @@ class RecoverySettings:
     registry_running_staleness: timedelta = timedelta(minutes=30)
     scrape_run_running_staleness: timedelta = timedelta(minutes=30)
     shutdown_grace_period: timedelta = timedelta(minutes=2)
+    heartbeat_interval: timedelta = timedelta(seconds=15)
 
     @classmethod
     def from_config(cls) -> "RecoverySettings":
@@ -59,15 +64,38 @@ class RecoverySettings:
             timedelta(seconds=config.AFL_RECOVERY_REGISTRY_STALE_SECONDS),
             timedelta(seconds=config.AFL_RECOVERY_SCRAPE_RUN_STALE_SECONDS),
             timedelta(seconds=config.AFL_RECOVERY_SHUTDOWN_GRACE_SECONDS),
+            timedelta(seconds=config.AFL_SCHEDULER_HEARTBEAT_SECONDS),
         )
-        if min(
-            value.maximum_attempt_duration,
-            value.registry_running_staleness,
-            value.scrape_run_running_staleness,
-            value.shutdown_grace_period,
-        ) < timedelta(0):
-            raise ValueError("recovery thresholds must be non-negative")
+        value.validate()
         return value
+
+    def validate(self, *, lease_duration: timedelta | None = None) -> None:
+        if min(
+            self.maximum_attempt_duration,
+            self.registry_running_staleness,
+            self.scrape_run_running_staleness,
+            self.shutdown_grace_period,
+            self.heartbeat_interval,
+        ) < timedelta(seconds=15):
+            raise ValueError("recovery thresholds must be at least 15 seconds")
+        if self.maximum_attempt_duration < timedelta(minutes=1):
+            raise ValueError("maximum attempt duration must be at least 60 seconds")
+        if self.registry_running_staleness < self.maximum_attempt_duration:
+            raise ValueError(
+                "registry staleness must not precede maximum attempt duration"
+            )
+        if self.scrape_run_running_staleness < self.maximum_attempt_duration:
+            raise ValueError(
+                "scrape-run staleness must not precede maximum attempt duration"
+            )
+        if self.shutdown_grace_period < self.heartbeat_interval * 2:
+            raise ValueError(
+                "shutdown grace must cover at least two heartbeat intervals"
+            )
+        if lease_duration and self.maximum_attempt_duration < lease_duration:
+            raise ValueError(
+                "maximum attempt duration must not be shorter than the lease"
+            )
 
 
 @dataclass(frozen=True)
@@ -96,6 +124,12 @@ class ReconciliationReport:
     windows_replanned: int = 0
     attempts_superseded_by_later_success: int = 0
     unresolved_cases: int = 0
+    compatibility_records: int = 0
+    would_expire_leases: int = 0
+    would_repair_registry_rows: int = 0
+    would_repair_scrape_runs: int = 0
+    would_replan_windows: int = 0
+    would_complete_windows: int = 0
     per_item_failures: list[dict[str, str]] = field(default_factory=list)
     decisions: list[dict[str, Any]] = field(default_factory=list)
     duration_ms: int = 0
@@ -139,34 +173,92 @@ def _scope_sql(scope: RecoveryScope, alias: str = "w") -> tuple[str, list[Any]]:
     return (" AND " + " AND ".join(terms) if terms else "", values)
 
 
+def _runtime_state(
+    conn: sqlite3.Connection,
+    instance_id: str | None,
+    *,
+    now: datetime,
+    settings: RecoverySettings,
+) -> RuntimeOwnership:
+    if not instance_id:
+        return RuntimeOwnership.UNKNOWN
+    row = conn.execute(
+        "SELECT * FROM scheduler_runtime_instances WHERE instance_id=?", (instance_id,)
+    ).fetchone()
+    return runtime_ownership(
+        row, now=now, heartbeat_timeout=settings.shutdown_grace_period
+    )
+
+
+def _match_evidence(conn: sqlite3.Connection, window: dict[str, Any]) -> str:
+    finality = authoritative_stats_finality_for_match(
+        conn, window.get("match_provider_id")
+    )
+    lifecycle = normalise_match_status(window.get("current_match_lifecycle"))
+    if lifecycle == "CONCLUDED" and finality.has_satisfactory_concluded_coverage:
+        return "authoritative_final"
+    if finality.has_authoritative_snapshot:
+        return "partial_live"
+    return "absent"
+
+
+def _later_success(
+    conn: sqlite3.Connection, *, window_id: str, attempt: dict[str, Any]
+) -> str | None:
+    """Return only a provably later success in the same polling window."""
+    generation = attempt.get("lease_generation")
+    started = _dt(attempt.get("started_at"))
+    rows = conn.execute(
+        """SELECT attempt_id,lease_generation,last_success_time,created_at,job_id
+        FROM scheduler_job_registry WHERE window_id=? AND status='succeeded'
+        AND attempt_id IS NOT NULL ORDER BY lease_generation DESC,
+        last_success_time DESC,created_at DESC,job_id DESC""",
+        (window_id,),
+    ).fetchall()
+    eligible = []
+    for row in rows:
+        if row["attempt_id"] == attempt.get("attempt_id"):
+            continue
+        later_generation = (
+            generation is not None
+            and row["lease_generation"] is not None
+            and int(row["lease_generation"]) > int(generation)
+        )
+        success_time = _dt(row["last_success_time"] or row["created_at"])
+        later_time = (
+            started is not None and success_time is not None and success_time > started
+        )
+        if later_generation or later_time:
+            eligible.append(row)
+    return eligible[0]["attempt_id"] if eligible else None
+
+
 def _reason(
+    *,
     has_registry: bool,
     has_scrape: bool,
-    scrape_running: bool,
     response_received: bool,
-    committed: bool,
-    final: bool,
+    attempt_evidence: str,
+    match_evidence: str,
     superseded: str | None,
-    graceful: bool,
+    runtime_state: RuntimeOwnership,
 ) -> RecoveryReason:
     if superseded:
         return RecoveryReason.LATER_ATTEMPT_SUPERSEDED
-    if final:
+    if match_evidence == "authoritative_final":
         return RecoveryReason.FINAL_AUTHORITATIVE_DATA_COMMITTED
-    if committed:
-        if scrape_running:
-            return RecoveryReason.INTERRUPTED_DURING_AUDIT_FINALISATION
-        if has_registry:
-            return RecoveryReason.INTERRUPTED_DURING_REGISTRY_FINALISATION
-        return RecoveryReason.INTERRUPTED_DURING_WINDOW_UPDATE
+    if attempt_evidence == "committed":
+        return RecoveryReason.INTERRUPTED_AFTER_PERSISTENCE_COMMIT
+    if runtime_state is RuntimeOwnership.GRACEFULLY_STOPPED:
+        return RecoveryReason.GRACEFUL_SHUTDOWN
+    if runtime_state is RuntimeOwnership.STALE_UNCLEAN:
+        return RecoveryReason.UNCLEAN_PROCESS
     if has_registry and not has_scrape:
         return RecoveryReason.REGISTRY_STARTED_BEFORE_SCRAPE_RUN
     if has_scrape and response_received:
         return RecoveryReason.RESPONSE_RECEIVED_PERSISTENCE_UNPROVEN
     if has_scrape:
         return RecoveryReason.SCRAPE_STARTED_NO_COMPLETED_REQUEST
-    if graceful:
-        return RecoveryReason.GRACEFUL_SHUTDOWN
     return RecoveryReason.LEASED_WORKER_NOT_STARTED
 
 
@@ -187,6 +279,23 @@ def _integrity(conn: sqlite3.Connection) -> None:
         raise RuntimeError("recovery migration readiness check failed")
 
 
+def _record_compatibility(
+    report: ReconciliationReport, *, kind: str, identity: str, reason: str
+) -> None:
+    report.compatibility_records += 1
+    report.unresolved_cases += 1
+    report.decisions.append(
+        {
+            "record_type": kind,
+            "identity": identity,
+            "reason": reason,
+            "attempt_persistence_evidence": "unknown",
+            "match_authoritative_evidence": "absent",
+            "action": "report_only",
+        }
+    )
+
+
 def _reconcile(
     conn: sqlite3.Connection,
     report: ReconciliationReport,
@@ -194,178 +303,299 @@ def _reconcile(
     now: datetime,
     settings: RecoverySettings,
     scope: RecoveryScope,
+    window_settings: MatchWindowSettings,
 ) -> None:
+    """Classify attempts once, repair histories, then plan each affected window once."""
     _integrity(conn)
-    suffix, values = _scope_sql(scope)
-    rows = conn.execute(
-        """SELECT w.*, r.job_id registry_job_id,r.status registry_status,
-        r.last_attempt_time registry_started,r.attempt_id registry_attempt_id,
-        r.scrape_run_id registry_scrape_run_id,r.scheduler_instance_id registry_instance,
-        s.run_id scrape_id,s.status scrape_status,s.started_at scrape_started,
-        s.attempt_id scrape_attempt_id,s.response_received_at,s.persistence_committed_at,
-        s.rows_read,s.rows_written,s.scheduler_instance_id scrape_instance,
-        m.status current_match_lifecycle
-        FROM match_stat_windows w
-        JOIN matches m ON m.match_id=w.match_id
-        LEFT JOIN scheduler_job_registry r ON r.window_id=w.window_id AND r.status='running'
-        LEFT JOIN scrape_runs s ON s.window_id=w.window_id AND
-          ((r.attempt_id IS NOT NULL AND s.attempt_id=r.attempt_id) OR
-           (r.attempt_id IS NULL AND s.status='running'))
-        WHERE (w.status='leased' OR r.job_id IS NOT NULL OR s.run_id IS NOT NULL)"""
-        + suffix
-        + " ORDER BY w.window_id",
-        values,
+    window_sql = """SELECT w.*,m.status current_match_lifecycle FROM match_stat_windows w
+                    LEFT JOIN matches m ON m.match_id=w.match_id WHERE 1=1"""
+    params: list[Any] = []
+    if scope.canonical_match_id is not None:
+        window_sql += " AND w.match_id=?"
+        params.append(scope.canonical_match_id)
+    if scope.window_id:
+        window_sql += " AND w.window_id=?"
+        params.append(scope.window_id)
+    windows = {
+        row["window_id"]: dict(row)
+        for row in conn.execute(window_sql, params).fetchall()
+    }
+
+    # Attempt-scoped operation discovers its window without broadening mutation scope.
+    if scope.attempt_id:
+        ids = conn.execute(
+            """SELECT window_id FROM scheduler_job_registry WHERE attempt_id=? OR job_id=?
+            UNION SELECT window_id FROM scrape_runs WHERE attempt_id=? OR correlation_id=?""",
+            (scope.attempt_id, scope.attempt_id, scope.attempt_id, scope.attempt_id),
+        ).fetchall()
+        allowed = {row[0] for row in ids if row[0]}
+        windows = {key: value for key, value in windows.items() if key in allowed}
+
+    report.inspected_windows = len(windows)
+    registry = conn.execute(
+        "SELECT * FROM scheduler_job_registry WHERE status='running'"
     ).fetchall()
-    seen_windows: set[str] = set()
-    for combined in rows:
-        try:
-            row = dict(combined)
-            wid = row["window_id"]
-            seen_windows.add(wid)
-            lease_expiry = _dt(row["lease_expires_at"])
-            valid_lease = (
-                row["status"] == "leased"
-                and lease_expiry is not None
-                and lease_expiry > now
-            )
-            registry_age = (
-                max(
-                    settings.maximum_attempt_duration,
-                    settings.registry_running_staleness,
-                )
-                + settings.shutdown_grace_period
-            )
-            scrape_age = (
-                max(
-                    settings.maximum_attempt_duration,
-                    settings.scrape_run_running_staleness,
-                )
-                + settings.shutdown_grace_period
-            )
-            registry_stale = bool(
-                row["registry_job_id"]
-                and _dt(row["registry_started"])
-                and _dt(row["registry_started"]) <= now - registry_age
-            )
-            scrape_stale = bool(
-                row["scrape_id"]
-                and row["scrape_status"] == "running"
-                and _dt(row["scrape_started"])
-                and _dt(row["scrape_started"]) <= now - scrape_age
-            )
-            expired = row["status"] == "leased" and (
-                lease_expiry is None or lease_expiry <= now
-            )
-            if valid_lease or not (expired or registry_stale or scrape_stale):
+    scrapes = conn.execute(
+        "SELECT * FROM scrape_runs WHERE status='running'"
+    ).fetchall()
+    groups: dict[tuple[str, str], dict[str, Any]] = {}
+
+    def in_time_scope(value: str | None) -> bool:
+        return not scope.started_since or (
+            _dt(value) is not None and _dt(value) >= scope.started_since
+        )
+
+    for raw in registry:
+        row = dict(raw)
+        if scope.attempt_id and scope.attempt_id not in {
+            row.get("attempt_id"),
+            row.get("job_id"),
+        }:
+            continue
+        if not in_time_scope(row.get("last_attempt_time") or row.get("created_at")):
+            continue
+        if (
+            not row.get("window_id")
+            or row["window_id"] not in windows
+            or not row.get("attempt_id")
+        ):
+            if scope.window_id and row.get("window_id") != scope.window_id:
                 continue
-            report.inspected_attempts += int(
-                bool(row["registry_job_id"] or row["scrape_id"])
+            # Legacy one-shots and orphan rows are never replayed or guessed.
+            if (
+                scope.canonical_match_id is None
+                or row.get("match_id") == scope.canonical_match_id
+            ):
+                _record_compatibility(
+                    report,
+                    kind="registry",
+                    identity=row["job_id"],
+                    reason="uncorrelated_compatibility_record",
+                )
+            continue
+        group = groups.setdefault(
+            (row["window_id"], row["attempt_id"]), {"registry": [], "scrapes": []}
+        )
+        group["registry"].append(row)
+
+    for raw in scrapes:
+        row = dict(raw)
+        if scope.attempt_id and scope.attempt_id not in {
+            row.get("attempt_id"),
+            row.get("correlation_id"),
+        }:
+            continue
+        if not in_time_scope(row.get("started_at")):
+            continue
+        if (
+            not row.get("window_id")
+            or row["window_id"] not in windows
+            or not row.get("attempt_id")
+        ):
+            if scope.window_id and row.get("window_id") != scope.window_id:
+                continue
+            _record_compatibility(
+                report,
+                kind="scrape_run",
+                identity=row["run_id"],
+                reason="uncorrelated_compatibility_record",
             )
-            if expired:
-                report.stale_leases_found += 1
-            attempt = (
-                row["registry_attempt_id"]
-                or row["scrape_attempt_id"]
-                or row["last_attempt_id"]
+            continue
+        group = groups.setdefault(
+            (row["window_id"], row["attempt_id"]), {"registry": [], "scrapes": []}
+        )
+        group["scrapes"].append(row)
+
+    # A lease without an audit/control row is still a single synthetic attempt.
+    for window in windows.values():
+        if window["status"] == "leased" and not any(
+            key[0] == window["window_id"] for key in groups
+        ):
+            attempt_id = (
+                window.get("last_attempt_id") or f"lease:{window['lease_generation']}"
             )
-            later = conn.execute(
-                """SELECT attempt_id FROM scheduler_job_registry
-                WHERE window_id=? AND status='succeeded' AND attempt_id IS NOT NULL
-                AND (? IS NULL OR attempt_id<>?) ORDER BY last_success_time DESC LIMIT 1""",
-                (wid, attempt, attempt),
-            ).fetchone()
-            superseded = later[0] if later else None
-            finality = authoritative_stats_finality_for_match(
-                conn, row["match_provider_id"]
-            )
-            concluded = (
-                normalise_match_status(row["current_match_lifecycle"]) == "CONCLUDED"
-            )
-            final = concluded and finality.has_satisfactory_concluded_coverage
-            committed = bool(row["persistence_committed_at"])
-            instance = row["registry_instance"] or row["scrape_instance"]
-            runtime = (
-                conn.execute(
-                    "SELECT shutdown_kind FROM scheduler_runtime_instances WHERE instance_id=?",
-                    (instance,),
-                ).fetchone()
-                if instance
-                else None
-            )
-            graceful = bool(runtime and runtime[0] == "graceful")
-            reason = _reason(
-                bool(row["registry_job_id"]),
-                bool(row["scrape_id"]),
-                row["scrape_status"] == "running",
-                bool(row["response_received_at"]),
-                committed,
-                final,
-                superseded,
-                graceful,
-            )
-            evidence = "committed" if committed else "unknown"
-            replannable = (
-                row["status"]
-                not in {"complete", "cancelled", "not_applicable", "failed_terminal"}
-                and not final
-            )
-            decision = {
-                "window_id": wid,
-                "attempt_id": attempt,
-                "reason": reason.value,
-                "persistence_evidence": evidence,
-                "superseded_by_attempt_id": superseded,
-                "action": "complete"
-                if final
-                else "replan"
-                if replannable
-                else "terminal_preserved",
+            groups[(window["window_id"], attempt_id)] = {
+                "registry": [],
+                "scrapes": [],
+                "lease_only": True,
             }
-            report.decisions.append(decision)
-            if superseded:
-                report.attempts_superseded_by_later_success += 1
-            if not committed and not superseded:
-                report.unresolved_cases += 1
-            if report.dry_run:
-                if expired:
-                    report.stale_leases_expired += 1
-                if row["registry_job_id"]:
-                    report.registry_rows_repaired += 1
-                if row["scrape_id"] and row["scrape_status"] == "running":
-                    report.scrape_runs_repaired += 1
-                if final:
-                    report.windows_completed_from_existing_data += 1
-                elif replannable:
-                    report.windows_replanned += 1
-                continue
+
+    affected: dict[str, dict[str, Any]] = {}
+    for (window_id, attempt_id), group in sorted(groups.items()):
+        window = windows[window_id]
+        registries, audits = group["registry"], group["scrapes"]
+        started_values = [
+            r.get("last_attempt_time") or r.get("created_at") for r in registries
+        ]
+        started_values += [s.get("started_at") for s in audits]
+        started_at = min(
+            (value for value in started_values if value),
+            default=window.get("lease_claimed_at"),
+        )
+        generation_values = [r.get("lease_generation") for r in registries] + [
+            s.get("lease_generation") for s in audits
+        ]
+        generation = max(
+            (int(v) for v in generation_values if v is not None),
+            default=int(window.get("lease_generation") or 0),
+        )
+        instance = next(
+            (
+                r.get("scheduler_instance_id")
+                for r in registries
+                if r.get("scheduler_instance_id")
+            ),
+            None,
+        )
+        instance = instance or next(
+            (
+                s.get("scheduler_instance_id")
+                for s in audits
+                if s.get("scheduler_instance_id")
+            ),
+            None,
+        )
+        runtime_state = _runtime_state(conn, instance, now=now, settings=settings)
+        lease_expiry = _dt(window.get("lease_expires_at"))
+        lease_expired = window["status"] == "leased" and (
+            lease_expiry is None or lease_expiry <= now
+        )
+        token_values = {r.get("lease_token") for r in registries} | {
+            s.get("lease_token") for s in audits
+        }
+        owns_lease = bool(
+            window.get("lease_token") and window.get("lease_token") in token_values
+        )
+        owner_matches = bool(
+            instance and str(window.get("lease_owner") or "").startswith(instance)
+        )
+        if window["status"] == "leased" and not lease_expired:
+            report.decisions.append(
+                {
+                    "window_id": window_id,
+                    "attempt_id": attempt_id,
+                    "runtime_ownership": runtime_state.value,
+                    "action": "valid_lease_preserved",
+                }
+            )
+            affected.setdefault(window_id, {})["active"] = True
+            continue
+        if runtime_state is RuntimeOwnership.ACTIVE and (owns_lease or owner_matches):
+            report.decisions.append(
+                {
+                    "window_id": window_id,
+                    "attempt_id": attempt_id,
+                    "runtime_ownership": runtime_state.value,
+                    "action": "active_preserved",
+                }
+            )
+            affected.setdefault(window_id, {})["active"] = True
+            continue
+        registry_stale = any(
+            _dt(r.get("last_attempt_time") or r.get("created_at"))
+            <= now - settings.registry_running_staleness
+            for r in registries
+        )
+        scrape_stale = any(
+            _dt(s.get("started_at")) <= now - settings.scrape_run_running_staleness
+            for s in audits
+        )
+        stopped_recoverable = runtime_state in {
+            RuntimeOwnership.GRACEFULLY_STOPPED,
+            RuntimeOwnership.STALE_UNCLEAN,
+        }
+        if not (lease_expired or registry_stale or scrape_stale or stopped_recoverable):
+            continue
+
+        report.inspected_attempts += 1
+        attempt_evidence = (
+            "committed"
+            if any(
+                s.get("persistence_committed_at")
+                or s.get("attempt_persistence_evidence") == "committed"
+                for s in audits
+            )
+            else "unknown"
+        )
+        match_evidence = _match_evidence(conn, window)
+        attempt = {
+            "attempt_id": attempt_id,
+            "lease_generation": generation,
+            "started_at": started_at,
+        }
+        superseded = _later_success(conn, window_id=window_id, attempt=attempt)
+        reason = _reason(
+            has_registry=bool(registries),
+            has_scrape=bool(audits),
+            response_received=any(s.get("response_received_at") for s in audits),
+            attempt_evidence=attempt_evidence,
+            match_evidence=match_evidence,
+            superseded=superseded,
+            runtime_state=runtime_state,
+        )
+        decision = {
+            "window_id": window_id,
+            "attempt_id": attempt_id,
+            "reason": reason.value,
+            "attempt_persistence_evidence": attempt_evidence,
+            "match_authoritative_evidence": match_evidence,
+            "superseded_by_attempt_id": superseded,
+            "runtime_ownership": runtime_state.value,
+            "action": "repair_attempt",
+        }
+        report.decisions.append(decision)
+        report.would_repair_registry_rows += len(registries)
+        report.would_repair_scrape_runs += len(audits)
+        if superseded:
+            report.attempts_superseded_by_later_success += 1
+        if attempt_evidence == "unknown":
+            report.unresolved_cases += 1
+        affected.setdefault(window_id, {}).update(
+            {
+                "attempt_id": attempt_id,
+                "reason": reason.value,
+                "superseded": superseded,
+                "match_evidence": match_evidence,
+                "lease_expired": lease_expired,
+            }
+        )
+        if report.dry_run:
+            continue
+        savepoint = (
+            "attempt_" + uuid.uuid5(uuid.NAMESPACE_OID, window_id + attempt_id).hex
+        )
+        conn.execute(f"SAVEPOINT {savepoint}")
+        try:
             finished = _iso(now)
-            if row["registry_job_id"]:
-                changed = conn.execute(
-                    """UPDATE scheduler_job_registry SET status='interrupted',
-                    recovery_at=?,recovery_run_id=?,recovery_reason=?,persistence_evidence=?,
+            repaired_registry = 0
+            repaired_scrapes = 0
+            for row in registries:
+                repaired_registry += conn.execute(
+                    """UPDATE scheduler_job_registry
+                    SET status='interrupted',recovery_at=?,recovery_run_id=?,recovery_reason=?,
+                    attempt_persistence_evidence=?,match_authoritative_evidence=?,
                     superseded_by_attempt_id=?,updated_at=? WHERE job_id=? AND status='running'""",
                     (
                         finished,
                         report.reconciliation_run_id,
                         reason.value,
-                        evidence,
+                        attempt_evidence,
+                        match_evidence,
                         superseded,
                         finished,
-                        row["registry_job_id"],
+                        row["job_id"],
                     ),
                 ).rowcount
-                report.registry_rows_repaired += changed
-            if row["scrape_id"] and row["scrape_status"] == "running":
-                started = _dt(row["scrape_started"])
+            for row in audits:
+                began = _dt(row.get("started_at"))
                 duration = (
-                    max(0, int((now - started).total_seconds() * 1000))
-                    if started
-                    else None
+                    max(0, int((now - began).total_seconds() * 1000)) if began else None
                 )
-                changed = conn.execute(
-                    """UPDATE scrape_runs SET status='interrupted',finished_at=?,duration_ms=?,
-                    error_class='InterruptedAttempt',error_summary=?,reason_code=?,recovery_at=?,
-                    recovery_run_id=?,recovery_reason=?,persistence_evidence=?,superseded_by_attempt_id=?
+                repaired_scrapes += conn.execute(
+                    """UPDATE scrape_runs SET status='interrupted',
+                    finished_at=?,duration_ms=?,error_class='InterruptedAttempt',error_summary=?,
+                    reason_code=?,recovery_at=?,recovery_run_id=?,recovery_reason=?,
+                    attempt_persistence_evidence=?,match_authoritative_evidence=?,superseded_by_attempt_id=?
                     WHERE run_id=? AND status='running'""",
                     (
                         finished,
@@ -375,67 +605,100 @@ def _reconcile(
                         finished,
                         report.reconciliation_run_id,
                         reason.value,
-                        evidence,
+                        attempt_evidence,
+                        match_evidence,
                         superseded,
-                        row["scrape_id"],
+                        row["run_id"],
                     ),
                 ).rowcount
-                report.scrape_runs_repaired += changed
-            if final:
-                changed = conn.execute(
-                    """UPDATE match_stat_windows SET status='complete',collection_phase='complete',
-                    next_due_at=NULL,finality_state='authoritative_complete',last_observed_snapshot_authority=2,
-                    lease_owner=NULL,lease_token=NULL,lease_claimed_at=NULL,lease_expires_at=NULL,
-                    reason_code=?,recovery_at=?,recovery_run_id=?,recovery_reason=?,recovered_attempt_id=?,
-                    superseded_attempt_id=?,updated_at=? WHERE window_id=? AND status NOT IN
-                    ('complete','cancelled','not_applicable') AND (lease_token IS ? OR lease_token=?)""",
-                    (
-                        RecoveryReason.FINAL_AUTHORITATIVE_DATA_COMMITTED.value,
-                        finished,
-                        report.reconciliation_run_id,
-                        reason.value,
-                        attempt,
-                        superseded,
-                        finished,
-                        wid,
-                        row["lease_token"],
-                        row["lease_token"],
-                    ),
-                ).rowcount
-                report.windows_completed_from_existing_data += changed
-            elif replannable:
-                changed = conn.execute(
-                    """UPDATE match_stat_windows SET status='backoff',next_due_at=?,
-                    lease_owner=NULL,lease_token=NULL,lease_claimed_at=NULL,lease_expires_at=NULL,
-                    consecutive_failure_count=consecutive_failure_count+1,reason_code=?,recovery_at=?,
-                    recovery_run_id=?,recovery_reason=?,recovered_attempt_id=?,superseded_attempt_id=?,updated_at=?
-                    WHERE window_id=? AND status NOT IN ('complete','cancelled','not_applicable','failed_terminal')
-                    AND (lease_token IS ? OR lease_token=?)""",
-                    (
-                        _iso(now + settings.shutdown_grace_period),
-                        RecoveryReason.RETRY_REPLANNED.value,
-                        finished,
-                        report.reconciliation_run_id,
-                        reason.value,
-                        attempt,
-                        superseded,
-                        finished,
-                        wid,
-                        row["lease_token"],
-                        row["lease_token"],
-                    ),
-                ).rowcount
-                report.windows_replanned += changed
-            if expired:
-                report.stale_leases_expired += 1
+            conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+            report.registry_rows_repaired += repaired_registry
+            report.scrape_runs_repaired += repaired_scrapes
         except Exception as exc:
+            conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+            conn.execute(f"RELEASE SAVEPOINT {savepoint}")
             report.per_item_failures.append(
-                {
-                    "window_id": str(dict(combined).get("window_id", "unknown")),
-                    "error": sanitize_error_summary(exc),
-                }
+                {"attempt_id": attempt_id, "error": sanitize_error_summary(exc)}
             )
-    report.inspected_windows = len(seen_windows)
+
+    # One optimistic lease transition and one planner decision per affected window.
+    planned_match_ids: set[int] = set()
+    for window_id, action in sorted(affected.items()):
+        window = windows[window_id]
+        if action.get("active") or window["status"] in {
+            "complete",
+            "cancelled",
+            "not_applicable",
+            "failed_terminal",
+        }:
+            continue
+        report.would_expire_leases += int(window["status"] == "leased")
+        report.stale_leases_found += int(window["status"] == "leased")
+        if action.get("match_evidence") == "authoritative_final":
+            report.would_complete_windows += 1
+        else:
+            report.would_replan_windows += 1
+        if report.dry_run:
+            continue
+        savepoint = "window_" + uuid.uuid5(uuid.NAMESPACE_OID, window_id).hex
+        conn.execute(f"SAVEPOINT {savepoint}")
+        try:
+            changed = conn.execute(
+                """UPDATE match_stat_windows SET status='due',next_due_at=NULL,
+                lease_owner=NULL,lease_token=NULL,lease_claimed_at=NULL,lease_expires_at=NULL,
+                recovery_at=?,recovery_run_id=?,recovery_reason=?,recovered_attempt_id=?,
+                superseded_attempt_id=?,updated_at=? WHERE window_id=? AND status NOT IN
+                ('complete','cancelled','not_applicable','failed_terminal') AND
+                (lease_token IS ? OR lease_token=?)""",
+                (
+                    _iso(now),
+                    report.reconciliation_run_id,
+                    action.get("reason"),
+                    action.get("attempt_id"),
+                    action.get("superseded"),
+                    _iso(now),
+                    window_id,
+                    window.get("lease_token"),
+                    window.get("lease_token"),
+                ),
+            ).rowcount
+            if changed:
+                report.stale_leases_expired += int(window["status"] == "leased")
+                planned_match_ids.add(int(window["match_id"]))
+            conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+        except Exception as exc:
+            conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+            conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+            report.per_item_failures.append(
+                {"window_id": window_id, "error": sanitize_error_summary(exc)}
+            )
+
+    for match_id in sorted(planned_match_ids):
+        savepoint = f"planner_{match_id}"
+        conn.execute(f"SAVEPOINT {savepoint}")
+        try:
+            reconcile_match_windows(
+                conn,
+                now=now,
+                settings=window_settings,
+                correlation_id=report.reconciliation_run_id,
+                match_ids={match_id},
+            )
+            current = conn.execute(
+                "SELECT status FROM match_stat_windows WHERE match_id=? AND policy_version=?",
+                (match_id, window_settings.policy_version),
+            ).fetchone()
+            if current and current[0] == "complete":
+                report.windows_completed_from_existing_data += 1
+            else:
+                report.windows_replanned += 1
+            conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+        except Exception as exc:
+            conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+            conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+            report.per_item_failures.append(
+                {"match_id": str(match_id), "error": sanitize_error_summary(exc)}
+            )
 
 
 def reconcile_interrupted_attempts(
@@ -444,6 +707,7 @@ def reconcile_interrupted_attempts(
     dry_run: bool = False,
     scope: RecoveryScope | None = None,
     settings: RecoverySettings | None = None,
+    window_settings: MatchWindowSettings | None = None,
     now: datetime | None = None,
     lane=write_lane,
     run_id: str | None = None,
@@ -452,6 +716,8 @@ def reconcile_interrupted_attempts(
         raise ValueError("trigger_source must be startup, manual, or test")
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     settings = settings or RecoverySettings.from_config()
+    window_settings = window_settings or MatchWindowSettings.from_config()
+    settings.validate(lease_duration=window_settings.lease_duration)
     scope = scope or RecoveryScope()
     started = time.monotonic()
     report = ReconciliationReport(
@@ -472,6 +738,7 @@ def reconcile_interrupted_attempts(
             "shutdown_grace_seconds": int(
                 settings.shutdown_grace_period.total_seconds()
             ),
+            "heartbeat_seconds": int(settings.heartbeat_interval.total_seconds()),
         },
         {
             "canonical_match_id": scope.canonical_match_id,
@@ -484,7 +751,14 @@ def reconcile_interrupted_attempts(
     executor(
         "interrupted_attempts.reconcile",
         report.reconciliation_run_id,
-        lambda conn: _reconcile(conn, report, now=now, settings=settings, scope=scope),
+        lambda conn: _reconcile(
+            conn,
+            report,
+            now=now,
+            settings=settings,
+            scope=scope,
+            window_settings=window_settings,
+        ),
     )
     report.duration_ms = max(0, int((time.monotonic() - started) * 1000))
     report.finished_at = _iso(now)

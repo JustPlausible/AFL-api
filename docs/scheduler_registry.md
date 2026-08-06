@@ -137,7 +137,8 @@ Inspect a correlation without relying on error text:
 
 ```sql
 SELECT job_id, window_id, attempt_id, scrape_run_id, lease_generation,
-       status, recovery_reason, persistence_evidence,
+       status, recovery_reason, attempt_persistence_evidence,
+       match_authoritative_evidence,
        superseded_by_attempt_id
 FROM scheduler_job_registry
 WHERE window_id = ?

@@ -583,3 +583,28 @@ clock, state-matrix, idempotency, concurrency, startup-order, dry-run, scope,
 redaction, and integrity tests; and update the workflow/operator documentation.
 A replacement lease is never stolen, historical IDs are retained, and any retry
 is represented by a future claim with a new generation/attempt/job identity.
+
+### Issue #134 refinement validation
+
+Review of the draft implementation confirmed one concern was narrower than it
+first appeared: `claim_due_windows()` did return the same derived job ID assigned
+to the local `job_id` in `run_claim()`. Nevertheless, the claimed dictionary is
+not refreshed after registry insertion and was too implicit a boundary. The
+worker now passes one immutable execution identity (job, attempt, scrape run,
+lease token, and generation) through success, non-final, skip, failure,
+unexpected-error, and lost-lease finalisation. Durable tests assert that the
+created registry identity never remains `running` after any normal terminal
+path.
+
+The persistence concern resolved to the stronger atomic design. CFS rows,
+window consequence, audit completion/commit marker, and registry completion/
+commit marker share one write-lane transaction. Injected rollback coverage
+proves none survive together. Recovery tests now separately cover historical
+unknown evidence, final match evidence, heartbeat ownership, strict later-only
+supersession, multiple attempt rows, compatibility records, dry-run database
+identity, planner-owned horizon/feature decisions, per-attempt savepoint
+isolation, and migration fidelity from a populated migration-0013 database.
+The migration rebuild remains necessary only because SQLite cannot add values to
+existing CHECK constraints; it copies every prior column and row, retains
+original defaults/constraints, captures and recreates explicit indexes,
+triggers, and dependent views, and adds focused correlation indexes.

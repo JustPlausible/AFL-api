@@ -4,11 +4,27 @@ MIGRATION_ID = "0014"
 DESCRIPTION = "Add interrupted polling attempt recovery evidence"
 
 
+def _dependent_objects(conn, table):
+    """Capture every explicit index/trigger and dependent view before rebuild."""
+    rows = conn.execute(
+        """SELECT type,name,sql FROM sqlite_master
+           WHERE sql IS NOT NULL AND ((type IN ('index','trigger') AND tbl_name=?)
+             OR (type='view' AND instr(lower(sql), lower(?))>0))
+           ORDER BY CASE type WHEN 'view' THEN 0 WHEN 'trigger' THEN 1 ELSE 2 END,name""",
+        (table, table),
+    ).fetchall()
+    for kind, name, _ in rows:
+        if kind in {"view", "trigger"}:
+            conn.execute(f'DROP {kind.upper()} "{name}"')
+    return [row[2] for row in rows]
+
+
 def migrate(conn):
     registry_columns = {
         row[1] for row in conn.execute("PRAGMA table_info(scheduler_job_registry)")
     }
     if "recovery_run_id" not in registry_columns:
+        registry_objects = _dependent_objects(conn, "scheduler_job_registry")
         conn.execute(
             "ALTER TABLE scheduler_job_registry RENAME TO scheduler_job_registry_old"
         )
@@ -25,9 +41,11 @@ def migrate(conn):
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, window_id TEXT, attempt_id TEXT,
                 scrape_run_id TEXT, lease_generation INTEGER, lease_token TEXT,
                 scheduler_instance_id TEXT, recovery_at TEXT, recovery_run_id TEXT,
-                recovery_reason TEXT, persistence_evidence TEXT CHECK(
-                  persistence_evidence IN ('committed','uncommitted','unknown') OR
-                  persistence_evidence IS NULL), superseded_by_attempt_id TEXT
+                recovery_reason TEXT, attempt_persistence_evidence TEXT CHECK(
+                  attempt_persistence_evidence IN ('committed','uncommitted','unknown') OR
+                  attempt_persistence_evidence IS NULL), superseded_by_attempt_id TEXT,
+                match_authoritative_evidence TEXT CHECK(match_authoritative_evidence IN
+                  ('absent','partial_live','authoritative_final') OR match_authoritative_evidence IS NULL)
             )
         """)
         conn.execute("""INSERT INTO scheduler_job_registry (
@@ -39,15 +57,8 @@ def migrate(conn):
             func_ref,args_json,trigger_type,created_at,updated_at
             FROM scheduler_job_registry_old""")
         conn.execute("DROP TABLE scheduler_job_registry_old")
-        conn.execute(
-            "CREATE INDEX idx_scheduler_registry_status_time ON scheduler_job_registry(status,scheduled_run_time)"
-        )
-        conn.execute(
-            "CREATE INDEX idx_scheduler_registry_match ON scheduler_job_registry(match_id)"
-        )
-        conn.execute(
-            "CREATE INDEX idx_scheduler_registry_round ON scheduler_job_registry(round_id)"
-        )
+        for sql in registry_objects:
+            conn.execute(sql)
         conn.execute(
             "CREATE INDEX idx_scheduler_registry_attempt ON scheduler_job_registry(attempt_id)"
         )
@@ -57,6 +68,7 @@ def migrate(conn):
 
     scrape_columns = {row[1] for row in conn.execute("PRAGMA table_info(scrape_runs)")}
     if "recovery_run_id" not in scrape_columns:
+        scrape_objects = _dependent_objects(conn, "scrape_runs")
         conn.execute("ALTER TABLE scrape_runs RENAME TO scrape_runs_old")
         conn.execute("""
             CREATE TABLE scrape_runs (
@@ -76,9 +88,11 @@ def migrate(conn):
                 response_received_at TEXT, persistence_committed_at TEXT,
                 rows_inserted INTEGER, rows_updated INTEGER, rows_unchanged INTEGER,
                 recovery_at TEXT, recovery_run_id TEXT, recovery_reason TEXT,
-                persistence_evidence TEXT CHECK(persistence_evidence IN
-                  ('committed','uncommitted','unknown') OR persistence_evidence IS NULL),
-                superseded_by_attempt_id TEXT
+                attempt_persistence_evidence TEXT CHECK(attempt_persistence_evidence IN
+                  ('committed','uncommitted','unknown') OR attempt_persistence_evidence IS NULL),
+                superseded_by_attempt_id TEXT,
+                match_authoritative_evidence TEXT CHECK(match_authoritative_evidence IN
+                  ('absent','partial_live','authoritative_final') OR match_authoritative_evidence IS NULL)
             )
         """)
         old = [row[1] for row in conn.execute("PRAGMA table_info(scrape_runs_old)")]
@@ -87,24 +101,8 @@ def migrate(conn):
             f"INSERT INTO scrape_runs ({names}) SELECT {names} FROM scrape_runs_old"
         )
         conn.execute("DROP TABLE scrape_runs_old")
-        conn.execute(
-            "CREATE INDEX idx_scrape_runs_started_at ON scrape_runs(started_at DESC)"
-        )
-        conn.execute(
-            "CREATE INDEX idx_scrape_runs_type_status_started ON scrape_runs(scrape_type,status,started_at DESC)"
-        )
-        conn.execute(
-            "CREATE INDEX idx_scrape_runs_status_started ON scrape_runs(status,started_at DESC)"
-        )
-        conn.execute(
-            "CREATE INDEX idx_scrape_runs_correlation_id ON scrape_runs(correlation_id)"
-        )
-        conn.execute(
-            "CREATE INDEX idx_scrape_runs_reason_started ON scrape_runs(reason_code,started_at DESC)"
-        )
-        conn.execute(
-            "CREATE INDEX idx_scrape_runs_canonical_match_started ON scrape_runs(canonical_match_id,started_at DESC)"
-        )
+        for sql in scrape_objects:
+            conn.execute(sql)
         conn.execute("CREATE INDEX idx_scrape_runs_attempt ON scrape_runs(attempt_id)")
         conn.execute("CREATE INDEX idx_scrape_runs_window ON scrape_runs(window_id)")
 
