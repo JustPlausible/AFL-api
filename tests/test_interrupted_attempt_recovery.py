@@ -624,6 +624,20 @@ def test_maximum_attempt_must_cover_lease_duration():
 def test_startup_reconciliation_bounds_uncorrelated_candidates(recovery_db):
     path, lane = recovery_db
     conn = sqlite3.connect(path)
+    conn.execute(
+        """INSERT INTO matches(match_id,match_provider_id,round_id,home_team,
+        away_team,status,start_time_utc) VALUES(2,'CD_M2',1,'C','D','CONCLUDED',?)""",
+        (OLD,),
+    )
+    conn.execute(
+        """INSERT INTO match_stat_windows(window_id,match_id,match_provider_id,
+        policy_version,lifecycle,collection_phase,status,next_due_at,cadence_profile,
+        finality_state,lease_owner,lease_token,lease_generation,lease_claimed_at,
+        lease_expires_at,reason_code,planner_version,updated_at)
+        VALUES('mw_cfs_stats_2_v1',2,'CD_M2','v1','CONCLUDED','final_confirmation',
+        'leased',?,'final','unconfirmed','old-worker','token-2',1,?,?,'live','v1',?)""",
+        (OLD, OLD, OLD, NOW.isoformat()),
+    )
     for index in range(3):
         conn.execute(
             """INSERT INTO scheduler_job_registry(
@@ -651,4 +665,48 @@ def test_startup_reconciliation_bounds_uncorrelated_candidates(recovery_db):
     )
     assert report.compatibility_records == 1
     assert report.inspected_attempts == 1
+    assert report.startup_candidates_truncated is True
     assert len(fetch(path, "SELECT job_id FROM scheduler_job_registry WHERE status='running'")) == 3
+
+
+def test_startup_limit_loads_complete_evidence_for_selected_window(recovery_db):
+    path, lane = recovery_db
+    add_running_attempt(path, attempt="actual", job="zz-actual", run_id="actual-run")
+    conn = sqlite3.connect(path)
+    for index in range(3):
+        conn.execute(
+            """INSERT INTO scheduler_job_registry(
+            job_id,job_type,status,last_attempt_time,created_at,updated_at)
+            VALUES(?, 'legacy', 'running', ?, ?, ?)""",
+            (f"00-orphan-{index}", OLD, OLD, OLD),
+        )
+    conn.commit()
+    conn.close()
+    bounded = RecoverySettings(
+        maximum_attempt_duration=timedelta(minutes=30),
+        registry_running_staleness=timedelta(minutes=30),
+        scrape_run_running_staleness=timedelta(minutes=30),
+        shutdown_grace_period=timedelta(minutes=2),
+        heartbeat_interval=timedelta(seconds=15),
+        startup_candidate_limit=1,
+    )
+
+    def reconcile_startup(run_id):
+        return reconcile_interrupted_attempts(
+            trigger_source="startup",
+            now=NOW,
+            settings=bounded,
+            window_settings=MatchWindowSettings(policy_version="v1"),
+            lane=lane,
+            run_id=run_id,
+        )
+
+    first = reconcile_startup("correlated-startup")
+    assert fetch(path, "SELECT status FROM scheduler_job_registry WHERE job_id='zz-actual'")[0][0] == "interrupted"
+    assert fetch(path, "SELECT status FROM scrape_runs WHERE run_id='actual-run'")[0][0] == "interrupted"
+    assert any(item.get("attempt_id") == "actual" for item in first.decisions)
+    assert not any(str(item.get("attempt_id", "")).startswith("lease:") for item in first.decisions)
+    second = reconcile_startup("correlated-startup-repeat")
+    assert second.registry_rows_repaired == 0
+    assert second.scrape_runs_repaired == 0
+    assert second.windows_replanned == 0

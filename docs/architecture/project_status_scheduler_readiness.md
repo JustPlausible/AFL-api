@@ -615,8 +615,10 @@ have created.
 The final refinement bounds active-heartbeat protection by maximum attempt
 duration, blocks a window action for the run when its attempt repair savepoint
 fails, and requires exactly one correlated running registry row, scrape row,
-and owned window row in normal atomic finalisation. Startup examines at most the
-configured candidate limit (default 500) from each durable candidate source.
+and owned window row in normal atomic finalisation. Startup selects at most the
+configured number of candidate windows (default 500), loads complete correlated
+running evidence for those windows, and separately bounds orphan/legacy
+compatibility inspection. The report exposes candidate-window truncation.
 
 #### Issue #134 file-to-requirement map
 

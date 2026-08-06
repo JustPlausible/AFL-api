@@ -129,6 +129,7 @@ class ReconciliationReport:
     attempts_superseded_by_later_success: int = 0
     unresolved_cases: int = 0
     compatibility_records: int = 0
+    startup_candidates_truncated: bool = False
     would_expire_leases: int = 0
     would_repair_registry_rows: int = 0
     would_repair_scrape_runs: int = 0
@@ -328,11 +329,12 @@ def _reconcile(
             OR EXISTS (SELECT 1 FROM scrape_runs cs
                        WHERE cs.window_id=w.window_id AND cs.status='running'))
             ORDER BY w.updated_at,w.window_id LIMIT ?"""
-        params.append(startup_candidate_limit)
-    windows = {
-        row["window_id"]: dict(row)
-        for row in conn.execute(window_sql, params).fetchall()
-    }
+        params.append(startup_candidate_limit + 1)
+    window_rows = conn.execute(window_sql, params).fetchall()
+    if startup_candidate_limit is not None:
+        report.startup_candidates_truncated = len(window_rows) > startup_candidate_limit
+        window_rows = window_rows[:startup_candidate_limit]
+    windows = {row["window_id"]: dict(row) for row in window_rows}
 
     # Attempt-scoped operation discovers its window without broadening mutation scope.
     if scope.attempt_id:
@@ -345,15 +347,48 @@ def _reconcile(
         windows = {key: value for key, value in windows.items() if key in allowed}
 
     report.inspected_windows = len(windows)
-    registry_sql = "SELECT * FROM scheduler_job_registry WHERE status='running' ORDER BY COALESCE(last_attempt_time,created_at),job_id"
-    scrape_sql = "SELECT * FROM scrape_runs WHERE status='running' ORDER BY started_at,run_id"
-    query_params: tuple[int, ...] = ()
-    if startup_candidate_limit is not None:
-        registry_sql += " LIMIT ?"
-        scrape_sql += " LIMIT ?"
-        query_params = (startup_candidate_limit,)
-    registry = conn.execute(registry_sql, query_params).fetchall()
-    scrapes = conn.execute(scrape_sql, query_params).fetchall()
+    if startup_candidate_limit is None:
+        registry = conn.execute(
+            "SELECT * FROM scheduler_job_registry WHERE status='running' "
+            "ORDER BY COALESCE(last_attempt_time,created_at),job_id"
+        ).fetchall()
+        scrapes = conn.execute(
+            "SELECT * FROM scrape_runs WHERE status='running' ORDER BY started_at,run_id"
+        ).fetchall()
+    else:
+        window_ids = tuple(windows)
+        placeholders = ",".join("?" for _ in window_ids)
+        if window_ids:
+            registry = conn.execute(
+                f"""SELECT * FROM scheduler_job_registry WHERE status='running'
+                AND attempt_id IS NOT NULL AND window_id IN ({placeholders})
+                ORDER BY COALESCE(last_attempt_time,created_at),job_id""",
+                window_ids,
+            ).fetchall()
+            scrapes = conn.execute(
+                f"""SELECT * FROM scrape_runs WHERE status='running'
+                AND attempt_id IS NOT NULL AND window_id IN ({placeholders})
+                ORDER BY started_at,run_id""",
+                window_ids,
+            ).fetchall()
+        else:
+            registry, scrapes = [], []
+        # Compatibility evidence is bounded independently. Rows correlated to
+        # valid, unselected windows are deferred, not mislabeled as orphans.
+        registry += conn.execute(
+            """SELECT r.* FROM scheduler_job_registry r WHERE r.status='running'
+            AND (r.window_id IS NULL OR r.attempt_id IS NULL OR NOT EXISTS
+                 (SELECT 1 FROM match_stat_windows w WHERE w.window_id=r.window_id))
+            ORDER BY COALESCE(r.last_attempt_time,r.created_at),r.job_id LIMIT ?""",
+            (startup_candidate_limit,),
+        ).fetchall()
+        scrapes += conn.execute(
+            """SELECT s.* FROM scrape_runs s WHERE s.status='running'
+            AND (s.window_id IS NULL OR s.attempt_id IS NULL OR NOT EXISTS
+                 (SELECT 1 FROM match_stat_windows w WHERE w.window_id=s.window_id))
+            ORDER BY s.started_at,s.run_id LIMIT ?""",
+            (startup_candidate_limit,),
+        ).fetchall()
     groups: dict[tuple[str, str], dict[str, Any]] = {}
 
     def in_time_scope(value: str | None) -> bool:

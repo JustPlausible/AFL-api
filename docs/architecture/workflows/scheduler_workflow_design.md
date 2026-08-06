@@ -802,8 +802,11 @@ and orphan registry/audit records are bounded unresolved compatibility findings;
 they are neither guessed, changed, nor replayed.
 
 Default startup reconciliation is operationally bounded to 500 candidate
-windows, 500 running registry rows, and 500 running scrape rows in its immediate
-transaction, ordered oldest first. Configure this with
+windows, ordered oldest first. Once those windows are selected, recovery loads
+all of their correlated running registry and scrape evidence; uncorrelated and
+orphan compatibility evidence is inspected by separate bounded queries. The
+structured report states when additional candidate windows were truncated.
+Configure the window and compatibility-query bound with
 `AFL_RECOVERY_STARTUP_CANDIDATE_LIMIT` (valid range 1–10,000). Later startups
 continue an unchanged backlog idempotently. Manual explicit scopes may inspect
 older evidence and are not silently truncated by the startup limit.
