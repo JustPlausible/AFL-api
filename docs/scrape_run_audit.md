@@ -142,3 +142,27 @@ WHERE status = 'running'
   AND started_at < datetime('now', '-2 hours')
 ORDER BY started_at ASC;
 ```
+# Interrupted polling audits
+
+Polling audits now checkpoint response receipt separately from the atomic CFS
+persistence transaction. `persistence_committed_at` is positive,
+attempt-specific commit evidence; its absence is not proof of rollback.
+Recovered `interrupted` rows retain original correlation and timing fields and
+add a stable recovery classification, reconciliation run/time, persistence
+evidence (`committed`, `uncommitted`, or `unknown`), and any superseding attempt.
+Counts remain null unless the normal transaction actually recorded them; the
+reconciler never invents inserted, updated, unchanged, written, or completion
+counts from match-wide rows.
+
+```sql
+SELECT run_id, window_id, attempt_id, scheduler_job_id, status,
+       response_received_at, persistence_committed_at, rows_read, rows_written,
+       recovery_reason, attempt_persistence_evidence,
+       match_authoritative_evidence, superseded_by_attempt_id
+FROM scrape_runs
+WHERE window_id = ?
+ORDER BY started_at;
+```
+
+Only `cfs_player_stats` supplies authoritative domain evidence. Legacy
+`player_stats` and HTML are never consulted by recovery.

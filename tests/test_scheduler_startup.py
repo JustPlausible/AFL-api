@@ -82,6 +82,9 @@ def test_app_lifespan_starts_and_shuts_down_scheduler_once(monkeypatch):
     monkeypatch.setattr(start, "_scheduler_thread", None)
     monkeypatch.setattr(start, "scheduler", FakeScheduler())
     monkeypatch.setattr(start, "migrate_database", lambda: calls.__setitem__("migrate", calls["migrate"] + 1))
+    monkeypatch.setattr(start, "establish_instance", lambda: "test-instance")
+    monkeypatch.setattr(start, "_recover_interrupted_attempts_startup", lambda: None)
+    monkeypatch.setattr(start, "_reconcile_match_windows_startup", lambda: None)
     monkeypatch.setattr(start, "register_all_jobs", lambda: calls.__setitem__("register", calls["register"] + 1))
     monkeypatch.setattr(start, "shutdown_scheduler", lambda wait=True: None)
 
@@ -109,6 +112,9 @@ def test_duplicate_scheduler_startup_is_ignored(monkeypatch):
     monkeypatch.setattr(start, "_scheduler_thread", None)
     monkeypatch.setattr(start, "scheduler", FakeScheduler())
     monkeypatch.setattr(start, "migrate_database", lambda: calls.__setitem__("migrate", calls["migrate"] + 1))
+    monkeypatch.setattr(start, "establish_instance", lambda: "test-instance")
+    monkeypatch.setattr(start, "_recover_interrupted_attempts_startup", lambda: None)
+    monkeypatch.setattr(start, "_reconcile_match_windows_startup", lambda: None)
     monkeypatch.setattr(start, "register_all_jobs", lambda: calls.__setitem__("register", calls["register"] + 1))
 
     start.start_scheduler_for_app()

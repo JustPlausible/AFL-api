@@ -2,11 +2,12 @@ import os
 import sqlite3
 import subprocess
 import sys
+import shutil
 from pathlib import Path
 
 import pytest
 
-from db.migration_runner import BASELINE_TABLES, MigrationError, classify_existing_database, discover_migrations, migrate_database
+from db.migration_runner import BASELINE_TABLES, MIGRATIONS_DIR, MigrationError, classify_existing_database, discover_migrations, migrate_database
 
 
 def make_v030_db(path: Path, plaintext_key: str | None = None):
@@ -54,7 +55,7 @@ def test_duplicate_identifier_rejected(tmp_path):
 
 def test_fresh_creation_idempotency_records_and_schema(tmp_path):
     db = tmp_path / "fresh.db"
-    assert migrate_database(db) == ["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013"]
+    assert migrate_database(db) == ["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014"]
     assert migrate_database(db) == []
     conn = sqlite3.connect(db)
     tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")}
@@ -63,7 +64,7 @@ def test_fresh_creation_idempotency_records_and_schema(tmp_path):
     assert "match_time_label" in cols(conn, "matches")
     assert any(r[2] for r in conn.execute("PRAGMA index_list(scrape_log)") if r[1] == "idx_scrape_log_match_scraped_at")
     rows = conn.execute("SELECT migration_id, description, checksum, applied_at FROM schema_migrations ORDER BY migration_id").fetchall()
-    assert [r[0] for r in rows] == ["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013"]
+    assert [r[0] for r in rows] == ["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014"]
     assert all(r[1] and r[2] and r[3] for r in rows)
 
 
@@ -102,7 +103,7 @@ def test_incompatible_or_partial_database_fails(tmp_path):
 def test_v030_baseline_preserves_rows_and_upgrades_api_keys(tmp_path):
     db = tmp_path / "old.db"
     make_v030_db(db, "afl_test_plaintext")
-    assert migrate_database(db) == ["0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013"]
+    assert migrate_database(db) == ["0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014"]
     conn = sqlite3.connect(db)
     assert conn.execute("SELECT name FROM clubs WHERE code='ADE'").fetchone()[0] == "Adelaide Crows"
     assert conn.execute("SELECT full_name FROM players WHERE afl_id=1").fetchone()[0] == "One Player"
@@ -119,7 +120,7 @@ def test_init_db_and_migrate_cli_from_other_cwd(tmp_path):
         result = subprocess.run([sys.executable, "-m", module], cwd=tmp_path, env=env, text=True, capture_output=True)
         assert result.returncode == 0, result.stderr + result.stdout
     conn = sqlite3.connect(db)
-    assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 13
+    assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 14
 
 
 def test_baseline_classifier_rejects_incomplete_table(tmp_path):
@@ -133,3 +134,142 @@ def test_baseline_classifier_rejects_incomplete_table(tmp_path):
     conn.commit()
     with pytest.raises(MigrationError, match="players"):
         classify_existing_database(conn)
+
+
+def test_0014_realistic_upgrade_preserves_rows_schema_and_dependent_objects(tmp_path):
+    before = tmp_path / "before"
+    before.mkdir()
+    for source in MIGRATIONS_DIR.glob("*.py"):
+        if source.name == "__init__.py" or source.name.startswith("0014_"):
+            continue
+        shutil.copy2(source, before / source.name)
+    db = tmp_path / "legacy-0013.db"
+    migrate_database(db, before)
+    conn = sqlite3.connect(db)
+    registry_statuses = ("pending", "running", "succeeded", "failed", "skipped")
+    for index, status in enumerate(registry_statuses):
+        conn.execute(
+            """INSERT INTO scheduler_job_registry(job_id,job_type,status,
+            attempt_count,last_error_summary,args_json,trigger_type,created_at,updated_at)
+            VALUES(?, 'legacy', ?, ?, ?, '[]','date',?,?)""",
+            (
+                f"job-{status}",
+                status,
+                index,
+                None if index % 2 else f"error-{index}",
+                "2026-08-06T00:00:00+00:00",
+                "2026-08-06T00:00:00+00:00",
+            ),
+        )
+    for status in ("running", "completed", "partial", "failed"):
+        conn.execute(
+            """INSERT INTO scrape_runs(run_id,scrape_type,trigger_source,status,
+            started_at,rows_read,rows_written,correlation_id,reason_code)
+            VALUES(?, 'legacy','scheduler',?,?,NULL,?, ?, NULL)""",
+            (
+                f"run-{status}",
+                status,
+                "2026-08-06T00:00:00+00:00",
+                None if status == "running" else 1,
+                f"corr-{status}",
+            ),
+        )
+    conn.execute(
+        "CREATE INDEX custom_registry_type ON scheduler_job_registry(job_type,status)"
+    )
+    conn.execute("CREATE TABLE recovery_trigger_log(job_id TEXT)")
+    conn.execute("""CREATE TRIGGER registry_update_log AFTER UPDATE ON scheduler_job_registry
+                    BEGIN INSERT INTO recovery_trigger_log VALUES(NEW.job_id); END""")
+    conn.execute(
+        "CREATE VIEW running_registry_view AS SELECT job_id FROM scheduler_job_registry WHERE status='running'"
+    )
+    old_registry_cols = [
+        tuple(row) for row in conn.execute("PRAGMA table_info(scheduler_job_registry)")
+    ]
+    old_scrape_cols = [
+        tuple(row) for row in conn.execute("PRAGMA table_info(scrape_runs)")
+    ]
+    registry_names = ",".join(row[1] for row in old_registry_cols)
+    scrape_names = ",".join(row[1] for row in old_scrape_cols)
+    registry_before = conn.execute(f"SELECT {registry_names} FROM scheduler_job_registry ORDER BY job_id").fetchall()
+    scrapes_before = conn.execute(f"SELECT {scrape_names} FROM scrape_runs ORDER BY run_id").fetchall()
+    registry_fks = conn.execute("PRAGMA foreign_key_list(scheduler_job_registry)").fetchall()
+    scrape_fks = conn.execute("PRAGMA foreign_key_list(scrape_runs)").fetchall()
+    conn.commit()
+    conn.close()
+
+    assert migrate_database(db) == ["0014"]
+    assert migrate_database(db) == []
+    conn = sqlite3.connect(db)
+    assert conn.execute(f"SELECT {registry_names} FROM scheduler_job_registry ORDER BY job_id").fetchall() == registry_before
+    assert conn.execute(f"SELECT {scrape_names} FROM scrape_runs ORDER BY run_id").fetchall() == scrapes_before
+    assert conn.execute("PRAGMA foreign_key_list(scheduler_job_registry)").fetchall() == registry_fks
+    assert conn.execute("PRAGMA foreign_key_list(scrape_runs)").fetchall() == scrape_fks
+    assert {
+        r[0] for r in conn.execute("SELECT job_id FROM scheduler_job_registry")
+    } == {f"job-{s}" for s in registry_statuses}
+    assert {r[0] for r in conn.execute("SELECT run_id FROM scrape_runs")} == {
+        f"run-{s}" for s in ("running", "completed", "partial", "failed")
+    }
+    new_registry = {
+        r[1]: tuple(r)
+        for r in conn.execute("PRAGMA table_info(scheduler_job_registry)")
+    }
+    new_scrape = {
+        r[1]: tuple(r) for r in conn.execute("PRAGMA table_info(scrape_runs)")
+    }
+    assert all(
+        row[1] in new_registry and new_registry[row[1]][2:6] == row[2:6]
+        for row in old_registry_cols
+    )
+    assert all(
+        row[1] in new_scrape and new_scrape[row[1]][2:6] == row[2:6]
+        for row in old_scrape_cols
+    )
+    objects = {
+        (r[0], r[1]) for r in conn.execute("SELECT type,name FROM sqlite_master")
+    }
+    assert {
+        ("index", "custom_registry_type"),
+        ("trigger", "registry_update_log"),
+        ("view", "running_registry_view"),
+    } <= objects
+    repository_indexes = {
+        "idx_scheduler_registry_status_time",
+        "idx_scheduler_registry_match",
+        "idx_scheduler_registry_round",
+        "idx_scrape_runs_started_at",
+        "idx_scrape_runs_type_status_started",
+        "idx_scrape_runs_status_started",
+        "idx_scrape_runs_correlation_id",
+        "idx_scrape_runs_reason_started",
+        "idx_scrape_runs_canonical_match_started",
+    }
+    assert repository_indexes <= {
+        row[1]
+        for row in conn.execute(
+            "SELECT type,name FROM sqlite_master WHERE type='index'"
+        )
+    }
+    assert conn.execute("SELECT job_id FROM running_registry_view").fetchall() == [
+        ("job-running",)
+    ]
+    conn.execute(
+        "UPDATE scheduler_job_registry SET updated_at=? WHERE job_id='job-pending'",
+        ("2026-08-06T01:00:00+00:00",),
+    )
+    assert conn.execute("SELECT job_id FROM recovery_trigger_log").fetchall() == [
+        ("job-pending",)
+    ]
+    plan = " ".join(
+        str(x)
+        for row in conn.execute(
+            "EXPLAIN QUERY PLAN SELECT * FROM scheduler_job_registry WHERE job_type='legacy' AND status='running'"
+        )
+        for x in row
+    )
+    assert "custom_registry_type" in plan
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("INSERT INTO scheduler_job_registry(job_id,job_type,status) VALUES('invalid','x','not-a-status')")
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("INSERT INTO scrape_runs(run_id,scrape_type,trigger_source,status,started_at) VALUES('invalid','x','scheduler','not-a-status',?)", ("2026-08-06T00:00:00+00:00",))

@@ -682,6 +682,50 @@ criteria they deliver.
 
 ## Design history
 
+### Implemented interrupted-attempt recovery
+
+Issue #134 implements restart recovery as a bounded reconciliation of the
+existing match window, scheduler registry, scrape audit, and authoritative CFS
+models. Startup now runs migrations, establishes a persisted Scheduler instance
+identity, blocks claims while reconciliation runs, repairs genuinely stale
+attempts, reconciles match windows, runs the existing idempotent planner, and
+only then registers work and starts APScheduler. A valid lease always wins over
+age. Scheduler runtime rows distinguish a graceful stop from a prior instance
+that disappeared without a stop marker; neither marker permits stealing a valid
+lease.
+
+The normal polling commit flow is: lease claim; atomic registry/audit creation;
+network collection without a transaction; response-received checkpoint; then a
+short write-lane transaction containing CFS persistence, attempt-specific
+persistence evidence, audit finalisation, registry finalisation, and window
+consequence. The final transaction intentionally makes the domain snapshot and
+its positive commit marker indivisible. Null markers do not prove rollback:
+recovery reports them as unknown unless some other persisted evidence proves an
+outcome.
+
+Recovery follows this evidence order: attempt-specific commit marker;
+authoritative `cfs_player_stats`; later successful attempt; lease/runtime
+ownership; then registry/audit phase metadata. `player_stats`, HTML, free-form
+errors, and a stale `running` value are never authority. A complete result still
+requires concluded lifecycle, authority level 2, a uniform snapshot, both
+teams, and the shared minimum concluded-row threshold. Existing complete,
+cancelled, not-applicable, and terminal windows are not reopened.
+
+Historical attempts become explicitly `interrupted`, retain their IDs and
+timestamps, and receive bounded recovery run/time/reason, persistence evidence,
+and superseding-attempt fields. Unknown results remain unknown. Recovery clears
+eligible ownership and delegates the window consequence to the existing
+planner; if work remains useful, a later claim creates a new generation,
+attempt ID, and scheduler-job ID. The old attempt is never returned to pending
+or replayed.
+
+The conservative boot defaults are 1,800 seconds for maximum attempt duration,
+registry-running staleness, and scrape-running staleness, plus a 120-second
+shutdown/recovery grace. They are configured by
+`AFL_RECOVERY_MAX_ATTEMPT_SECONDS`, `AFL_RECOVERY_REGISTRY_STALE_SECONDS`,
+`AFL_RECOVERY_SCRAPE_RUN_STALE_SECONDS`, and
+`AFL_RECOVERY_SHUTDOWN_GRACE_SECONDS`.
+
 ### Implemented prerequisite: scheduler time correctness
 
 Issue #130 establishes the time foundation without implementing the later
@@ -699,3 +743,70 @@ The resulting document intentionally captures agreed engineering
 principles before scheduler implementation begins. It should be
 treated as the architectural reference for future scheduler Issues,
 pull requests and design discussions.
+
+### Issue #134 refinement: recovery invariants
+
+The implemented transaction-state diagram for a new polling attempt is:
+
+```text
+T1 claim lease (commit)
+  -> T2 create correlated registry + scrape audit + window correlation (commit)
+  -> network request (no transaction)
+  -> T3 response-received checkpoint (commit)
+  -> T4 BEGIN write-lane transaction
+       CFS upsert
+       match-window consequence
+       scrape completion + attempt commit marker
+       registry completion + attempt commit marker
+     COMMIT (all five effects) / ROLLBACK (none of the five effects)
+```
+
+Consequently, an interruption after CFS commit but before audit, registry, or
+window finalisation is deliberately impossible for attempts created by this
+version. The recovery vocabulary retains interrupted-after-commit support for
+legacy or externally constructed pre-migration evidence, but new attempts
+cannot produce those intermediate states. A failure inside T4 rolls back all
+T4 writes; the worker may then commit a separate, explicitly uncommitted failure
+outcome. If that failure finalisation is itself interrupted, the attempt remains
+`running` with unknown persistence evidence.
+
+Attempt evidence and match evidence are independent. The fields
+`attempt_persistence_evidence` (`committed`, `uncommitted`, `unknown`) and
+`match_authoritative_evidence` (`absent`, `partial_live`,
+`authoritative_final`) are stored and reported separately. Existing final CFS
+data may complete a window, while the interrupted historical attempt remains
+`unknown` unless its own atomic commit marker proves otherwise. Absence of rows
+never proves rollback, especially when an earlier snapshot may already exist.
+
+Runtime ownership is classified by one policy as active, gracefully stopped,
+stale/unclean, or unknown. The planner/heartbeat job defaults to 15 seconds;
+shutdown grace must span at least two heartbeats. A valid lease is always
+preserved. A recent owning-runtime heartbeat also preserves an expired lease
+when the attempt token or instance-prefixed lease owner proves ownership **and**
+the attempt remains within the configured maximum attempt duration. An active
+heartbeat cannot protect a hung, over-duration attempt indefinitely; that
+attempt returns to the normal evidence-driven stale policy. A missing
+start/claim timestamp cannot establish this temporary active-owner protection.
+
+Recovery classifies attempts first and repairs each under a savepoint. It then
+performs one optimistic lease clear per window and invokes the existing scoped,
+idempotent match-window planner. Recovery never invents `next_due_at`: lifecycle,
+finality, polling horizon, feature constraints, phase, and cadence remain planner
+owned. Terminal windows are never reopened. Supersession requires the same
+window and a strictly later lease generation or success timestamp; merely
+different identity is insufficient.
+
+Dry-run reports `would_*` counters separately from actual mutation counters and
+performs no writes. Uncorrelated legacy one-shots, missing window/attempt IDs,
+and orphan registry/audit records are bounded unresolved compatibility findings;
+they are neither guessed, changed, nor replayed.
+
+Default startup reconciliation is operationally bounded to 500 candidate
+windows, ordered oldest first. Once those windows are selected, recovery loads
+all of their correlated running registry and scrape evidence; uncorrelated and
+orphan compatibility evidence is inspected by separate bounded queries. The
+structured report states when additional candidate windows were truncated.
+Configure the window and compatibility-query bound with
+`AFL_RECOVERY_STARTUP_CANDIDATE_LIMIT` (valid range 1–10,000). Later startups
+continue an unchanged backlog idempotently. Manual explicit scopes may inspect
+older evidence and are not silently truncated by the startup limit.

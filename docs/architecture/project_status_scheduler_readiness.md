@@ -531,3 +531,108 @@ Do not include canonical API endpoints, canonical lineup persistence,
 commentary/interchange or fantasy rules in this milestone. After it closes,
 start the secondary canonical read API milestone using the now-reliable
 freshness/finality evidence.
+
+## 14. Issue #134 interrupted-attempt investigation and implementation plan
+
+The implementation baseline for recovery is revisions #130–#133. Investigation
+confirmed the following state and transaction map before recovery code was
+changed:
+
+* `match_stat_windows` is one durable CFS polling series per match and policy.
+  Its controlled states are `planned`, `due`, `leased`, `backoff`,
+  `awaiting_final`, `planning_error`, `complete`, `failed_terminal`, `disabled`,
+  `cancelled`, and `not_applicable`. Claims use a monotonically increasing
+  `lease_generation` and an owner/token/claimed/expiry tuple. Attempt and dynamic
+  scheduler-job IDs are deterministically derived from window ID, generation,
+  and attempt count, but were not stored on the window.
+* `scheduler_job_registry` allowed `pending`, `running`, `succeeded`, `failed`,
+  and `skipped`; its original schema had match correlation but no window,
+  attempt, scrape-run, lease-generation, or lease-token columns.
+  `scrape_runs` allowed `running`, `completed`, `partial`, and `failed`; polling
+  used the attempt ID as `correlation_id`, but did not store the window/job/lease
+  correlations explicitly.
+* A polling claim committed first through the Scheduler write lane. Scrape-run
+  creation then committed before the request. Collection ran without a database
+  transaction. Successful domain upsert, scrape-run finalisation, and window
+  update shared one short write-lane transaction. Registry context updates were
+  separate and, for dynamic polling IDs, no registry row had first been
+  inserted. Consequently a process could stop after any earlier commit, and
+  match-wide CFS rows—not attempt-specific evidence—were the only persistence
+  evidence.
+* Finality is derived only from `cfs_player_stats`: authority level 2, a uniform
+  authoritative snapshot, both `home` and `away`, and at least 20 authoritative
+  rows. The window additionally requires concluded lifecycle before completion.
+  Legacy `player_stats` is not consulted. Existing writer results expose total
+  changed/written rows, while inserted/updated/unchanged values were not
+  persisted per polling attempt.
+* Startup ran migrations, reconciled match windows, registered dynamic jobs,
+  reconciled future pending one-shots, and only then started APScheduler. It had
+  no runtime heartbeat/history. Graceful shutdown drained the polling executor
+  and write lane, but did not persist a graceful marker. The process-local write
+  lane and token/generation predicates are the required mutation boundary.
+
+The focused implementation plan is to add migration `0014` with additive
+correlation/recovery evidence and explicit interrupted terminal states; add one
+write-lane reconciliation service with conservative settings, optimistic lease
+checks, authoritative-CFS decisions, structured/redacted reports, and no
+collector dependency; create polling audit/control rows with complete
+correlations and attempt-specific persistence evidence; establish runtime
+identity and run recovery before planner/job registration; expose the same
+service through a bounded `python -m scheduler.recovery` command; add controlled
+clock, state-matrix, idempotency, concurrency, startup-order, dry-run, scope,
+redaction, and integrity tests; and update the workflow/operator documentation.
+A replacement lease is never stolen, historical IDs are retained, and any retry
+is represented by a future claim with a new generation/attempt/job identity.
+
+### Issue #134 refinement validation
+
+Review of the draft implementation confirmed one concern was narrower than it
+first appeared: `claim_due_windows()` did return the same derived job ID assigned
+to the local `job_id` in `run_claim()`. Nevertheless, the claimed dictionary is
+not refreshed after registry insertion and was too implicit a boundary. The
+worker now passes one immutable execution identity (job, attempt, scrape run,
+lease token, and generation) through success, non-final, skip, failure,
+unexpected-error, and lost-lease finalisation. Durable tests assert that the
+created registry identity never remains `running` after any normal terminal
+path.
+
+The persistence concern resolved to the stronger atomic design. CFS rows,
+window consequence, audit completion/commit marker, and registry completion/
+commit marker share one write-lane transaction. Injected rollback coverage
+proves none survive together. Recovery tests now separately cover historical
+unknown evidence, final match evidence, heartbeat ownership, strict later-only
+supersession, multiple attempt rows, compatibility records, dry-run database
+identity, planner-owned horizon/feature decisions, per-attempt savepoint
+isolation, and migration fidelity from a populated migration-0013 database.
+The migration rebuild remains necessary only because SQLite cannot add values to
+existing CHECK constraints; it copies every prior column and row, retains
+original defaults/constraints, captures and recreates the repository-known
+indexes, triggers, and dependent views exercised by migration tests, and adds
+focused correlation indexes. This is a repository compatibility guarantee, not
+a claim to preserve every dependency an arbitrary external SQLite consumer may
+have created.
+
+The final refinement bounds active-heartbeat protection by maximum attempt
+duration, blocks a window action for the run when its attempt repair savepoint
+fails, and requires exactly one correlated running registry row, scrape row,
+and owned window row in normal atomic finalisation. Startup selects at most the
+configured number of candidate windows (default 500), loads complete correlated
+running evidence for those windows, and separately bounds orphan/legacy
+compatibility inspection. The report exposes candidate-window truncation.
+
+#### Issue #134 file-to-requirement map
+
+| Files | Recovery requirement |
+|---|---|
+| `.env.example`, `config.py` | Conservative heartbeat, stale-state, grace, and bounded-startup configuration. |
+| `db/migrations/0014_interrupted_attempt_recovery.py`, `db/scrape_runs.py` | Backward-compatible attempt correlation, recovery evidence, runtime ownership, and model fields. |
+| `scheduler/player_stat_polling.py`, `scheduler/registry.py` | Immutable execution identity and atomic domain/control-plane terminalisation. |
+| `scheduler/recovery.py`, `scheduler/match_windows.py` | Shared startup/manual reconciler, optimistic lease repair, structured report, and planner-owned consequences. |
+| `scheduler/runtime.py`, `scheduler/scheduled_tasks.py`, `scheduler/start.py` | Process identity, heartbeat/graceful-stop evidence, and recovery-before-polling startup order. |
+| `tests/test_interrupted_attempt_recovery.py`, `tests/test_player_stat_polling.py`, `tests/test_migration_runner.py`, `tests/test_scheduler_startup.py`, `tests/test_scrape_runs.py` | Offline crash, evidence, concurrency, compatibility, migration, ordering, and durable-state verification. |
+| This workflow/readiness document, `docs/scheduler_registry.md`, `docs/scrape_run_audit.md` | Transaction, evidence, recovery-policy, and operator guidance. |
+
+No changed production path serves functionality outside interrupted-attempt
+recovery, its required correlation/atomicity and ownership evidence, startup or
+manual invocation, and compatibility. In particular, no collector, scheduling
+backend, or unrelated domain workflow is introduced.
