@@ -682,6 +682,49 @@ criteria they deliver.
 
 ## Design history
 
+### Implemented interrupted-attempt recovery
+
+Issue #134 implements restart recovery as a bounded reconciliation of the
+existing match window, scheduler registry, scrape audit, and authoritative CFS
+models. Startup now runs migrations, establishes a persisted Scheduler instance
+identity, blocks claims while reconciliation runs, repairs genuinely stale
+attempts, reconciles match windows, runs the existing idempotent planner, and
+only then registers work and starts APScheduler. A valid lease always wins over
+age. Scheduler runtime rows distinguish a graceful stop from a prior instance
+that disappeared without a stop marker; neither marker permits stealing a valid
+lease.
+
+The normal polling commit flow is: lease claim; atomic registry/audit creation;
+network collection without a transaction; response-received checkpoint; then a
+short write-lane transaction containing CFS persistence, attempt-specific
+persistence evidence, audit finalisation, registry finalisation, and window
+consequence. The final transaction intentionally makes the domain snapshot and
+its positive commit marker indivisible. Null markers do not prove rollback:
+recovery reports them as unknown unless some other persisted evidence proves an
+outcome.
+
+Recovery follows this evidence order: attempt-specific commit marker;
+authoritative `cfs_player_stats`; later successful attempt; lease/runtime
+ownership; then registry/audit phase metadata. `player_stats`, HTML, free-form
+errors, and a stale `running` value are never authority. A complete result still
+requires concluded lifecycle, authority level 2, a uniform snapshot, both
+teams, and the shared minimum concluded-row threshold. Existing complete,
+cancelled, not-applicable, and terminal windows are not reopened.
+
+Historical attempts become explicitly `interrupted`, retain their IDs and
+timestamps, and receive bounded recovery run/time/reason, persistence evidence,
+and superseding-attempt fields. Unknown results remain unknown. When current
+lifecycle independently justifies more work, the window enters backoff and a
+later claim creates a new generation, attempt ID, and scheduler-job ID; the old
+attempt is never returned to pending or replayed.
+
+The conservative boot defaults are 1,800 seconds for maximum attempt duration,
+registry-running staleness, and scrape-running staleness, plus a 120-second
+shutdown/recovery grace. They are configured by
+`AFL_RECOVERY_MAX_ATTEMPT_SECONDS`, `AFL_RECOVERY_REGISTRY_STALE_SECONDS`,
+`AFL_RECOVERY_SCRAPE_RUN_STALE_SECONDS`, and
+`AFL_RECOVERY_SHUTDOWN_GRACE_SECONDS`.
+
 ### Implemented prerequisite: scheduler time correctness
 
 Issue #130 establishes the time foundation without implementing the later

@@ -21,7 +21,8 @@ STATUS_RUNNING = "running"
 STATUS_COMPLETED = "completed"
 STATUS_PARTIAL = "partial"
 STATUS_FAILED = "failed"
-STATUSES = {STATUS_RUNNING, STATUS_COMPLETED, STATUS_PARTIAL, STATUS_FAILED}
+STATUS_INTERRUPTED = "interrupted"
+STATUSES = {STATUS_RUNNING, STATUS_COMPLETED, STATUS_PARTIAL, STATUS_FAILED, STATUS_INTERRUPTED}
 
 TRIGGER_CLI = "cli"
 TRIGGER_SCHEDULER = "scheduler"
@@ -64,6 +65,22 @@ class ScrapeRun:
     provider_match_id: str | None
     round_identifier: str | None
     diagnostic_summary: str | None
+    window_id: str | None = None
+    attempt_id: str | None = None
+    scheduler_job_id: str | None = None
+    lease_generation: int | None = None
+    lease_token: str | None = None
+    scheduler_instance_id: str | None = None
+    response_received_at: str | None = None
+    persistence_committed_at: str | None = None
+    rows_inserted: int | None = None
+    rows_updated: int | None = None
+    rows_unchanged: int | None = None
+    recovery_at: str | None = None
+    recovery_run_id: str | None = None
+    recovery_reason: str | None = None
+    persistence_evidence: str | None = None
+    superseded_by_attempt_id: str | None = None
 
 
 def utc_now() -> str:

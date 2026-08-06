@@ -125,3 +125,43 @@ For a missed or failed match-window job, search for the stable job ID (for examp
 ## Match-window planner compatibility
 
 Player-stat scheduling is no longer described solely as a single `stats_match_<id>` job. Durable polling-series state lives in `match_stat_windows`; future individual attempts use distinct `mw_attempt_<window_id>_<lease_generation>_<attempt_number>` scheduler job IDs, while existing `stats_match_<id>` one-shot rows remain compatibility records and are not blindly replayed. See [durable match-window planner](architecture/match_window_planner.md).
+# Interrupted polling recovery
+
+Dynamic CFS polling rows include window, attempt, scrape-run, lease and
+Scheduler-instance correlations. `interrupted` is a terminal historical status,
+not a retry queue. Recovery reason, run/time, persistence evidence, and an
+optional superseding attempt are machine-readable. Operators must not change an
+interrupted row back to `pending`.
+
+Inspect a correlation without relying on error text:
+
+```sql
+SELECT job_id, window_id, attempt_id, scrape_run_id, lease_generation,
+       status, recovery_reason, persistence_evidence,
+       superseded_by_attempt_id
+FROM scheduler_job_registry
+WHERE window_id = ?
+ORDER BY created_at;
+```
+
+Run a report safely while Scheduler is active:
+
+```bash
+python -m scheduler.recovery --dry-run --match-id 12345
+python -m scheduler.recovery --dry-run --attempt-id mw_cfs_stats_12345_cfs_match_stats_v1_attempt_2_2
+```
+
+Mutation mode uses the same SQLite immediate write lane and optimistic lease
+checks, but the supported deployment has one active Scheduler. Stop or drain
+that Scheduler before a manual mutation run, then use one conservative bound:
+
+```bash
+python -m scheduler.recovery --window-id mw_cfs_stats_12345_cfs_match_stats_v1
+python -m scheduler.recovery --since 2026-08-06T00:00:00+00:00
+```
+
+The JSON report lists thresholds, scope, inspected items, repairs, completions,
+replans, superseded and unresolved attempts, redacted per-item failures, and
+duration. Repeating it against unchanged state is a no-op. Investigate
+`outcome_unresolved` by joining the IDs above to `scrape_runs` and inspecting
+current CFS finality; do not infer success or rollback from age or error text.

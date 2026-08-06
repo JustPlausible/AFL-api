@@ -40,6 +40,8 @@ from scheduler.scheduled_tasks import scheduler
 from scheduler.write_lane import write_lane
 from scheduler.player_stat_polling import shutdown_player_stat_polling_worker
 from scheduler.match_windows import MatchWindowSettings, reconcile as reconcile_match_windows
+from scheduler.recovery import reconcile_interrupted_attempts
+from scheduler.runtime import establish_instance, mark_graceful_shutdown
 from utils.log import setup_logger
 
 SUPPORTED_UVICORN_COMMAND = "python -m uvicorn scheduler.start:app --host 0.0.0.0 --port 8000"
@@ -60,6 +62,11 @@ def _reconcile_match_windows_startup() -> None:
         write_lane.execute("match_windows.reconcile_startup", "startup", lambda conn: reconcile_match_windows(conn, settings=MatchWindowSettings.from_config()))
     except FileNotFoundError:
         log.warning("Match-window startup reconciliation skipped because the database is unavailable after migration")
+
+
+def _recover_interrupted_attempts_startup() -> None:
+    report = reconcile_interrupted_attempts(trigger_source="startup")
+    log.info("Interrupted-attempt reconciliation summary: %s", report.to_dict())
 
 
 def _validate_single_scheduler_configuration() -> None:
@@ -93,6 +100,8 @@ def bootstrap_scheduler() -> None:
             log.info("Scheduler bootstrap already completed; skipping duplicate registration.")
             return
         migrate_database()
+        establish_instance()
+        _recover_interrupted_attempts_startup()
         _reconcile_match_windows_startup()
         register_all_jobs()
         _jobs_registered = True
@@ -137,6 +146,8 @@ def start_scheduler_for_app() -> None:
         _validate_single_scheduler_configuration()
         if not _jobs_registered:
             migrate_database()
+            establish_instance()
+            _recover_interrupted_attempts_startup()
             _reconcile_match_windows_startup()
             register_all_jobs()
             globals()["_jobs_registered"] = True
@@ -151,6 +162,7 @@ def shutdown_scheduler(wait: bool = True) -> None:
     if scheduler.state != STATE_STOPPED:
         log.info("🛑 Shutting down APScheduler...")
         scheduler.shutdown(wait=wait)
+        mark_graceful_shutdown()
     if wait and not write_lane.drain(timeout=WRITE_LANE_DRAIN_TIMEOUT_SECONDS):
         raise RuntimeError("Scheduler write lane did not drain")
 

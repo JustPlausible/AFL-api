@@ -17,11 +17,12 @@ from afl_json.client import (AflJsonAuthenticationError, AflJsonClient, AflJsonH
                              HttpPolicy, WMCTokenProvider)
 from afl_json.player_stats import MatchPlayerStatsCollector, PlayerStatsStatus, upsert_player_stats
 from db.scrape_runs import (complete_scrape_run, fail_scrape_run, record_scrape_decision,
-                            sanitize_error_summary, scheduler_job_context, start_scrape_run)
+                            sanitize_error_summary, scheduler_job_context)
 from scheduler.match_windows import (FinalityState, MatchWindowSettings,
                                      ReasonCode, _finality, _iso, claim_due_windows,
                                      release_window)
 from scheduler.write_lane import write_lane
+from scheduler.runtime import INSTANCE_ID
 
 Clock = Callable[[], datetime]
 Jitter = Callable[[str, str, int], timedelta]
@@ -288,7 +289,28 @@ class PlayerStatPollingWorker:
                 "match_provider_id": row.get("match_provider_id"),
                 "started_at": _iso(started_at),
             }
-        run_id = start_scrape_run("cfs_player_stats_poll", target_type="match", target_identifier=row["match_id"], trigger_source="scheduler", correlation_id=attempt)
+        run_id = str(uuid.uuid4())
+        def start_attempt(conn):
+            now = _iso(started_at)
+            conn.execute("""INSERT INTO scheduler_job_registry
+                (job_id,job_type,match_id,scheduled_run_time,status,last_attempt_time,
+                 attempt_count,args_json,trigger_type,created_at,updated_at,window_id,
+                 attempt_id,scrape_run_id,lease_generation,lease_token,scheduler_instance_id)
+                VALUES(?,?,?,?,'running',?,1,'[]','date',?,?,?,?,?,?,?,?)""",
+                (job_id,"cfs_player_stats_poll",row["match_id"],now,now,now,now,
+                 row["window_id"],attempt,run_id,row["lease_generation"],row["lease_token"],INSTANCE_ID))
+            conn.execute("""INSERT INTO scrape_runs
+                (run_id,scrape_type,target_type,target_identifier,trigger_source,status,
+                 started_at,correlation_id,canonical_match_id,provider_match_id,window_id,
+                 attempt_id,scheduler_job_id,lease_generation,lease_token,scheduler_instance_id)
+                VALUES(?,?,'match',?,'scheduler','running',?,?,?,?,?,?,?,?,?,?)""",
+                (run_id,"cfs_player_stats_poll",str(row["match_id"]),now,attempt,row["match_id"],
+                 row.get("match_provider_id"),row["window_id"],attempt,job_id,
+                 row["lease_generation"],row["lease_token"],INSTANCE_ID))
+            conn.execute("""UPDATE match_stat_windows SET last_attempt_id=?,last_scheduler_job_id=?,
+                last_scrape_run_id=?,updated_at=? WHERE window_id=? AND lease_token=?""",
+                (attempt,job_id,run_id,now,row["window_id"],row["lease_token"]))
+        self.lane.execute("player_stats_poll.start_attempt", row["window_id"], start_attempt)
         try:
             lifecycle = str(row.get("lifecycle") or "").upper()
             if lifecycle not in {"LIVE", "POSTGAME", "CONCLUDED"}:
@@ -299,6 +321,9 @@ class PlayerStatPollingWorker:
                     with self._network_permit():
                         result = self.collector_factory(self.client_pool.client(), clock=self.clock).collect(row["match_provider_id"], afl_match_id=row.get("afl_match_id"), canonical_match_status=row.get("lifecycle"))
                 network_ms = int((time.monotonic() - started) * 1000)
+                received = _iso(self.clock().astimezone(timezone.utc))
+                self.lane.execute("player_stats_poll.response_received", run_id,
+                    lambda conn: conn.execute("UPDATE scrape_runs SET response_received_at=? WHERE run_id=? AND status='running'", (received,run_id)))
                 return self._persist_success(row, result, run_id, network_ms)
             except AflJsonAuthenticationError as exc:
                 return self._persist_failure(row, run_id, exc, _failure_backoff(row, self.settings.auth_pause, self.settings), "auth_failed_paused", set_auth_pause=True)
@@ -326,6 +351,7 @@ class PlayerStatPollingWorker:
                 fail_scrape_run(run_id, "lost lease before skip persistence", conn=conn)
                 return {"status": "lost_lease", "scrape_run_id": run_id}
             complete_scrape_run(run_id, rows_read=0, rows_written=0, conn=conn)
+            conn.execute("UPDATE scheduler_job_registry SET status='succeeded',last_success_time=?,updated_at=? WHERE job_id=? AND status='running'", (_iso(now),_iso(now),row["scheduler_job_id"]))
             return {"status": reason, "next_due_at": _iso(next_due), "scrape_run_id": run_id}
         return self.lane.execute("player_stats_poll.persist_skip", row["window_id"], op)
 
@@ -362,6 +388,8 @@ class PlayerStatPollingWorker:
                 fail_scrape_run(run_id, "lost lease before success persistence", conn=conn)
                 return {"status": "lost_lease", "rows_written": 0, "scrape_run_id": run_id}
             complete_scrape_run(run_id, rows_read=len(result.records), rows_written=written, partial=(result.status in {PlayerStatsStatus.LIVE_PARTIAL, PlayerStatsStatus.UNKNOWN, PlayerStatsStatus.EMPTY}), conn=conn)
+            conn.execute("UPDATE scrape_runs SET persistence_committed_at=?,persistence_evidence='committed' WHERE run_id=?", (_iso(now),run_id))
+            conn.execute("UPDATE scheduler_job_registry SET status='succeeded',last_success_time=?,updated_at=?,persistence_evidence='committed' WHERE job_id=? AND status='running'", (_iso(now),_iso(now),row["scheduler_job_id"]))
             return {"status": "complete" if complete else "rejected_backoff" if failure_like else "rescheduled", "rows_written": written, "next_due_at": None if complete else _iso(next_due), "scrape_run_id": run_id}
         return self.lane.execute("player_stats_poll.persist_success", row["window_id"], op)
 
@@ -382,6 +410,7 @@ class PlayerStatPollingWorker:
                 fail_scrape_run(run_id, "lost lease before failure persistence", conn=conn)
                 return {"status": "lost_lease", "next_due_at": _iso(next_due), "scrape_run_id": run_id}
             fail_scrape_run(run_id, exc, conn=conn)
+            conn.execute("UPDATE scheduler_job_registry SET status='failed',last_error_summary=?,updated_at=?,persistence_evidence='uncommitted' WHERE job_id=? AND status='running'", (summary,_iso(now),row["scheduler_job_id"]))
             return {"status": reason, "next_due_at": _iso(next_due), "scrape_run_id": run_id}
         return self.lane.execute("player_stats_poll.persist_failure", row["window_id"], op)
 

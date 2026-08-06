@@ -531,3 +531,55 @@ Do not include canonical API endpoints, canonical lineup persistence,
 commentary/interchange or fantasy rules in this milestone. After it closes,
 start the secondary canonical read API milestone using the now-reliable
 freshness/finality evidence.
+
+## 14. Issue #134 interrupted-attempt investigation and implementation plan
+
+The implementation baseline for recovery is revisions #130–#133. Investigation
+confirmed the following state and transaction map before recovery code was
+changed:
+
+* `match_stat_windows` is one durable CFS polling series per match and policy.
+  Its controlled states are `planned`, `due`, `leased`, `backoff`,
+  `awaiting_final`, `planning_error`, `complete`, `failed_terminal`, `disabled`,
+  `cancelled`, and `not_applicable`. Claims use a monotonically increasing
+  `lease_generation` and an owner/token/claimed/expiry tuple. Attempt and dynamic
+  scheduler-job IDs are deterministically derived from window ID, generation,
+  and attempt count, but were not stored on the window.
+* `scheduler_job_registry` allowed `pending`, `running`, `succeeded`, `failed`,
+  and `skipped`; its original schema had match correlation but no window,
+  attempt, scrape-run, lease-generation, or lease-token columns.
+  `scrape_runs` allowed `running`, `completed`, `partial`, and `failed`; polling
+  used the attempt ID as `correlation_id`, but did not store the window/job/lease
+  correlations explicitly.
+* A polling claim committed first through the Scheduler write lane. Scrape-run
+  creation then committed before the request. Collection ran without a database
+  transaction. Successful domain upsert, scrape-run finalisation, and window
+  update shared one short write-lane transaction. Registry context updates were
+  separate and, for dynamic polling IDs, no registry row had first been
+  inserted. Consequently a process could stop after any earlier commit, and
+  match-wide CFS rows—not attempt-specific evidence—were the only persistence
+  evidence.
+* Finality is derived only from `cfs_player_stats`: authority level 2, a uniform
+  authoritative snapshot, both `home` and `away`, and at least 20 authoritative
+  rows. The window additionally requires concluded lifecycle before completion.
+  Legacy `player_stats` is not consulted. Existing writer results expose total
+  changed/written rows, while inserted/updated/unchanged values were not
+  persisted per polling attempt.
+* Startup ran migrations, reconciled match windows, registered dynamic jobs,
+  reconciled future pending one-shots, and only then started APScheduler. It had
+  no runtime heartbeat/history. Graceful shutdown drained the polling executor
+  and write lane, but did not persist a graceful marker. The process-local write
+  lane and token/generation predicates are the required mutation boundary.
+
+The focused implementation plan is to add migration `0014` with additive
+correlation/recovery evidence and explicit interrupted terminal states; add one
+write-lane reconciliation service with conservative settings, optimistic lease
+checks, authoritative-CFS decisions, structured/redacted reports, and no
+collector dependency; create polling audit/control rows with complete
+correlations and attempt-specific persistence evidence; establish runtime
+identity and run recovery before planner/job registration; expose the same
+service through a bounded `python -m scheduler.recovery` command; add controlled
+clock, state-matrix, idempotency, concurrency, startup-order, dry-run, scope,
+redaction, and integrity tests; and update the workflow/operator documentation.
+A replacement lease is never stolen, historical IDs are retained, and any retry
+is represented by a future claim with a new generation/attempt/job identity.
