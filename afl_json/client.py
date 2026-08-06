@@ -114,7 +114,7 @@ class AflJsonClient:
         self.session = session or requests.Session()
         self.policy = policy or HttpPolicy()
         self.sleep = sleep
-        self.token_provider = token_provider or WMCTokenProvider(self._acquire_token)
+        self.token_provider = token_provider or WMCTokenProvider(self.acquire_wmc_token)
 
     def close(self) -> None:
         self.session.close()
@@ -177,7 +177,7 @@ class AflJsonClient:
     def get(self, endpoint: str | EndpointDefinition, **kwargs: Any) -> AflJsonResponse:
         return self.request(endpoint, **kwargs)
 
-    def _acquire_token(self) -> str:
+    def acquire_wmc_token(self) -> str:
         definition = get_endpoint("wmc_token")
         response, attempts = self._send_with_retries(
             definition.method.value, definition.url_template, endpoint=definition.name,

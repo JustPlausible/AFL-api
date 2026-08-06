@@ -43,3 +43,51 @@ Settings use the existing environment/config mechanism:
 * `AFL_MATCH_WINDOW_POLICY_VERSION` participates in the one-active-window-per-match-policy uniqueness rule.
 
 The supported deployment remains one active Scheduler process with SQLite WAL/write-lane coordination; Redis, Celery, PostgreSQL, distributed schedulers, and database-backed APScheduler job stores remain out of scope.
+
+## Issue #133 polling implementation
+
+Issue #133 is recommendation four in the scheduler-readiness sequence. It builds on the timezone policy from Issue #130, SQLite connection/write-lane policy from Issue #131, and durable match-window leases/finality from Issue #132. The implementation adds a conservative `PlayerStatPollingWorker` over existing `match_stat_windows`; it does not add per-occurrence durable APScheduler jobs, a second planner, a queue, fallback collection, or a new persistence path.
+
+APScheduler wakes one coalesced planner job (`player_stat_polling_planner`) every 15 seconds. That wake-up is a bounded due-work decision and execution batch: it claims at most the configured worker limit, submits those attempts to the process-lifetime executor, and deliberately waits for that bounded batch to settle before returning. This conservative blocking choice means `max_instances=1` prevents overlapping planner batches while different claimed matches still run concurrently inside the domain executor. A slow attempt therefore delays the next wake-up rather than creating an unbounded submitted-work queue; persisted leases and `next_due_at` coalesce the next wake-up into current useful state instead of replaying missed intervals.
+
+### Lifecycle, cadence, and finality
+
+Player-stat polling is disabled by default for safe rollout. When enabled, live collection requires an authoritative `LIVE` lifecycle already persisted by the planner; scheduled bounce time alone is not enough. The default live cadence is 60 seconds before jitter. Pre-match/unpublished observations use slower cadence, post-match/final-confirmation uses slower cadence, and HTTP/auth/transient failures use bounded backoff. `next_due_at` is persisted after every accepted attempt so restart behavior preserves the last cadence decision.
+
+A match-domain closes only after CFS has written an authoritative concluded snapshot to `cfs_player_stats` and the shared season-report completeness predicate passes. Overall match conclusion, elapsed time, or estimated match duration alone cannot close the player-stat domain. If the post-match horizon expires without final complete evidence, the existing planner records `polling_horizon_exceeded` as visible incomplete operator-action state rather than falsely marking the domain complete.
+
+### Concurrency, SQLite, and source authority
+
+The conservative defaults are two collection workers, two CFS/player-stat network permits, one in-process owner per match, and one serialized Scheduler write lane. The process-lifetime worker owns and reuses one bounded executor rather than creating threads for every planner wake-up. One wake-up may execute different claimed matches concurrently, but the existing lease model prevents two active attempts for the same match. Status distinguishes submitted, queued, and active attempts; attempts waiting for a network permit; requests that actually hold a permit; and whether the worker is running, closing, or closed and accepting new claims.
+
+Network collection happens before the persistence callback enters the write lane. At the start of that short SQLite transaction, the worker verifies the expected lease token before calling the existing CFS upsert; it then performs finality inspection, audit finalisation, and window rescheduling/release atomically. If lease ownership is lost before persistence, the attempt is failed in `scrape_runs` and the stale owner writes neither statistics nor window state. Writer wait and transaction timing continue to be emitted by `scheduler.write_lane` diagnostics.
+
+CFS JSON remains the operational authority for player statistics. Accepted records are passed to the existing `upsert_player_stats` writer and therefore write only `cfs_player_stats`. The worker never invokes HTML fallback and never writes `player_stats`. Existing snapshot-authority protections prevent stale or lower-authority observations from regressing authoritative final data; lower-authority observations after completion are audited and ignored for persistence.
+
+### CFS client lifecycle
+
+The scheduler process owns one process-lifetime `PlayerStatPollingWorker`, bounded executor, and `SchedulerCfsClientPool`, acquired by the APScheduler wake-up and closed during scheduler shutdown. The pool uses per-thread HTTP sessions to avoid sharing an unsafe `requests.Session` across uncontrolled threads, while sharing one process-local synchronized `WMCTokenProvider` through an explicit public token-acquisition boundary so the CFS token is acquired lazily and reused. The underlying client still performs exactly one refresh after a 401; only authentication failure after that refresh opens the process-domain cooldown. The cooldown itself is deliberately process-local, while the failed window's count, reason, backoff, and `next_due_at` remain durable across restart.
+
+Shutdown first prevents new claims, marks the worker closing, drains every already-submitted bounded attempt, shuts down the worker executor, and only then closes all owned sessions and marks the worker closed. Repeated shutdown is idempotent, and a closed worker returns a benign no-work decision rather than submitting to its closed executor. Requests therefore cannot race session closure. Diagnostics use the existing audit redaction helpers rather than logging credentials, cookies, authorization headers, or tokens.
+
+### Controls and operations
+
+Environment/config controls follow the existing conventions:
+
+* `AFL_PLAYER_STAT_POLLING_ENABLED` globally enables the pilot; default `false`.
+* `AFL_PLAYER_STAT_POLLING_KILL_SWITCH` immediately prevents new claims.
+* `AFL_PLAYER_STAT_POLLING_DRAIN` prevents new claims while active attempts settle.
+* `AFL_PLAYER_STAT_POLLING_ALLOWED_COMPETITIONS`, `AFL_PLAYER_STAT_POLLING_ALLOWED_SEASONS`, and `AFL_PLAYER_STAT_POLLING_ALLOWED_MATCHES` provide rollout allowlists.
+* `AFL_PLAYER_STAT_POLLING_LIVE_SECONDS` defaults to `60`; post/pre/unavailable cadence and failure backoff values are separately configurable.
+* `AFL_PLAYER_STAT_POLLING_MAX_WORKERS`, `AFL_PLAYER_STAT_POLLING_NETWORK_CONCURRENCY`, `AFL_PLAYER_STAT_POLLING_CLAIM_LIMIT`, and `AFL_PLAYER_STAT_POLLING_JITTER_SECONDS` bound concurrency and spread simultaneous matches.
+
+Disable, drain, and kill-switch controls do not delete planner history, leases, scrape-run evidence, registry rows, or authoritative statistics. For live validation, use a backed-up database, a single Scheduler process, and a small match allowlist; record request counts, 429s, token acquisitions, latency, write-lane waits, finality transitions, and restart behavior before expanding the rollout. Rollback by disabling new claims or draining, stopping the scheduler after active attempts settle or leases expire, taking a safe SQLite backup including WAL state, and deploying the previous image/SHA. Do not copy only the main database file while WAL is active.
+
+### Troubleshooting
+
+* Unpublished or temporarily unavailable CFS data should show `final_stats_unavailable_or_partial` or an unavailable cadence with zero writes and no failure increment.
+* HTTP 429 and transient transport/server failures should move the window to backoff with a bounded future `next_due_at`; unrelated due matches continue.
+* Repeated authentication failure should appear as an auth pause/backoff state with redacted diagnostics; the process-level auth circuit prevents new claims during the cooldown so one bad token state does not hammer CFS across matches.
+* SQLite lock pressure should be investigated with `scheduler.write_lane` wait/transaction diagnostics before increasing concurrency.
+* Interrupted attempts are recovered by the existing lease-expiry reconciliation and replanned from current match/window/finality state.
+* Bounded-horizon expiry remains visibly incomplete (`polling_horizon_exceeded`) and requires operator reconciliation rather than automatic completion.

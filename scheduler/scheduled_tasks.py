@@ -4,6 +4,7 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.jobstores.memory import MemoryJobStore
 from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 from scheduler.schedule_match_scrapes import register_live_match_day_scraper
 from datetime import datetime
 from utils.log import setup_logger
@@ -51,6 +52,12 @@ def daily_match_scrape():
 @scheduler.scheduled_job(CronTrigger(hour=9, minute=0), id=refresh_job_id("check_match_day"), name="Check for match-day scraper")  # 9:00 AM AWST
 def check_for_match_day():
     return execute_registered_job(refresh_job_id("check_match_day"), register_live_match_day_scraper, scheduler)
+
+
+@scheduler.scheduled_job(IntervalTrigger(seconds=15), id="player_stat_polling_planner", name="CFS player-stat polling planner", max_instances=1, coalesce=True, misfire_grace_time=10)
+def player_stat_polling_planner():
+    from scheduler.player_stat_polling import get_player_stat_polling_worker
+    return get_player_stat_polling_worker().run_once()
 
 
 # Start the scheduler loop
