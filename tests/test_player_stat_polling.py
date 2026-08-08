@@ -141,30 +141,76 @@ def test_stale_claimed_window_lifecycle_resolves_canonical_conclusion(db):
     """Regression for issue #145 (match 8230): matches.status advances to
     CONCLUDED after a window was planned/claimed but before this attempt's
     collection. The claimed row's cached lifecycle is still LIVE and the CFS
-    endpoint itself still reports LIVE, yet collection must resolve and
-    persist canonical CONCLUDED, and cadence must move off live cadence."""
+    endpoint itself still reports LIVE (an explicit but stale endpoint
+    lifecycle), yet collection must resolve and persist canonical CONCLUDED,
+    and the window must move into post-match cadence *and* the
+    final_confirmation phase without a scheduler restart.
+
+    partial_cadence and post_match_cadence are deliberately set to different
+    values here: their shared 2-minute default would let a next_due_at
+    assertion pass by coincidence even if the wrong cadence branch fired."""
     conn, path = db
     add_match(conn, status="LIVE")
     reconcile(conn, now=NOW, settings=window_settings())
     conn.commit()
-    claimed_lifecycle = conn.execute("SELECT lifecycle FROM match_stat_windows").fetchone()[0]
-    assert claimed_lifecycle == "LIVE"
+    before = conn.execute(
+        "SELECT lifecycle, collection_phase FROM match_stat_windows"
+    ).fetchone()
+    assert before[:] == ("LIVE", "live")
     # The canonical match concludes after the window was reconciled/claimed,
     # without the window row itself being touched again.
     conn.execute("UPDATE matches SET status='CONCLUDED' WHERE match_id=8001")
     conn.commit()
-    client = Client(live_payload("LIVE"))  # stale/absent endpoint lifecycle
-    worker = PlayerStatPollingWorker(settings=settings(), window_settings=window_settings(),
+    client = Client(live_payload("LIVE"))  # stale/explicit endpoint lifecycle
+    worker_settings = settings(partial_cadence=timedelta(seconds=99),
+                                post_match_cadence=timedelta(seconds=45))
+    worker = PlayerStatPollingWorker(settings=worker_settings, window_settings=window_settings(),
         client_pool=Pool(client), clock=lambda: NOW, lane=DirectLane(path))
     out = worker.run_once()[0]
     assert client.calls == 1
     assert out["status"] == "rescheduled"
     rows = conn.execute("SELECT resolved_match_status FROM cfs_player_stats").fetchall()
     assert rows and all(row[0] == "CONCLUDED" for row in rows)
-    next_due = conn.execute("SELECT next_due_at FROM match_stat_windows").fetchone()[0]
-    # Cadence must reflect the fresher canonical status (partial/post-match),
-    # not the stale claimed lifecycle's live cadence of 60 seconds.
-    assert next_due == (NOW + timedelta(minutes=2)).isoformat()
+    after = conn.execute(
+        "SELECT next_due_at, collection_phase, cadence_profile FROM match_stat_windows"
+    ).fetchone()
+    # Cadence must reflect the distinct post_match_cadence, not partial_cadence
+    # and not the stale claimed lifecycle's 60-second live cadence.
+    assert after["next_due_at"] == (NOW + timedelta(seconds=45)).isoformat()
+    assert after["collection_phase"] == "final_confirmation"
+    assert after["cadence_profile"] == "post_match_awaiting_final"
+
+
+def test_stale_window_with_absent_endpoint_lifecycle_reaches_authoritative_completion(db):
+    """Regression for issue #145: canonical CONCLUDED with a stale claimed
+    window lifecycle *and* a completely absent endpoint lifecycle (no
+    matchStatus/status/matchPhase field at all, not merely an older explicit
+    value). Once enough authoritative rows are present, the window must reach
+    'complete' without ever having its cached lifecycle reconciled first."""
+    conn, path = db
+    add_match(conn, status="LIVE")
+    reconcile(conn, now=NOW, settings=window_settings())
+    conn.commit()
+    assert conn.execute("SELECT lifecycle FROM match_stat_windows").fetchone()[0] == "LIVE"
+    conn.execute("UPDATE matches SET status='CONCLUDED' WHERE match_id=8001")
+    conn.commit()
+    payload = {
+        "homeTeamPlayerStats": [{"player": {"playerId": f"CD_H{i}"}, "playerStats": {"stats": {"goals": 1}}} for i in range(20)],
+        "awayTeamPlayerStats": [{"player": {"playerId": f"CD_A{i}"}, "playerStats": {"stats": {"goals": 1}}} for i in range(20)],
+    }  # deliberately no matchStatus/status/matchPhase key present
+    client = Client(payload)
+    worker = PlayerStatPollingWorker(settings=settings(), window_settings=window_settings(),
+        client_pool=Pool(client), clock=lambda: NOW, lane=DirectLane(path))
+    out = worker.run_once()[0]
+    assert client.calls == 1
+    assert out["status"] == "complete"
+    rows = conn.execute("SELECT resolved_match_status, snapshot_authority FROM cfs_player_stats").fetchall()
+    assert len(rows) == 40
+    assert all(row[0] == "CONCLUDED" and row[1] == 2 for row in rows)
+    after = conn.execute(
+        "SELECT status, collection_phase, finality_state, lease_token FROM match_stat_windows"
+    ).fetchone()
+    assert after[:] == ("complete", "complete", "authoritative_complete", None)
 
 
 def test_controls_allowlist_and_drain(db):
