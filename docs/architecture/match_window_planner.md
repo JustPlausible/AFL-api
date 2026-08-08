@@ -27,6 +27,8 @@ Due claiming runs through the Scheduler SQLite write lane and opens a short `BEG
 
 Scheduler startup runs bounded reconciliation before dynamic job registration. Reconciliation creates missing windows idempotently, updates lifecycle/start-time decisions, preserves attempt/failure history, preserves valid unexpired leases as fully leased, clears expired leases with a recovery reason, and leaves completed/cancelled/terminal rows inspectable. Recoverable metadata problems such as missing provider identity, missing time, or unknown lifecycle are stored as `planning_error` and can reopen when metadata is repaired. It does not schedule repeated production CFS polling; cadence names are placeholders for Issue #133.
 
+Reconciliation is not startup-only (Issue #145). Whenever the `match_status` operational collection domain persists an advance to canonical `matches.status` — whether triggered by scheduled live-match refresh or as part of match-player-stat collection — it immediately runs the same targeted reconciliation (`scheduler.match_windows.reconcile(conn, match_ids={...})`) for that match's window inside the same write-lane transaction. This keeps an active window's `lifecycle` from lagging the canonical match until the next reconciliation sweep or a scheduler restart, and it preserves a currently held lease exactly as startup reconciliation does.
+
 Operators can inspect `/scheduler/match-windows` for match IDs, provider IDs, competition/season context, lifecycle, phase, status, next due time, cadence, lease owner/expiry, last attempts/successes, finality, counts, reason code, and series ID. Public/admin mutation controls are intentionally out of scope.
 
 ## Configuration
@@ -53,6 +55,8 @@ APScheduler wakes one coalesced planner job (`player_stat_polling_planner`) ever
 ### Lifecycle, cadence, and finality
 
 Player-stat polling is disabled by default for safe rollout. When enabled, live collection requires an authoritative `LIVE` lifecycle already persisted by the planner; scheduled bounce time alone is not enough. The default live cadence is 60 seconds before jitter. Pre-match/unpublished observations use slower cadence, post-match/final-confirmation uses slower cadence, and HTTP/auth/transient failures use bounded backoff. `next_due_at` is persisted after every accepted attempt so restart behavior preserves the last cadence decision.
+
+A claimed window's cached `lifecycle` is only used to decide *whether* an attempt is eligible to run at all (Issue #145). Once an attempt proceeds, the worker re-reads current canonical `matches.status` immediately before collection (a single read-only query, not a network call) and passes that fresher value — combined monotonically with the claimed lifecycle — as `canonical_match_status` to the CFS collector, and uses it to choose live vs. post-match cadence. This prevents a window whose `lifecycle` has not yet been reconciled from repeatedly resolving and persisting a stale `LIVE` `resolved_match_status`, or staying on live cadence, after the canonical match has already concluded.
 
 A match-domain closes only after CFS has written an authoritative concluded snapshot to `cfs_player_stats` and the shared season-report completeness predicate passes. Overall match conclusion, elapsed time, or estimated match duration alone cannot close the player-stat domain. If the post-match horizon expires without final complete evidence, the existing planner records `polling_horizon_exceeded` as visible incomplete operator-action state rather than falsely marking the domain complete.
 
@@ -91,3 +95,4 @@ Disable, drain, and kill-switch controls do not delete planner history, leases, 
 * SQLite lock pressure should be investigated with `scheduler.write_lane` wait/transaction diagnostics before increasing concurrency.
 * Interrupted attempts are recovered by the existing lease-expiry reconciliation and replanned from current match/window/finality state.
 * Bounded-horizon expiry remains visibly incomplete (`polling_horizon_exceeded`) and requires operator reconciliation rather than automatic completion.
+* A window whose `lifecycle` disagrees with `matches.status` (e.g. `matches.status=CONCLUDED` with `match_stat_windows.lifecycle=LIVE`) should self-correct on the next `match_status` collection for that match; it no longer requires a scheduler restart or a manual targeted reconciliation call (Issue #145).

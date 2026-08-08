@@ -137,6 +137,36 @@ def test_final_complete_closes_and_live_cannot_regress(db):
     PlayerStatPollingWorker(settings=settings(), window_settings=window_settings(), client_pool=Pool(Client(live_payload("LIVE"))), clock=lambda: NOW+timedelta(minutes=1), lane=DirectLane(path)).run_once()
     assert conn.execute("SELECT COUNT(*), MIN(snapshot_authority) FROM cfs_player_stats").fetchone() == before
 
+def test_stale_claimed_window_lifecycle_resolves_canonical_conclusion(db):
+    """Regression for issue #145 (match 8230): matches.status advances to
+    CONCLUDED after a window was planned/claimed but before this attempt's
+    collection. The claimed row's cached lifecycle is still LIVE and the CFS
+    endpoint itself still reports LIVE, yet collection must resolve and
+    persist canonical CONCLUDED, and cadence must move off live cadence."""
+    conn, path = db
+    add_match(conn, status="LIVE")
+    reconcile(conn, now=NOW, settings=window_settings())
+    conn.commit()
+    claimed_lifecycle = conn.execute("SELECT lifecycle FROM match_stat_windows").fetchone()[0]
+    assert claimed_lifecycle == "LIVE"
+    # The canonical match concludes after the window was reconciled/claimed,
+    # without the window row itself being touched again.
+    conn.execute("UPDATE matches SET status='CONCLUDED' WHERE match_id=8001")
+    conn.commit()
+    client = Client(live_payload("LIVE"))  # stale/absent endpoint lifecycle
+    worker = PlayerStatPollingWorker(settings=settings(), window_settings=window_settings(),
+        client_pool=Pool(client), clock=lambda: NOW, lane=DirectLane(path))
+    out = worker.run_once()[0]
+    assert client.calls == 1
+    assert out["status"] == "rescheduled"
+    rows = conn.execute("SELECT resolved_match_status FROM cfs_player_stats").fetchall()
+    assert rows and all(row[0] == "CONCLUDED" for row in rows)
+    next_due = conn.execute("SELECT next_due_at FROM match_stat_windows").fetchone()[0]
+    # Cadence must reflect the fresher canonical status (partial/post-match),
+    # not the stale claimed lifecycle's live cadence of 60 seconds.
+    assert next_due == (NOW + timedelta(minutes=2)).isoformat()
+
+
 def test_controls_allowlist_and_drain(db):
     conn,path=db; add_match(conn); reconcile(conn, now=NOW, settings=window_settings()); conn.commit()
     assert PlayerStatPollingWorker(settings=settings(enabled=False), client_pool=Pool(Client(live_payload())), lane=DirectLane(path), clock=lambda: NOW).run_once() == []
