@@ -11,7 +11,9 @@ from types import SimpleNamespace
 import pytest
 
 from afl_json.client import AflJsonAuthenticationError, AflJsonClient
+from afl_json.match_status import MatchStatusResolution
 from afl_json.player_stats import PlayerStatsStatus, normalise_player_stats
+from collection.source_policy import _persist_status_and_reconcile_window
 from db.migration_runner import migrate_database
 from scheduler.match_windows import MatchWindowSettings, reconcile
 from scheduler.player_stat_polling import PlayerStatPollingSettings, PlayerStatPollingWorker, deterministic_jitter
@@ -136,6 +138,98 @@ def test_final_complete_closes_and_live_cannot_regress(db):
     conn.execute("UPDATE match_stat_windows SET status='due', next_due_at=?, lease_token=NULL", (NOW.isoformat(),)); conn.commit()
     PlayerStatPollingWorker(settings=settings(), window_settings=window_settings(), client_pool=Pool(Client(live_payload("LIVE"))), clock=lambda: NOW+timedelta(minutes=1), lane=DirectLane(path)).run_once()
     assert conn.execute("SELECT COUNT(*), MIN(snapshot_authority) FROM cfs_player_stats").fetchone() == before
+
+
+@pytest.mark.parametrize("endpoint_status", ["LIVE", None])
+def test_active_live_window_refreshes_concluded_lifecycle_and_reaches_final(
+    db, endpoint_status
+):
+    conn, path = db
+    add_match(conn, match_id=8230, provider="CD_M20260142201")
+    reconcile(conn, now=NOW, settings=window_settings())
+    conn.commit()
+
+    # The series is already active and has persisted a live observation.
+    PlayerStatPollingWorker(
+        settings=settings(), window_settings=window_settings(),
+        client_pool=Pool(Client(live_payload())), clock=lambda: NOW,
+        lane=DirectLane(path),
+    ).run_once()
+    assert conn.execute(
+        "SELECT lifecycle,collection_phase FROM match_stat_windows"
+    ).fetchone()[:] == ("LIVE", "live")
+
+    # Canonical lifecycle advances while the existing series remains active;
+    # deliberately leave the durable window stale to exercise attempt hardening.
+    conn.execute("UPDATE matches SET status='CONCLUDED' WHERE match_id=8230")
+    conn.execute(
+        "UPDATE match_stat_windows SET status='due',next_due_at=?",
+        ((NOW + timedelta(minutes=1)).isoformat(),),
+    )
+    conn.commit()
+    stale_payload = live_payload(endpoint_status)
+    if endpoint_status is None:
+        stale_payload.pop("matchStatus")
+    PlayerStatPollingWorker(
+        settings=settings(), window_settings=window_settings(),
+        client_pool=Pool(Client(stale_payload)),
+        clock=lambda: NOW + timedelta(minutes=1), lane=DirectLane(path),
+    ).run_once()
+
+    window = conn.execute(
+        "SELECT lifecycle,status,cadence_profile FROM match_stat_windows"
+    ).fetchone()
+    assert window["lifecycle"] == "CONCLUDED"
+    assert window["status"] == "awaiting_final"
+    assert window["cadence_profile"] == "post_match_awaiting_final"
+    statuses = conn.execute(
+        "SELECT DISTINCT resolved_match_status FROM cfs_player_stats "
+        "WHERE match_provider_id='CD_M20260142201'"
+    ).fetchall()
+    assert [status[0] for status in statuses] == ["CONCLUDED"]
+
+    final_payload = live_payload("CONCLUDED")
+    final_payload["homeTeamPlayerStats"] = [
+        {"player":{"playerId":"CD_I1" if i == 0 else f"CD_H{i}"},"playerStats":{"stats":{"goals":1}}}
+        for i in range(20)
+    ]
+    final_payload["awayTeamPlayerStats"] = [
+        {"player":{"playerId":"CD_I2" if i == 0 else f"CD_A{i}"},"playerStats":{"stats":{"goals":1}}}
+        for i in range(20)
+    ]
+    conn.execute(
+        "UPDATE match_stat_windows SET status='due',next_due_at=?",
+        ((NOW + timedelta(minutes=3)).isoformat(),),
+    )
+    conn.commit()
+    PlayerStatPollingWorker(
+        settings=settings(), window_settings=window_settings(),
+        client_pool=Pool(Client(final_payload)),
+        clock=lambda: NOW + timedelta(minutes=3), lane=DirectLane(path),
+    ).run_once()
+    assert conn.execute(
+        "SELECT status,collection_phase,finality_state FROM match_stat_windows"
+    ).fetchone()[:] == ("complete", "complete", "authoritative_complete")
+
+
+def test_canonical_status_persistence_immediately_reconciles_active_window(db):
+    conn, _ = db
+    current = datetime.now(timezone.utc)
+    add_match(conn, match_id=8230, provider="CD_M20260142201", start=current.isoformat())
+    reconcile(conn, now=current, settings=window_settings())
+    resolution = MatchStatusResolution(
+        "CD_M20260142201", 8230, "LIVE", "CONCLUDED", "CONCLUDED",
+        "direct_match_detail", True, (),
+    )
+
+    assert _persist_status_and_reconcile_window(conn, resolution, 8230) is True
+    row = conn.execute(
+        "SELECT lifecycle,status,collection_phase,cadence_profile "
+        "FROM match_stat_windows"
+    ).fetchone()
+    assert row[:] == (
+        "CONCLUDED", "awaiting_final", "final_confirmation", "final_placeholder"
+    )
 
 def test_controls_allowlist_and_drain(db):
     conn,path=db; add_match(conn); reconcile(conn, now=NOW, settings=window_settings()); conn.commit()
