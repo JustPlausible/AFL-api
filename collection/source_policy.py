@@ -135,6 +135,15 @@ def _match_context(conn, match_id: int) -> tuple[str, str | None]:
     return str(row[0]), row[1]
 
 
+def _reconcile_window_for_advanced_status(conn, match_id: int) -> None:
+    """Reuse the existing targeted match-window reconciliation immediately after
+    matches.status advances, so match_stat_windows.lifecycle (and therefore
+    polling cadence/phase) does not lag the canonical match until the next
+    scheduled reconciliation sweep or a scheduler restart."""
+    from scheduler.match_windows import reconcile as reconcile_match_windows
+    reconcile_match_windows(conn, match_ids={match_id}, correlation_id="match_status_advance")
+
+
 def collect_operational(
     domain: OperationalDomain | str, *, target_id: int | None = None,
     trigger_source: str = TRIGGER_SCHEDULER, correlation_id: str | None = None,
@@ -223,11 +232,17 @@ def collect_operational(
                             afl_match_id=target_id, persist=write_executor is None,
                         )
                         if write_executor:
+                            def _persist_status(db):
+                                refreshed = persist_match_status_resolution(db, result)
+                                if refreshed:
+                                    _reconcile_window_for_advanced_status(db, target_id)
+                                return refreshed
                             written = int(write_executor(
-                                "match_status.persist", target_id,
-                                lambda db: persist_match_status_resolution(db, result),
+                                "match_status.persist", target_id, _persist_status,
                             ))
                         else:
+                            if result.canonical_refreshed:
+                                _reconcile_window_for_advanced_status(conn, target_id)
                             conn.commit()
                             written = int(result.canonical_refreshed)
                         outcome = CollectionOutcome(selected.domain.value, selected.source_family,
@@ -245,11 +260,15 @@ def collect_operational(
                             canonical_match_status=resolution.resolved_status or stored_status,
                         )
                         def persist_stats(db):
-                            persist_match_status_resolution(db, resolution)
+                            refreshed = persist_match_status_resolution(db, resolution)
+                            if refreshed:
+                                _reconcile_window_for_advanced_status(db, target_id)
                             return upsert_player_stats(db, result)
                         written = (write_executor("cfs_player_stats.persist_match", target_id, persist_stats)
                                    if write_executor else upsert_player_stats(conn, result))
                         if not write_executor:
+                            if resolution.canonical_refreshed:
+                                _reconcile_window_for_advanced_status(conn, target_id)
                             conn.commit()
                         status = "unavailable" if result.status is PlayerStatsStatus.UNAVAILABLE else "success"
                         outcome = CollectionOutcome(selected.domain.value, selected.source_family,

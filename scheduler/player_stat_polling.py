@@ -15,7 +15,10 @@ import config
 from afl_json.client import (AflJsonAuthenticationError, AflJsonClient, AflJsonHttpError,
                              AflJsonInvalidResponse, AflJsonTransportError,
                              HttpPolicy, WMCTokenProvider)
-from afl_json.player_stats import MatchPlayerStatsCollector, PlayerStatsStatus, upsert_player_stats
+from afl_json.match_status import later_match_status
+from afl_json.player_stats import (MatchPlayerStatsCollector, PlayerStatsStatus,
+                                   resolve_canonical_match_status, upsert_player_stats)
+from db.connection import get_read_only_db_connection
 from db.scrape_runs import (record_scrape_decision, sanitize_error_summary,
                             scheduler_job_context)
 from scheduler.match_windows import (FinalityState, MatchWindowSettings,
@@ -304,6 +307,21 @@ class PlayerStatPollingWorker:
                 self._active_network_requests -= 1
             self._network.release()
 
+    @staticmethod
+    def _current_canonical_status(row: dict[str, Any]) -> str | None:
+        """Read the freshest canonical matches.status rather than trusting the
+        window lifecycle cached at claim time, which can lag a status advance
+        that happened after the window was last reconciled."""
+        conn = get_read_only_db_connection()
+        try:
+            fresh = resolve_canonical_match_status(
+                conn, match_provider_id=row.get("match_provider_id"),
+                afl_match_id=row.get("match_id"),
+            )
+        finally:
+            conn.close()
+        return later_match_status(row.get("lifecycle"), fresh)
+
     def run_claim(self, row: dict[str, Any]) -> dict[str, Any]:
         attempt = row["attempt_id"]
         job_id = row["scheduler_job_id"]
@@ -347,9 +365,10 @@ class PlayerStatPollingWorker:
                 return self._persist_skip(row, execution, "awaiting_authoritative_live", self.settings.pre_match_cadence, failure=False)
             started = time.monotonic()
             try:
+                canonical_status = self._current_canonical_status(row)
                 with scheduler_job_context(job_id):
                     with self._network_permit():
-                        result = self.collector_factory(self.client_pool.client(), clock=self.clock).collect(row["match_provider_id"], afl_match_id=row.get("afl_match_id"), canonical_match_status=row.get("lifecycle"))
+                        result = self.collector_factory(self.client_pool.client(), clock=self.clock).collect(row["match_provider_id"], afl_match_id=row.get("afl_match_id"), canonical_match_status=canonical_status)
                 network_ms = int((time.monotonic() - started) * 1000)
                 received = _iso(self.clock().astimezone(timezone.utc))
                 def checkpoint(conn):
@@ -357,7 +376,7 @@ class PlayerStatPollingWorker:
                     if updated.rowcount != 1:
                         raise RuntimeError("Expected one running scrape run at response checkpoint")
                 self.lane.execute("player_stats_poll.response_received", run_id, checkpoint)
-                return self._persist_success(row, result, execution, network_ms)
+                return self._persist_success(row, result, execution, network_ms, canonical_status)
             except AflJsonAuthenticationError as exc:
                 return self._persist_failure(row, execution, exc, _failure_backoff(row, self.settings.auth_pause, self.settings), "auth_failed_paused", set_auth_pause=True)
             except AflJsonHttpError as exc:
@@ -391,11 +410,13 @@ class PlayerStatPollingWorker:
             return {"status": reason, "next_due_at": _iso(next_due), "scrape_run_id": run_id}
         return self.lane.execute("player_stats_poll.persist_skip", row["window_id"], op)
 
-    def _persist_success(self, row, result, execution: AttemptExecution, network_ms: int) -> dict[str, Any]:
+    def _persist_success(self, row, result, execution: AttemptExecution, network_ms: int,
+                         canonical_status: str | None = None) -> dict[str, Any]:
         run_id = execution.run_id
         now = self.clock().astimezone(timezone.utc)
         failure_like = result.status in {PlayerStatsStatus.EMPTY, PlayerStatsStatus.UNKNOWN}
-        cadence, phase_reason = cadence_for(row, result.status, self.settings)
+        cadence_row = {**row, "lifecycle": canonical_status or row.get("lifecycle")}
+        cadence, phase_reason = cadence_for(cadence_row, result.status, self.settings)
         next_due = now + cadence + self.jitter(row["window_id"], phase_reason, self.settings.jitter_seconds)
         def op(conn):
             owned = conn.execute(
