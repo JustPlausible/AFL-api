@@ -90,7 +90,7 @@ def register_live_stat_scrapers(scheduler):
             continue
 
         scheduler_log.info(f"🚨 Starting immediate scraper for LIVE match {match_id}")
-        recovery_time = datetime.now(AWST) + timedelta(seconds=1)
+        recovery_time = datetime.now(match_day_timezone()) + timedelta(seconds=1)
         add_registered_job(
             scheduler, run_stats_scraper,
             trigger=DateTrigger(run_date=recovery_time), run_date=recovery_time, args=[match_id],
