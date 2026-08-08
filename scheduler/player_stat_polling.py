@@ -15,7 +15,10 @@ import config
 from afl_json.client import (AflJsonAuthenticationError, AflJsonClient, AflJsonHttpError,
                              AflJsonInvalidResponse, AflJsonTransportError,
                              HttpPolicy, WMCTokenProvider)
-from afl_json.player_stats import MatchPlayerStatsCollector, PlayerStatsStatus, upsert_player_stats
+from afl_json.match_status import later_match_status
+from afl_json.player_stats import (MatchPlayerStatsCollector, PlayerStatsStatus,
+                                   resolve_canonical_match_status, upsert_player_stats)
+from db.connection import get_read_only_db_connection
 from db.scrape_runs import (record_scrape_decision, sanitize_error_summary,
                             scheduler_job_context)
 from scheduler.match_windows import (FinalityState, MatchWindowSettings,
@@ -172,7 +175,15 @@ def cadence_for(row: dict[str, Any], status: PlayerStatsStatus | None, settings:
     if status in {PlayerStatsStatus.EMPTY, PlayerStatsStatus.UNKNOWN}:
         return settings.partial_cadence, f"{status.value}_result"
     if status is PlayerStatsStatus.LIVE_PARTIAL:
-        return (settings.live_cadence if lifecycle == "LIVE" else settings.partial_cadence), "live_partial"
+        if lifecycle == "LIVE":
+            return settings.live_cadence, "live_partial"
+        if lifecycle in {"POSTGAME", "CONCLUDED"}:
+            # The endpoint itself is still reporting a live/partial snapshot,
+            # but the fresher canonical lifecycle has already moved past LIVE:
+            # this is post-match final-confirmation cadence/phase, not a
+            # generic ambiguous-partial retry.
+            return settings.post_match_cadence, "post_match_awaiting_final"
+        return settings.partial_cadence, "live_partial"
     if lifecycle == "LIVE":
         return settings.live_cadence, "live"
     if lifecycle in {"POSTGAME", "CONCLUDED"}:
@@ -304,6 +315,21 @@ class PlayerStatPollingWorker:
                 self._active_network_requests -= 1
             self._network.release()
 
+    @staticmethod
+    def _current_canonical_status(row: dict[str, Any]) -> str | None:
+        """Read the freshest canonical matches.status rather than trusting the
+        window lifecycle cached at claim time, which can lag a status advance
+        that happened after the window was last reconciled."""
+        conn = get_read_only_db_connection()
+        try:
+            fresh = resolve_canonical_match_status(
+                conn, match_provider_id=row.get("match_provider_id"),
+                afl_match_id=row.get("match_id"),
+            )
+        finally:
+            conn.close()
+        return later_match_status(row.get("lifecycle"), fresh)
+
     def run_claim(self, row: dict[str, Any]) -> dict[str, Any]:
         attempt = row["attempt_id"]
         job_id = row["scheduler_job_id"]
@@ -347,9 +373,10 @@ class PlayerStatPollingWorker:
                 return self._persist_skip(row, execution, "awaiting_authoritative_live", self.settings.pre_match_cadence, failure=False)
             started = time.monotonic()
             try:
+                canonical_status = self._current_canonical_status(row)
                 with scheduler_job_context(job_id):
                     with self._network_permit():
-                        result = self.collector_factory(self.client_pool.client(), clock=self.clock).collect(row["match_provider_id"], afl_match_id=row.get("afl_match_id"), canonical_match_status=row.get("lifecycle"))
+                        result = self.collector_factory(self.client_pool.client(), clock=self.clock).collect(row["match_provider_id"], afl_match_id=row.get("afl_match_id"), canonical_match_status=canonical_status)
                 network_ms = int((time.monotonic() - started) * 1000)
                 received = _iso(self.clock().astimezone(timezone.utc))
                 def checkpoint(conn):
@@ -357,7 +384,7 @@ class PlayerStatPollingWorker:
                     if updated.rowcount != 1:
                         raise RuntimeError("Expected one running scrape run at response checkpoint")
                 self.lane.execute("player_stats_poll.response_received", run_id, checkpoint)
-                return self._persist_success(row, result, execution, network_ms)
+                return self._persist_success(row, result, execution, network_ms, canonical_status)
             except AflJsonAuthenticationError as exc:
                 return self._persist_failure(row, execution, exc, _failure_backoff(row, self.settings.auth_pause, self.settings), "auth_failed_paused", set_auth_pause=True)
             except AflJsonHttpError as exc:
@@ -391,12 +418,24 @@ class PlayerStatPollingWorker:
             return {"status": reason, "next_due_at": _iso(next_due), "scrape_run_id": run_id}
         return self.lane.execute("player_stats_poll.persist_skip", row["window_id"], op)
 
-    def _persist_success(self, row, result, execution: AttemptExecution, network_ms: int) -> dict[str, Any]:
+    def _persist_success(self, row, result, execution: AttemptExecution, network_ms: int,
+                         canonical_status: str | None = None) -> dict[str, Any]:
         run_id = execution.run_id
         now = self.clock().astimezone(timezone.utc)
         failure_like = result.status in {PlayerStatsStatus.EMPTY, PlayerStatsStatus.UNKNOWN}
-        cadence, phase_reason = cadence_for(row, result.status, self.settings)
+        effective_lifecycle = str(canonical_status or row.get("lifecycle") or "").upper()
+        cadence_row = {**row, "lifecycle": effective_lifecycle}
+        cadence, phase_reason = cadence_for(cadence_row, result.status, self.settings)
         next_due = now + cadence + self.jitter(row["window_id"], phase_reason, self.settings.jitter_seconds)
+        # The claimed window's persisted collection_phase is only advanced past
+        # 'live' by a subsequent reconcile() call while the window is not
+        # leased (see match_windows.reconcile's valid-lease branch, which
+        # deliberately leaves collection_phase alone for an active attempt).
+        # This attempt is therefore the first opportunity to move phase out of
+        # 'live' once the fresher canonical lifecycle has itself moved past
+        # LIVE, so it is folded into this same single UPDATE below rather than
+        # issuing a separate write.
+        advance_to_final_confirmation = effective_lifecycle in {"POSTGAME", "CONCLUDED"}
         def op(conn):
             owned = conn.execute(
                 "SELECT 1 FROM match_stat_windows WHERE window_id=? AND lease_token=?",
@@ -420,8 +459,8 @@ class PlayerStatPollingWorker:
                       else ReasonCode.UNKNOWN_RESULT.value if result.status is PlayerStatsStatus.UNKNOWN
                       else ReasonCode.FINAL_STATS_UNAVAILABLE_OR_PARTIAL.value if result.status is PlayerStatsStatus.UNAVAILABLE
                       else ReasonCode.ATTEMPT_SUCCEEDED_NON_FINAL.value)
-            cur = conn.execute("""UPDATE match_stat_windows SET status=?, collection_phase=CASE WHEN ? THEN 'complete' ELSE collection_phase END, next_due_at=?, cadence_profile=?, attempt_count=attempt_count+1, consecutive_failure_count=CASE WHEN ? THEN consecutive_failure_count+1 ELSE 0 END, last_attempted_at=?, last_successful_collection_at=CASE WHEN ? THEN last_successful_collection_at ELSE ? END, last_successful_write_at=CASE WHEN ? > 0 THEN ? ELSE last_successful_write_at END, last_observed_snapshot_authority=?, finality_state=?, reason_code=?, diagnostic_summary=?, lease_owner=NULL, lease_token=NULL, lease_claimed_at=NULL, lease_expires_at=NULL, updated_at=? WHERE window_id=? AND lease_token=?""",
-                               (status, complete, None if complete else _iso(next_due), phase_reason, failure_like, _iso(now), failure_like, _iso(now), written, _iso(now), auth, finality.value, reason, f"outcome={result.status.value}; records={len(result.records)}; rejected={result.rejected_records}; network_ms={network_ms}; next_due={_iso(next_due) if not complete else None}", _iso(now), row["window_id"], execution.lease_token))
+            cur = conn.execute("""UPDATE match_stat_windows SET status=?, collection_phase=CASE WHEN ? THEN 'complete' WHEN ? THEN 'final_confirmation' ELSE collection_phase END, next_due_at=?, cadence_profile=?, attempt_count=attempt_count+1, consecutive_failure_count=CASE WHEN ? THEN consecutive_failure_count+1 ELSE 0 END, last_attempted_at=?, last_successful_collection_at=CASE WHEN ? THEN last_successful_collection_at ELSE ? END, last_successful_write_at=CASE WHEN ? > 0 THEN ? ELSE last_successful_write_at END, last_observed_snapshot_authority=?, finality_state=?, reason_code=?, diagnostic_summary=?, lease_owner=NULL, lease_token=NULL, lease_claimed_at=NULL, lease_expires_at=NULL, updated_at=? WHERE window_id=? AND lease_token=?""",
+                               (status, complete, advance_to_final_confirmation, None if complete else _iso(next_due), phase_reason, failure_like, _iso(now), failure_like, _iso(now), written, _iso(now), auth, finality.value, reason, f"outcome={result.status.value}; records={len(result.records)}; rejected={result.rejected_records}; network_ms={network_ms}; next_due={_iso(next_due) if not complete else None}", _iso(now), row["window_id"], execution.lease_token))
             if cur.rowcount != 1:
                 self._record_lost_lease(conn, execution, now, "lost lease before success persistence")
                 return {"status": "lost_lease", "rows_written": 0, "scrape_run_id": run_id}

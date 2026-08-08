@@ -1,5 +1,7 @@
 import logging
 import sqlite3
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -11,6 +13,7 @@ from collection import source_policy
 from collection.source_policy import OperationalDomain, policy_for
 from db.migration_runner import migrate_database
 from scheduler import manual_triggers
+from scheduler.match_windows import MatchWindowSettings, reconcile as reconcile_match_windows
 from scheduler.schedule_lineup_scrapes import run_lineup_round_scraper
 from scheduler.schedule_stat_scrapes import run_stats_scraper
 from scheduler import scheduled_tasks
@@ -88,6 +91,69 @@ def test_live_match_refresh_is_narrow_public_status_between_metadata_runs(tmp_pa
     assert len(calls) == 1 and calls[0][0] is OperationalDomain.MATCH_STATUS
     assert calls[0][1]["target_id"] == 10
     assert callable(calls[0][1]["write_executor"])
+
+
+def test_match_status_advance_reconciles_active_window_immediately(tmp_path, monkeypatch):
+    """Regression for issue #145 (match 8230): once canonical matches.status
+    advances (here via the direct match-detail reconciliation), the active
+    match_stat_windows row for that match must advance its lifecycle in the
+    same operation, without waiting for the next reconciliation sweep or a
+    scheduler restart, and without disturbing an in-flight polling lease."""
+    path = _database(tmp_path, monkeypatch)
+    now = datetime.now(timezone.utc)
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        "UPDATE matches SET status='LIVE', start_time_utc=? WHERE match_id=10",
+        ((now - timedelta(hours=1)).isoformat(),),
+    )
+    conn.commit()
+    settings = MatchWindowSettings(
+        pre_match_window=timedelta(hours=2), post_match_horizon=timedelta(hours=6),
+        lease_duration=timedelta(minutes=15),
+    )
+    reconcile_match_windows(conn, now=now, settings=settings)
+    # Simulate an already-active polling series holding a live lease.
+    conn.execute(
+        "UPDATE match_stat_windows SET status='leased', lease_owner='poller-1', "
+        "lease_token='tok-1', lease_generation=1, lease_claimed_at=?, lease_expires_at=? "
+        "WHERE match_id=10",
+        (now.isoformat(), (now + timedelta(minutes=15)).isoformat()),
+    )
+    conn.commit()
+    before = conn.execute(
+        "SELECT lifecycle, status, lease_token FROM match_stat_windows WHERE match_id=10"
+    ).fetchone()
+    assert before[:] == ("LIVE", "leased", "tok-1")
+
+    class DirectClient:
+        def __enter__(self): return self
+        def __exit__(self, *_args): pass
+        def get(self, endpoint, **_kwargs):
+            assert endpoint == "match_detail"
+            return SimpleNamespace(data={"matches": [
+                {"id": 10, "providerId": "CD_M10", "status": "CONCLUDED"},
+            ]})
+
+    def execute(_operation, _target, callback):
+        with sqlite3.connect(path) as db:
+            db.row_factory = sqlite3.Row
+            return callback(db)
+
+    outcome = source_policy.collect_operational(
+        OperationalDomain.MATCH_STATUS, target_id=10,
+        client_factory=DirectClient, write_executor=execute,
+    )
+    assert outcome.persistence_performed is True
+
+    conn2 = sqlite3.connect(path)
+    conn2.row_factory = sqlite3.Row
+    assert conn2.execute("SELECT status FROM matches WHERE match_id=10").fetchone()[0] == "CONCLUDED"
+    after = conn2.execute(
+        "SELECT lifecycle, status, lease_token FROM match_stat_windows WHERE match_id=10"
+    ).fetchone()
+    # Lifecycle advances promptly and the active lease/polling series is untouched.
+    assert after[:] == ("CONCLUDED", "leased", "tok-1")
 
 
 def test_operational_lineups_persist_and_report_written_rows(tmp_path, monkeypatch):
