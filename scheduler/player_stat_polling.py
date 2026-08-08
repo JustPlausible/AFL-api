@@ -20,6 +20,7 @@ from db.scrape_runs import (record_scrape_decision, sanitize_error_summary,
                             scheduler_job_context)
 from scheduler.match_windows import (FinalityState, MatchWindowSettings,
                                      ReasonCode, _finality, _iso, claim_due_windows,
+                                     reconcile as reconcile_match_windows,
                                      release_window)
 from scheduler.write_lane import write_lane
 from scheduler.runtime import INSTANCE_ID
@@ -172,7 +173,9 @@ def cadence_for(row: dict[str, Any], status: PlayerStatsStatus | None, settings:
     if status in {PlayerStatsStatus.EMPTY, PlayerStatsStatus.UNKNOWN}:
         return settings.partial_cadence, f"{status.value}_result"
     if status is PlayerStatsStatus.LIVE_PARTIAL:
-        return (settings.live_cadence if lifecycle == "LIVE" else settings.partial_cadence), "live_partial"
+        if lifecycle == "LIVE":
+            return settings.live_cadence, "live_partial"
+        return settings.partial_cadence, "post_match_awaiting_final"
     if lifecycle == "LIVE":
         return settings.live_cadence, "live"
     if lifecycle in {"POSTGAME", "CONCLUDED"}:
@@ -342,6 +345,33 @@ class PlayerStatPollingWorker:
                 raise RuntimeError("Expected one owned match window at attempt start")
         self.lane.execute("player_stats_poll.start_attempt", row["window_id"], start_attempt)
         try:
+            def refresh_lifecycle(conn):
+                reconcile_match_windows(
+                    conn,
+                    now=self.clock(),
+                    settings=self.window_settings,
+                    correlation_id=f"polling_attempt:{attempt}",
+                    match_ids={int(row["match_id"])},
+                )
+                current = conn.execute(
+                    "SELECT lifecycle FROM match_stat_windows "
+                    "WHERE window_id=? AND lease_token=?",
+                    (row["window_id"], execution.lease_token),
+                ).fetchone()
+                return current[0] if current else None
+
+            # The claim is a scheduling snapshot. Refresh it through the existing
+            # reconciler before collection so a lifecycle advance that raced the
+            # claim is observed without giving up or replacing the lease.
+            current_lifecycle = self.lane.execute(
+                "player_stats_poll.refresh_lifecycle", row["window_id"], refresh_lifecycle
+            )
+            if current_lifecycle is None:
+                return self._persist_skip(
+                    row, execution, "lost_lease", self.settings.transient_backoff,
+                    failure=True,
+                )
+            row = {**row, "lifecycle": current_lifecycle}
             lifecycle = str(row.get("lifecycle") or "").upper()
             if lifecycle not in {"LIVE", "POSTGAME", "CONCLUDED"}:
                 return self._persist_skip(row, execution, "awaiting_authoritative_live", self.settings.pre_match_cadence, failure=False)
@@ -420,8 +450,11 @@ class PlayerStatPollingWorker:
                       else ReasonCode.UNKNOWN_RESULT.value if result.status is PlayerStatsStatus.UNKNOWN
                       else ReasonCode.FINAL_STATS_UNAVAILABLE_OR_PARTIAL.value if result.status is PlayerStatsStatus.UNAVAILABLE
                       else ReasonCode.ATTEMPT_SUCCEEDED_NON_FINAL.value)
-            cur = conn.execute("""UPDATE match_stat_windows SET status=?, collection_phase=CASE WHEN ? THEN 'complete' ELSE collection_phase END, next_due_at=?, cadence_profile=?, attempt_count=attempt_count+1, consecutive_failure_count=CASE WHEN ? THEN consecutive_failure_count+1 ELSE 0 END, last_attempted_at=?, last_successful_collection_at=CASE WHEN ? THEN last_successful_collection_at ELSE ? END, last_successful_write_at=CASE WHEN ? > 0 THEN ? ELSE last_successful_write_at END, last_observed_snapshot_authority=?, finality_state=?, reason_code=?, diagnostic_summary=?, lease_owner=NULL, lease_token=NULL, lease_claimed_at=NULL, lease_expires_at=NULL, updated_at=? WHERE window_id=? AND lease_token=?""",
-                               (status, complete, None if complete else _iso(next_due), phase_reason, failure_like, _iso(now), failure_like, _iso(now), written, _iso(now), auth, finality.value, reason, f"outcome={result.status.value}; records={len(result.records)}; rejected={result.rejected_records}; network_ms={network_ms}; next_due={_iso(next_due) if not complete else None}", _iso(now), row["window_id"], execution.lease_token))
+            phase = ("complete" if complete else "final_confirmation"
+                     if str(row.get("lifecycle") or "").upper() in {"POSTGAME", "CONCLUDED"}
+                     else row.get("collection_phase"))
+            cur = conn.execute("""UPDATE match_stat_windows SET status=?, collection_phase=?, next_due_at=?, cadence_profile=?, attempt_count=attempt_count+1, consecutive_failure_count=CASE WHEN ? THEN consecutive_failure_count+1 ELSE 0 END, last_attempted_at=?, last_successful_collection_at=CASE WHEN ? THEN last_successful_collection_at ELSE ? END, last_successful_write_at=CASE WHEN ? > 0 THEN ? ELSE last_successful_write_at END, last_observed_snapshot_authority=?, finality_state=?, reason_code=?, diagnostic_summary=?, lease_owner=NULL, lease_token=NULL, lease_claimed_at=NULL, lease_expires_at=NULL, updated_at=? WHERE window_id=? AND lease_token=?""",
+                               (status, phase, None if complete else _iso(next_due), phase_reason, failure_like, _iso(now), failure_like, _iso(now), written, _iso(now), auth, finality.value, reason, f"outcome={result.status.value}; records={len(result.records)}; rejected={result.rejected_records}; network_ms={network_ms}; next_due={_iso(next_due) if not complete else None}", _iso(now), row["window_id"], execution.lease_token))
             if cur.rowcount != 1:
                 self._record_lost_lease(conn, execution, now, "lost lease before success persistence")
                 return {"status": "lost_lease", "rows_written": 0, "scrape_run_id": run_id}

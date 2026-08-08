@@ -135,6 +135,33 @@ def _match_context(conn, match_id: int) -> tuple[str, str | None]:
     return str(row[0]), row[1]
 
 
+def _persist_status_and_reconcile_window(conn, resolution, match_id: int) -> bool:
+    """Persist a lifecycle advance and synchronise its durable polling series."""
+    advanced = persist_match_status_resolution(conn, resolution)
+    if advanced:
+        from scheduler.match_windows import reconcile as reconcile_match_windows
+
+        reconcile_match_windows(
+            conn,
+            correlation_id=f"match_status_advance:{match_id}",
+            match_ids={match_id},
+        )
+    return advanced
+
+
+def _reconcile_window_for_persisted_advance(conn, resolution, match_id: int) -> None:
+    """Synchronise when reconcile_match_status already persisted on this connection."""
+    if not resolution.canonical_refreshed:
+        return
+    from scheduler.match_windows import reconcile as reconcile_match_windows
+
+    reconcile_match_windows(
+        conn,
+        correlation_id=f"match_status_advance:{match_id}",
+        match_ids={match_id},
+    )
+
+
 def collect_operational(
     domain: OperationalDomain | str, *, target_id: int | None = None,
     trigger_source: str = TRIGGER_SCHEDULER, correlation_id: str | None = None,
@@ -225,9 +252,12 @@ def collect_operational(
                         if write_executor:
                             written = int(write_executor(
                                 "match_status.persist", target_id,
-                                lambda db: persist_match_status_resolution(db, result),
+                                lambda db: _persist_status_and_reconcile_window(
+                                    db, result, target_id
+                                ),
                             ))
                         else:
+                            _reconcile_window_for_persisted_advance(conn, result, target_id)
                             conn.commit()
                             written = int(result.canonical_refreshed)
                         outcome = CollectionOutcome(selected.domain.value, selected.source_family,
@@ -245,11 +275,14 @@ def collect_operational(
                             canonical_match_status=resolution.resolved_status or stored_status,
                         )
                         def persist_stats(db):
-                            persist_match_status_resolution(db, resolution)
+                            _persist_status_and_reconcile_window(db, resolution, target_id)
                             return upsert_player_stats(db, result)
                         written = (write_executor("cfs_player_stats.persist_match", target_id, persist_stats)
                                    if write_executor else upsert_player_stats(conn, result))
                         if not write_executor:
+                            _reconcile_window_for_persisted_advance(
+                                conn, resolution, target_id
+                            )
                             conn.commit()
                         status = "unavailable" if result.status is PlayerStatsStatus.UNAVAILABLE else "success"
                         outcome = CollectionOutcome(selected.domain.value, selected.source_family,
