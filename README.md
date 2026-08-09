@@ -243,11 +243,16 @@ only after canonical AFL player-ID resolution.
 
 All API routes require an `x-api-key` header. Full API keys are shown only when created or renewed; SQLite stores only a non-reversible hash plus a short administrative prefix. Existing plaintext keys are migrated in place during database initialisation as described in [`docs/api_key_migration.md`](docs/api_key_migration.md).
 
-Manage your keys via:
+Manage your keys via the operator CLI, run from the repository root (or the
+equivalent working directory inside the container — no `PYTHONPATH` needed):
 
 ```bash
-PYTHONPATH=/app python3 scripts/manage_api_keys.py --add "my-label"
+python cli.py --add-api-key "my-label"
+python cli.py --list-api-keys
+python cli.py --remove-api-key "my-label"
 ```
+
+See [`docs/cli.md`](docs/cli.md#api-key-management) for the full reference.
 
 Example request:
 
@@ -333,7 +338,7 @@ src/
 ├── db/                # SQLite init + import logic
 ├── merge/             # Data reconciliation and matching logic
 ├── scraper/           # Club, player, injuries and team lineup scrapers
-├── scripts/           # API key + admin CLI tools
+├── scripts/           # API key persistence + admin CLI helpers (invoked via cli.py)
 ├── utils/             # Logging, nicknames, config
 ├── cli.py             # Unified CLI (scrape, enrich, import)
 └── main.py            # api entry point

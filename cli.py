@@ -34,6 +34,9 @@ OPERATION_FLAGS = {
     "collect_match_player_stats": "--collect-match-player-stats",
     "import_clubs": "--import-clubs",
     "export_clubs": "--export-clubs",
+    "add_api_key": "--add-api-key",
+    "list_api_keys": "--list-api-keys",
+    "remove_api_key": "--remove-api-key",
 }
 
 def _provider_id(value: str, *, prefix: str, label: str, example: str) -> str:
@@ -180,6 +183,15 @@ def create_parser() -> argparse.ArgumentParser:
     db_group = parser.add_argument_group("Club database tools")
     _add_operation_argument(db_group, "import_clubs", action="store_true", help="Persist the canonical club seed to the database")
     _add_operation_argument(db_group, "export_clubs", action="store_true", help="Export clubs from DB to backup JSON")
+
+    # 🔹 API key management
+    api_key_group = parser.add_argument_group("API key management")
+    _add_operation_argument(api_key_group, "add_api_key", metavar="LABEL",
+                            help="Add a new API key for LABEL and display the full key once; it is stored only as a hash")
+    _add_operation_argument(api_key_group, "list_api_keys", action="store_true",
+                            help="List API key labels, prefixes, and active status; full keys are never shown")
+    _add_operation_argument(api_key_group, "remove_api_key", metavar="KEY_OR_LABEL",
+                            help="Remove an API key by its presented full key or its label")
 
     return parser
 
