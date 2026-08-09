@@ -232,6 +232,37 @@ def handle_export_clubs(_args):
     export_clubs_from_db()
 
 
+def _run_api_key_operation(operation, *operation_args):
+    """Convert a missing configured database into a clean, non-zero exit.
+
+    ``scripts.manage_api_keys`` opens the database through the shared
+    ``db.connection.get_db_connection`` policy, which raises
+    ``FileNotFoundError`` rather than silently creating an unintended
+    database at an incorrectly configured ``DB_PATH``. That failure is
+    already logged clearly by the connection helper; this only avoids
+    surfacing a raw traceback for it.
+    """
+    try:
+        operation(*operation_args)
+    except FileNotFoundError:
+        raise SystemExit(1) from None
+
+
+def handle_add_api_key(args):
+    from scripts.manage_api_keys import add_api_key
+    _run_api_key_operation(add_api_key, args.add_api_key)
+
+
+def handle_list_api_keys(_args):
+    from scripts.manage_api_keys import list_api_keys
+    _run_api_key_operation(list_api_keys)
+
+
+def handle_remove_api_key(args):
+    from scripts.manage_api_keys import remove_api_key
+    _run_api_key_operation(remove_api_key, args.remove_api_key)
+
+
 def handle_scrape_round(args):
     from scraper import scrape_afl_matches
     from utils.log import log
@@ -521,6 +552,8 @@ HANDLERS = {
     "scrape_enrich_all": handle_scrape_enrich_all,
     "scrape_injuries": handle_scrape_injuries, "scrape_lineups": handle_scrape_lineups,
     "import_clubs": handle_import_clubs, "export_clubs": handle_export_clubs,
+    "add_api_key": handle_add_api_key, "list_api_keys": handle_list_api_keys,
+    "remove_api_key": handle_remove_api_key,
     "scrape_round": handle_scrape_round, "scrape_all_rounds": handle_scrape_all_rounds,
     "scrape_match": handle_scrape_match,
     "collect_match_player_stats": handle_collect_match_player_stats,

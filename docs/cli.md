@@ -29,6 +29,9 @@ environment variable.
 | Import or refresh the supported club seed | `python cli.py --import-clubs` | Opens the database; upserts canonical `bootstrap/clubs.json` rows | Local repository seed, not an arbitrary input file; migrations already seed/refresh it where applicable | Filesystem write access to `DB_PATH` |
 | Synchronise an implemented whole season | `python cli.py --sync-afl-season <SEASON_YEAR>` | Opens the database; bootstraps canonical season data and upserts concluded match snapshots in `cfs_player_stats` | Implemented idempotent AFL/CFS JSON workflow; use its documented round/match bounds for narrower work | Outbound AFL access and CFS auth |
 | Report persisted season completeness | `python cli.py --report-afl-season <SEASON_YEAR>` | Opens the existing SQLite database in query-only mode; never writes | Canonical AFL season relationships and authoritative `cfs_player_stats`; `--print-json` emits the structured result | No network or credentials |
+| Add an API key | `python cli.py --add-api-key <LABEL>` | Opens the database; inserts one hashed key | Full key is printed once and never stored; only its hash and prefix are persisted | Filesystem write access to `DB_PATH` |
+| List API keys | `python cli.py --list-api-keys` | Opens the database; reads API-key metadata | Prints label, prefix, and active status only; full keys are never shown | Filesystem read access to `DB_PATH` |
+| Remove an API key | `python cli.py --remove-api-key <KEY_OR_LABEL>` | Opens the database; deletes one row | Accepts either the presented full key or its label | Filesystem write access to `DB_PATH` |
 
 The table is a selector, not a full option reference. The sections below explain
 individual collection modes; the implemented bounds and exit behavior for season
@@ -346,6 +349,42 @@ python cli.py --export-clubs
 import an arbitrary operator-supplied JSON file. `--export-clubs` reads the
 database and writes its configured backup JSON. Both require an initialized
 database.
+
+## API key management
+
+`python cli.py --add-api-key/--list-api-keys/--remove-api-key` is the one
+supported interface for managing API keys, both from the repository root in a
+configured local environment and inside the built `afl-api` container. It
+requires no `PYTHONPATH` configuration because `cli.py` lives at the repository root
+and establishes the correct import context for the application's operator commands.
+Earlier guidance recommended running `scripts/manage_api_keys.py` directly or
+setting `PYTHONPATH=/app`; that form is no longer supported.
+`scripts/manage_api_keys.py` is now an internal library module used by the operator
+CLI and has no standalone `__main__` entry point.
+
+```bash
+python cli.py --add-api-key "2026-live"
+python cli.py --list-api-keys
+python cli.py --remove-api-key "2026-live"
+```
+
+Inside the container, run the same command with `docker compose exec`:
+
+```bash
+docker compose exec afl-api python cli.py --add-api-key "2026-live"
+docker compose exec afl-api python cli.py --list-api-keys
+docker compose exec afl-api python cli.py --remove-api-key "2026-live"
+```
+
+All three operations open the configured `DB_PATH` (the same database used by
+the running application) and never fall back to a different or default
+location. `--add-api-key LABEL` generates a new high-entropy key, prints it
+once, and stores only its SHA-256 hash plus an eight-character prefix;
+the full key is not recoverable afterwards. `--list-api-keys` prints only the
+label, prefix, and active status for each stored key — never the full key.
+`--remove-api-key KEY_OR_LABEL` accepts either the previously presented full
+key or the key's label. See [API key storage migration](api_key_migration.md)
+for the underlying storage/hashing contract.
 
 ## Output, raw capture, and diagnostics
 
