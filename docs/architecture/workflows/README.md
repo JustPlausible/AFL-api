@@ -19,6 +19,8 @@ requests can be derived; they do not by themselves describe shipped behaviour.
   CFS player statistics, including identifier semantics, authoritative joins,
   lifecycle/finality semantics, the stable-field boundary around
   `extra_stats_json`/`raw_player_json`, and a staged implementation plan.
+  Its Stage 1 endpoint is documented for consumers in the
+  [canonical match player-stat API reference](../../api_v1_player_stats.md).
 
 The scheduler composes the same source-policy and collector boundaries used by
 season synchronisation. The season workflow remains the bounded bulk-loading

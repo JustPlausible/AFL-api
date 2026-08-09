@@ -24,6 +24,7 @@ for the reusable release summary and upgrade cautions.
 - [Public AFL metadata collection](public_afl_metadata.md)
 - [Match roster collection](match_rosters.md)
 - [Match player-stat collection](match_player_stats.md)
+- [Canonical match player-stat API (`v1`)](api_v1_player_stats.md) — consumer reference for authoritative CFS observations
 - [Player-stat persistence and authority contract](architecture/player_stats_storage_contract.md)
 - [Canonical CFS player-stat read API design](architecture/workflows/player_stats_api_design.md) — proposed first versioned consumer read surface
 - [JSON payload fixtures and offline contract regression tests](json_contract_fixtures.md)
