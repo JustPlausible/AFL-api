@@ -144,7 +144,11 @@ data in this issue. New features must not add dependencies on it.
 
 A follow-up retirement or canonical read-model issue should inventory consumers,
 version the API as needed, and define all of the following before any merge,
-view, backfill, or table consolidation:
+view, backfill, or table consolidation. The
+[canonical CFS player-stat read API design](workflows/player_stats_api_design.md)
+proposes exactly this versioned, additive `/api/v1` surface for `cfs_player_stats`
+reads; it does not itself change `/api/player-stats` or authorise a table
+merge:
 
 1. validated AFL, Champion Data, and canonical player identity mapping;
 2. numeric AFL/internal and opaque provider match identity mapping;
