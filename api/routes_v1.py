@@ -9,6 +9,7 @@ API contract this module implements.
 """
 
 from enum import Enum
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -35,8 +36,11 @@ class MatchInfo(BaseModel):
     status: str | None
 
 
+FinalityStatus = Literal["final", "partial", "not_available"]
+
+
 class Lifecycle(BaseModel):
-    finality: str
+    finality: FinalityStatus
     authoritative_rows: int
     authoritative_sides: int
     min_snapshot_authority: int | None
@@ -59,7 +63,7 @@ class PlayerStat(BaseModel):
     canonical_player_id: int | None
     afl_player_id: int | None
     display_name: str | None
-    side: str
+    side: Literal["home", "away"]
     team_id: int | None
     stats: PlayerStatValues
     snapshot_authority: int
@@ -74,6 +78,7 @@ class MatchPlayerStatsResponse(BaseModel):
 
 
 def _finality_payload(finality) -> Lifecycle:
+    status: FinalityStatus
     if not finality.has_authoritative_snapshot:
         status = "not_available"
     elif finality.is_partial_authoritative_snapshot:
@@ -84,8 +89,8 @@ def _finality_payload(finality) -> Lifecycle:
         finality=status,
         authoritative_rows=finality.authoritative_rows,
         authoritative_sides=finality.authoritative_sides,
-        min_snapshot_authority=finality.evidence.min_authority,
-        max_snapshot_authority=finality.evidence.max_authority,
+        min_snapshot_authority=finality.min_authority,
+        max_snapshot_authority=finality.max_authority,
     )
 
 
@@ -118,61 +123,60 @@ def get_match_player_stats(
 ):
     log(f"📊 {client_label} requested v1 player stats for match {match_id}", "INFO")
     conn = get_db_connection()
+    try:
+        match_row = conn.execute(
+            "SELECT match_id, match_provider_id, round_id, season_id, status "
+            "FROM matches WHERE match_id = ?",
+            (match_id,),
+        ).fetchone()
 
-    match_row = conn.execute(
-        "SELECT match_id, match_provider_id, round_id, season_id, status "
-        "FROM matches WHERE match_id = ?",
-        (match_id,),
-    ).fetchone()
+        if not match_row:
+            log(f"❌ No match found with Match ID: {match_id}", "WARN")
+            raise HTTPException(status_code=404, detail="Match not found")
 
-    if not match_row:
+        match_provider_id = match_row["match_provider_id"]
+        match_payload = MatchInfo(
+            match_id=match_row["match_id"],
+            match_provider_id=match_provider_id,
+            round_id=match_row["round_id"],
+            season_id=match_row["season_id"],
+            status=match_row["status"],
+        )
+        lifecycle_payload = _finality_payload(
+            authoritative_stats_finality_for_match(conn, match_provider_id)
+        )
+
+        if not match_provider_id:
+            return MatchPlayerStatsResponse(match=match_payload, lifecycle=lifecycle_payload, players=[])
+
+        filters = ["s.match_provider_id = ?"]
+        values: list[object] = [match_provider_id]
+        if side is not None:
+            filters.append("s.side = ?")
+            values.append(side.value)
+        if champion_data_player_id is not None:
+            filters.append("s.champion_data_player_id = ?")
+            values.append(champion_data_player_id)
+
+        stat_columns = ", ".join(f"s.{name}" for name in CANONICAL_STAT_FIELDS)
+        query = (
+            "SELECT s.champion_data_player_id, s.canonical_player_id, s.side, "
+            f"{stat_columns}, "
+            "s.snapshot_authority, s.resolved_match_status, s.collected_at, "
+            "cp.display_name, cp.given_name, cp.family_name, "
+            "afl_pp.provider_player_id AS afl_player_id, "
+            "CASE s.side WHEN 'home' THEN m.home_team_id WHEN 'away' THEN m.away_team_id END AS team_id "
+            "FROM cfs_player_stats s "
+            "JOIN matches m ON m.match_provider_id = s.match_provider_id "
+            "LEFT JOIN canonical_players cp ON cp.id = s.canonical_player_id "
+            "LEFT JOIN player_provider_ids afl_pp "
+            "ON afl_pp.provider = 'afl' AND afl_pp.player_id = s.canonical_player_id "
+            f"WHERE {' AND '.join(filters)} "
+            "ORDER BY s.side, s.champion_data_player_id"
+        )
+        rows = conn.execute(query, tuple(values)).fetchall()
+    finally:
         conn.close()
-        log(f"❌ No match found with Match ID: {match_id}", "WARN")
-        raise HTTPException(status_code=404, detail="Match not found")
-
-    match_provider_id = match_row["match_provider_id"]
-    match_payload = MatchInfo(
-        match_id=match_row["match_id"],
-        match_provider_id=match_provider_id,
-        round_id=match_row["round_id"],
-        season_id=match_row["season_id"],
-        status=match_row["status"],
-    )
-    lifecycle_payload = _finality_payload(
-        authoritative_stats_finality_for_match(conn, match_provider_id)
-    )
-
-    if not match_provider_id:
-        conn.close()
-        return MatchPlayerStatsResponse(match=match_payload, lifecycle=lifecycle_payload, players=[])
-
-    filters = ["s.match_provider_id = ?"]
-    values: list[object] = [match_provider_id]
-    if side is not None:
-        filters.append("s.side = ?")
-        values.append(side.value)
-    if champion_data_player_id is not None:
-        filters.append("s.champion_data_player_id = ?")
-        values.append(champion_data_player_id)
-
-    stat_columns = ", ".join(f"s.{name}" for name in CANONICAL_STAT_FIELDS)
-    query = (
-        "SELECT s.champion_data_player_id, s.canonical_player_id, s.side, "
-        f"{stat_columns}, "
-        "s.snapshot_authority, s.resolved_match_status, s.collected_at, "
-        "cp.display_name, cp.given_name, cp.family_name, "
-        "afl_pp.provider_player_id AS afl_player_id, "
-        "CASE s.side WHEN 'home' THEN m.home_team_id WHEN 'away' THEN m.away_team_id END AS team_id "
-        "FROM cfs_player_stats s "
-        "JOIN matches m ON m.match_provider_id = s.match_provider_id "
-        "LEFT JOIN canonical_players cp ON cp.id = s.canonical_player_id "
-        "LEFT JOIN player_provider_ids afl_pp "
-        "ON afl_pp.provider = 'afl' AND afl_pp.player_id = s.canonical_player_id "
-        f"WHERE {' AND '.join(filters)} "
-        "ORDER BY s.side, s.champion_data_player_id"
-    )
-    rows = conn.execute(query, tuple(values)).fetchall()
-    conn.close()
 
     players = [
         PlayerStat(
