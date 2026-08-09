@@ -25,6 +25,7 @@ for the reusable release summary and upgrade cautions.
 - [Match roster collection](match_rosters.md)
 - [Match player-stat collection](match_player_stats.md)
 - [Player-stat persistence and authority contract](architecture/player_stats_storage_contract.md)
+- [Canonical CFS player-stat read API design](architecture/workflows/player_stats_api_design.md) — proposed first versioned consumer read surface
 - [JSON payload fixtures and offline contract regression tests](json_contract_fixtures.md)
 
 ## Reviews and planning
