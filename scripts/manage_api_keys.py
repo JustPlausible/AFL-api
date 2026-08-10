@@ -98,23 +98,33 @@ def set_api_key_capability(label: str, capability: str, *, grant: bool):
         return
 
     conn = get_connection()
-    row = conn.execute("SELECT id FROM api_keys WHERE label = ?", (label,)).fetchone()
-    if row is None:
+    rows = conn.execute(
+        "SELECT id FROM api_keys WHERE label = ? ORDER BY id", (label,)
+    ).fetchall()
+    if not rows:
         print(f"⚠️ API key not found for label '{label}'")
         conn.close()
         return
+    if len(rows) > 1:
+        print(
+            f"⚠️ API key label '{label}' is ambiguous; "
+            "it must uniquely identify a credential"
+        )
+        conn.close()
+        return
+    key_id = rows[0][0]
 
     if grant:
         cursor = conn.execute(
             "INSERT OR IGNORE INTO api_key_capabilities (api_key_id, capability) VALUES (?, ?)",
-            (row[0], capability),
+            (key_id, capability),
         )
         message = (f"✅ Granted capability '{capability}' to '{label}'" if cursor.rowcount
                    else f"ℹ️ Capability '{capability}' is already granted to '{label}'")
     else:
         cursor = conn.execute(
             "DELETE FROM api_key_capabilities WHERE api_key_id = ? AND capability = ?",
-            (row[0], capability),
+            (key_id, capability),
         )
         message = (f"✅ Revoked capability '{capability}' from '{label}'" if cursor.rowcount
                    else f"ℹ️ Capability '{capability}' is not granted to '{label}'")

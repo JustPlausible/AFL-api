@@ -249,3 +249,45 @@ def test_capability_management_validates_capability_and_label(tmp_path):
         sys.executable, "cli.py", "--grant-api-key-capability", "missing", "advanced-read"
     ], ROOT, db_path)
     assert "API key not found" in missing.stdout
+
+
+def test_capability_management_rejects_ambiguous_duplicate_labels(tmp_path):
+    db_path = _create_existing_database(tmp_path / "afl_players.db")
+    for _ in range(2):
+        added = _run(
+            [sys.executable, "cli.py", "--add-api-key", "duplicate-client"],
+            ROOT, db_path,
+        )
+        assert added.returncode == 0
+
+    conn = sqlite3.connect(db_path)
+    first_id = conn.execute(
+        "SELECT id FROM api_keys WHERE label = ? ORDER BY id LIMIT 1",
+        ("duplicate-client",),
+    ).fetchone()[0]
+    conn.execute(
+        "INSERT INTO api_key_capabilities(api_key_id, capability) VALUES(?, ?)",
+        (first_id, "advanced-read"),
+    )
+    conn.commit()
+    before = conn.execute(
+        "SELECT api_key_id, capability FROM api_key_capabilities ORDER BY api_key_id, capability"
+    ).fetchall()
+    conn.close()
+
+    for operation in ("--grant-api-key-capability", "--revoke-api-key-capability"):
+        result = _run(
+            [sys.executable, "cli.py", operation, "duplicate-client", "advanced-read"],
+            ROOT, db_path,
+        )
+        assert result.returncode == 0
+        assert "label 'duplicate-client' is ambiguous" in result.stdout
+        assert "must uniquely identify a credential" in result.stdout
+
+        conn = sqlite3.connect(db_path)
+        after = conn.execute(
+            "SELECT api_key_id, capability FROM api_key_capabilities "
+            "ORDER BY api_key_id, capability"
+        ).fetchall()
+        conn.close()
+        assert after == before
