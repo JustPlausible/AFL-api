@@ -204,3 +204,48 @@ def test_no_documentation_recommends_running_manage_api_keys_directly():
                 if any("manage_api_keys" in token for token in tokens):
                     offenders.append((path, line))
     assert offenders == []
+
+
+def test_capability_grant_revoke_listing_and_safe_output(tmp_path):
+    db_path = _create_existing_database(tmp_path / "afl_players.db")
+    added = _run([sys.executable, "cli.py", "--add-api-key", "cap-client"], ROOT, db_path)
+    secret = added.stdout.strip().splitlines()[-1]
+
+    default_listing = _run([sys.executable, "cli.py", "--list-api-keys"], ROOT, db_path)
+    assert "capabilities:standard-read" in default_listing.stdout
+    assert "advanced-read" not in default_listing.stdout
+    assert secret not in default_listing.stdout
+
+    granted = _run([
+        sys.executable, "cli.py", "--grant-api-key-capability", "cap-client", "advanced-read"
+    ], ROOT, db_path)
+    assert granted.returncode == 0
+    assert "Granted capability 'advanced-read'" in granted.stdout
+    listing = _run([sys.executable, "cli.py", "--list-api-keys"], ROOT, db_path)
+    assert "advanced-read" in listing.stdout
+    assert secret not in listing.stdout
+
+    duplicate = _run([
+        sys.executable, "cli.py", "--grant-api-key-capability", "cap-client", "advanced-read"
+    ], ROOT, db_path)
+    assert "already granted" in duplicate.stdout
+    revoked = _run([
+        sys.executable, "cli.py", "--revoke-api-key-capability", "cap-client", "advanced-read"
+    ], ROOT, db_path)
+    assert "Revoked capability 'advanced-read'" in revoked.stdout
+    absent = _run([
+        sys.executable, "cli.py", "--revoke-api-key-capability", "cap-client", "advanced-read"
+    ], ROOT, db_path)
+    assert "not granted" in absent.stdout
+
+
+def test_capability_management_validates_capability_and_label(tmp_path):
+    db_path = _create_existing_database(tmp_path / "afl_players.db")
+    invalid = _run([
+        sys.executable, "cli.py", "--grant-api-key-capability", "missing", "write"
+    ], ROOT, db_path)
+    assert "Invalid capability 'write'" in invalid.stdout
+    missing = _run([
+        sys.executable, "cli.py", "--grant-api-key-capability", "missing", "advanced-read"
+    ], ROOT, db_path)
+    assert "API key not found" in missing.stdout

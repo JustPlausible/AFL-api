@@ -232,7 +232,7 @@ def handle_export_clubs(_args):
     export_clubs_from_db()
 
 
-def _run_api_key_operation(operation, *operation_args):
+def _run_api_key_operation(operation, *operation_args, **operation_kwargs):
     """Convert a missing configured database into a clean, non-zero exit.
 
     ``scripts.manage_api_keys`` opens the database through the shared
@@ -243,7 +243,7 @@ def _run_api_key_operation(operation, *operation_args):
     surfacing a raw traceback for it.
     """
     try:
-        operation(*operation_args)
+        operation(*operation_args, **operation_kwargs)
     except FileNotFoundError:
         raise SystemExit(1) from None
 
@@ -261,6 +261,16 @@ def handle_list_api_keys(_args):
 def handle_remove_api_key(args):
     from scripts.manage_api_keys import remove_api_key
     _run_api_key_operation(remove_api_key, args.remove_api_key)
+
+
+def handle_grant_api_key_capability(args):
+    from scripts.manage_api_keys import set_api_key_capability
+    _run_api_key_operation(set_api_key_capability, *args.grant_api_key_capability, grant=True)
+
+
+def handle_revoke_api_key_capability(args):
+    from scripts.manage_api_keys import set_api_key_capability
+    _run_api_key_operation(set_api_key_capability, *args.revoke_api_key_capability, grant=False)
 
 
 def handle_scrape_round(args):
@@ -554,6 +564,8 @@ HANDLERS = {
     "import_clubs": handle_import_clubs, "export_clubs": handle_export_clubs,
     "add_api_key": handle_add_api_key, "list_api_keys": handle_list_api_keys,
     "remove_api_key": handle_remove_api_key,
+    "grant_api_key_capability": handle_grant_api_key_capability,
+    "revoke_api_key_capability": handle_revoke_api_key_capability,
     "scrape_round": handle_scrape_round, "scrape_all_rounds": handle_scrape_all_rounds,
     "scrape_match": handle_scrape_match,
     "collect_match_player_stats": handle_collect_match_player_stats,

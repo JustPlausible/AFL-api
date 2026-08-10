@@ -5,6 +5,7 @@ from api_key_security import api_key_prefix, hash_api_key, is_hashed_api_key
 from db.connection import get_db_path, validate_db_parent
 from db.migration_runner import MigrationError, migrate_database
 from utils.log import log
+from api_key_capabilities import STANDARD_READ
 
 
 def create_api_keys_table(cursor):
@@ -59,6 +60,17 @@ def create_api_keys_table(cursor):
         cursor.execute("ALTER TABLE api_keys ADD COLUMN is_active INTEGER DEFAULT 1")
     if "created_at" not in columns:
         cursor.execute("ALTER TABLE api_keys ADD COLUMN created_at TEXT")
+    if "rate_limit_per_minute" not in columns:
+        cursor.execute("ALTER TABLE api_keys ADD COLUMN rate_limit_per_minute INTEGER")
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS api_key_capabilities (
+            api_key_id INTEGER NOT NULL,
+            capability TEXT NOT NULL,
+            granted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (api_key_id, capability),
+            FOREIGN KEY (api_key_id) REFERENCES api_keys(id) ON DELETE CASCADE
+        )
+    """)
     rows = cursor.execute("SELECT id, api_key, key_hash FROM api_keys").fetchall()
     for key_id, plaintext_key, stored_hash in rows:
         if plaintext_key and not is_hashed_api_key(stored_hash):
@@ -66,6 +78,11 @@ def create_api_keys_table(cursor):
                 "UPDATE api_keys SET key_hash = ?, key_prefix = ?, api_key = NULL WHERE id = ?",
                 (hash_api_key(plaintext_key), api_key_prefix(plaintext_key), key_id),
             )
+    cursor.execute(
+        "INSERT OR IGNORE INTO api_key_capabilities (api_key_id, capability) "
+        "SELECT id, ? FROM api_keys",
+        (STANDARD_READ,),
+    )
 
 
 def init_db():
