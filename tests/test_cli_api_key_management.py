@@ -204,3 +204,90 @@ def test_no_documentation_recommends_running_manage_api_keys_directly():
                 if any("manage_api_keys" in token for token in tokens):
                     offenders.append((path, line))
     assert offenders == []
+
+
+def test_capability_grant_revoke_listing_and_safe_output(tmp_path):
+    db_path = _create_existing_database(tmp_path / "afl_players.db")
+    added = _run([sys.executable, "cli.py", "--add-api-key", "cap-client"], ROOT, db_path)
+    secret = added.stdout.strip().splitlines()[-1]
+
+    default_listing = _run([sys.executable, "cli.py", "--list-api-keys"], ROOT, db_path)
+    assert "capabilities:standard-read" in default_listing.stdout
+    assert "advanced-read" not in default_listing.stdout
+    assert secret not in default_listing.stdout
+
+    granted = _run([
+        sys.executable, "cli.py", "--grant-api-key-capability", "cap-client", "advanced-read"
+    ], ROOT, db_path)
+    assert granted.returncode == 0
+    assert "Granted capability 'advanced-read'" in granted.stdout
+    listing = _run([sys.executable, "cli.py", "--list-api-keys"], ROOT, db_path)
+    assert "advanced-read" in listing.stdout
+    assert secret not in listing.stdout
+
+    duplicate = _run([
+        sys.executable, "cli.py", "--grant-api-key-capability", "cap-client", "advanced-read"
+    ], ROOT, db_path)
+    assert "already granted" in duplicate.stdout
+    revoked = _run([
+        sys.executable, "cli.py", "--revoke-api-key-capability", "cap-client", "advanced-read"
+    ], ROOT, db_path)
+    assert "Revoked capability 'advanced-read'" in revoked.stdout
+    absent = _run([
+        sys.executable, "cli.py", "--revoke-api-key-capability", "cap-client", "advanced-read"
+    ], ROOT, db_path)
+    assert "not granted" in absent.stdout
+
+
+def test_capability_management_validates_capability_and_label(tmp_path):
+    db_path = _create_existing_database(tmp_path / "afl_players.db")
+    invalid = _run([
+        sys.executable, "cli.py", "--grant-api-key-capability", "missing", "write"
+    ], ROOT, db_path)
+    assert "Invalid capability 'write'" in invalid.stdout
+    missing = _run([
+        sys.executable, "cli.py", "--grant-api-key-capability", "missing", "advanced-read"
+    ], ROOT, db_path)
+    assert "API key not found" in missing.stdout
+
+
+def test_capability_management_rejects_ambiguous_duplicate_labels(tmp_path):
+    db_path = _create_existing_database(tmp_path / "afl_players.db")
+    for _ in range(2):
+        added = _run(
+            [sys.executable, "cli.py", "--add-api-key", "duplicate-client"],
+            ROOT, db_path,
+        )
+        assert added.returncode == 0
+
+    conn = sqlite3.connect(db_path)
+    first_id = conn.execute(
+        "SELECT id FROM api_keys WHERE label = ? ORDER BY id LIMIT 1",
+        ("duplicate-client",),
+    ).fetchone()[0]
+    conn.execute(
+        "INSERT INTO api_key_capabilities(api_key_id, capability) VALUES(?, ?)",
+        (first_id, "advanced-read"),
+    )
+    conn.commit()
+    before = conn.execute(
+        "SELECT api_key_id, capability FROM api_key_capabilities ORDER BY api_key_id, capability"
+    ).fetchall()
+    conn.close()
+
+    for operation in ("--grant-api-key-capability", "--revoke-api-key-capability"):
+        result = _run(
+            [sys.executable, "cli.py", operation, "duplicate-client", "advanced-read"],
+            ROOT, db_path,
+        )
+        assert result.returncode == 0
+        assert "label 'duplicate-client' is ambiguous" in result.stdout
+        assert "must uniquely identify a credential" in result.stdout
+
+        conn = sqlite3.connect(db_path)
+        after = conn.execute(
+            "SELECT api_key_id, capability FROM api_key_capabilities "
+            "ORDER BY api_key_id, capability"
+        ).fetchall()
+        conn.close()
+        assert after == before

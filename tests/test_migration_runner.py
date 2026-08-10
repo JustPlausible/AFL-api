@@ -55,7 +55,7 @@ def test_duplicate_identifier_rejected(tmp_path):
 
 def test_fresh_creation_idempotency_records_and_schema(tmp_path):
     db = tmp_path / "fresh.db"
-    assert migrate_database(db) == ["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014"]
+    assert migrate_database(db) == ["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015"]
     assert migrate_database(db) == []
     conn = sqlite3.connect(db)
     tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")}
@@ -64,7 +64,7 @@ def test_fresh_creation_idempotency_records_and_schema(tmp_path):
     assert "match_time_label" in cols(conn, "matches")
     assert any(r[2] for r in conn.execute("PRAGMA index_list(scrape_log)") if r[1] == "idx_scrape_log_match_scraped_at")
     rows = conn.execute("SELECT migration_id, description, checksum, applied_at FROM schema_migrations ORDER BY migration_id").fetchall()
-    assert [r[0] for r in rows] == ["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014"]
+    assert [r[0] for r in rows] == ["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015"]
     assert all(r[1] and r[2] and r[3] for r in rows)
 
 
@@ -103,7 +103,7 @@ def test_incompatible_or_partial_database_fails(tmp_path):
 def test_v030_baseline_preserves_rows_and_upgrades_api_keys(tmp_path):
     db = tmp_path / "old.db"
     make_v030_db(db, "afl_test_plaintext")
-    assert migrate_database(db) == ["0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014"]
+    assert migrate_database(db) == ["0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015"]
     conn = sqlite3.connect(db)
     assert conn.execute("SELECT name FROM clubs WHERE code='ADE'").fetchone()[0] == "Adelaide Crows"
     assert conn.execute("SELECT full_name FROM players WHERE afl_id=1").fetchone()[0] == "One Player"
@@ -120,7 +120,7 @@ def test_init_db_and_migrate_cli_from_other_cwd(tmp_path):
         result = subprocess.run([sys.executable, "-m", module], cwd=tmp_path, env=env, text=True, capture_output=True)
         assert result.returncode == 0, result.stderr + result.stdout
     conn = sqlite3.connect(db)
-    assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 14
+    assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 15
 
 
 def test_baseline_classifier_rejects_incomplete_table(tmp_path):
@@ -273,3 +273,32 @@ def test_0014_realistic_upgrade_preserves_rows_schema_and_dependent_objects(tmp_
         conn.execute("INSERT INTO scheduler_job_registry(job_id,job_type,status) VALUES('invalid','x','not-a-status')")
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute("INSERT INTO scrape_runs(run_id,scrape_type,trigger_source,status,started_at) VALUES('invalid','x','scheduler','not-a-status',?)", ("2026-08-06T00:00:00+00:00",))
+
+
+def test_0015_existing_keys_get_only_standard_read_and_migration_is_idempotent(tmp_path):
+    before = tmp_path / "before-0015"
+    before.mkdir()
+    for source in MIGRATIONS_DIR.glob("*.py"):
+        if source.name == "__init__.py" or source.name.startswith("0015_"):
+            continue
+        shutil.copy2(source, before / source.name)
+    db = tmp_path / "legacy-0014.db"
+    migrate_database(db, before)
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "INSERT INTO api_keys(label, key_hash, key_prefix, is_active) VALUES(?,?,?,1)",
+        ("existing", "sha256:existing", "existing"),
+    )
+    conn.commit()
+    conn.close()
+
+    assert migrate_database(db) == ["0015"]
+    assert migrate_database(db) == []
+    conn = sqlite3.connect(db)
+    assert conn.execute("SELECT capability FROM api_key_capabilities").fetchall() == [
+        ("standard-read",)
+    ]
+    rate = {row[1]: row for row in conn.execute("PRAGMA table_info(api_keys)")}
+    assert "rate_limit_per_minute" in rate
+    assert conn.execute("SELECT rate_limit_per_minute FROM api_keys").fetchone()[0] is None
+    conn.close()

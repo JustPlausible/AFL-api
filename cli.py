@@ -37,6 +37,8 @@ OPERATION_FLAGS = {
     "add_api_key": "--add-api-key",
     "list_api_keys": "--list-api-keys",
     "remove_api_key": "--remove-api-key",
+    "grant_api_key_capability": "--grant-api-key-capability",
+    "revoke_api_key_capability": "--revoke-api-key-capability",
 }
 
 def _provider_id(value: str, *, prefix: str, label: str, example: str) -> str:
@@ -192,6 +194,12 @@ def create_parser() -> argparse.ArgumentParser:
                             help="List API key labels, prefixes, and active status; full keys are never shown")
     _add_operation_argument(api_key_group, "remove_api_key", metavar="KEY_OR_LABEL",
                             help="Remove an API key by its presented full key or its label")
+    _add_operation_argument(api_key_group, "grant_api_key_capability", nargs=2,
+                            metavar=("LABEL", "CAPABILITY"),
+                            help="Grant a supported read capability to the API key LABEL")
+    _add_operation_argument(api_key_group, "revoke_api_key_capability", nargs=2,
+                            metavar=("LABEL", "CAPABILITY"),
+                            help="Revoke a supported read capability from the API key LABEL")
 
     return parser
 

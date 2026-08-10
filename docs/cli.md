@@ -32,6 +32,8 @@ environment variable.
 | Add an API key | `python cli.py --add-api-key <LABEL>` | Opens the database; inserts one hashed key | Full key is printed once and never stored; only its hash and prefix are persisted | Filesystem write access to `DB_PATH` |
 | List API keys | `python cli.py --list-api-keys` | Opens the database; reads API-key metadata | Prints label, prefix, and active status only; full keys are never shown | Filesystem read access to `DB_PATH` |
 | Remove an API key | `python cli.py --remove-api-key <KEY_OR_LABEL>` | Opens the database; deletes one row | Accepts either the presented full key or its label | Filesystem write access to `DB_PATH` |
+| Grant an API-key capability | `python cli.py --grant-api-key-capability <LABEL> <CAPABILITY>` | Opens the database; adds a named capability | Supported values are validated; `advanced-read` enables future advanced metadata access | Filesystem write access to `DB_PATH` |
+| Revoke an API-key capability | `python cli.py --revoke-api-key-capability <LABEL> <CAPABILITY>` | Opens the database; removes a named capability | Repeating an absent revocation is a safe no-op | Filesystem write access to `DB_PATH` |
 
 The table is a selector, not a full option reference. The sections below explain
 individual collection modes; the implemented bounds and exit behavior for season
@@ -366,6 +368,8 @@ CLI and has no standalone `__main__` entry point.
 python cli.py --add-api-key "2026-live"
 python cli.py --list-api-keys
 python cli.py --remove-api-key "2026-live"
+python cli.py --grant-api-key-capability "2026-live" advanced-read
+python cli.py --revoke-api-key-capability "2026-live" advanced-read
 ```
 
 Inside the container, run the same command with `docker compose exec`:
@@ -383,7 +387,10 @@ once, and stores only its SHA-256 hash plus an eight-character prefix;
 the full key is not recoverable afterwards. `--list-api-keys` prints only the
 label, prefix, and active status for each stored key — never the full key.
 `--remove-api-key KEY_OR_LABEL` accepts either the previously presented full
-key or the key's label. See [API key storage migration](api_key_migration.md)
+key or the key's label. New and upgraded keys default to `standard-read` only.
+Grant or revoke `advanced-read` by label with the commands above; listing shows
+all capability names without exposing the full key. Endpoint enforcement is
+deferred to Issue #156. See [API key storage migration](api_key_migration.md)
 for the underlying storage/hashing contract.
 
 ## Output, raw capture, and diagnostics

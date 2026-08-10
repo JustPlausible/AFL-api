@@ -2,6 +2,8 @@ import base64
 import importlib
 import sqlite3
 
+import pytest
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -141,3 +143,58 @@ def test_renewed_key_replaces_old_key(tmp_path, monkeypatch):
     client = _api_client(db_path, monkeypatch)
     assert client.get("/api/echo-headers", headers={"x-api-key": renewed_key}).status_code == 200
     assert client.get("/api/echo-headers", headers={"x-api-key": "active-key"}).status_code == 401
+
+
+def test_new_key_defaults_to_standard_read_only(tmp_path, monkeypatch, capsys):
+    from scripts.manage_api_keys import add_api_key
+    from api_key_capabilities import STANDARD_READ, ADVANCED_READ
+
+    db_path = tmp_path / "afl_players.db"
+    sqlite3.connect(db_path).close()
+    monkeypatch.setattr(config, "DB_PATH", str(db_path))
+    add_api_key("default-client")
+    capsys.readouterr()
+
+    conn = sqlite3.connect(db_path)
+    capabilities = {row[0] for row in conn.execute(
+        "SELECT capability FROM api_key_capabilities")}
+    conn.close()
+    assert capabilities == {STANDARD_READ}
+    assert ADVANCED_READ not in capabilities
+
+
+def test_authenticated_credential_capability_allow_deny_and_inactive(tmp_path, monkeypatch):
+    from api_key_capabilities import ADVANCED_READ, STANDARD_READ
+
+    db_path = tmp_path / "afl_players.db"
+    _make_db(db_path)
+    monkeypatch.setattr(config, "DB_PATH", str(db_path))
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO api_key_capabilities(api_key_id, capability) VALUES(1, ?)",
+        (STANDARD_READ,),
+    )
+    conn.commit()
+    conn.close()
+
+    standard = auth.authenticate_api_key("active-key")
+    assert standard.has_capability(STANDARD_READ)
+    assert not standard.has_capability(ADVANCED_READ)
+
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO api_key_capabilities(api_key_id, capability) VALUES(1, ?)",
+        (ADVANCED_READ,),
+    )
+    conn.commit()
+    conn.close()
+    advanced = auth.authenticate_api_key("active-key")
+    assert advanced.has_capability(ADVANCED_READ)
+    dependency = auth.require_capability(ADVANCED_READ)
+    assert dependency(advanced) == advanced
+    with pytest.raises(Exception) as denied:
+        dependency(standard)
+    assert denied.value.status_code == 403
+    with pytest.raises(Exception) as inactive:
+        auth.authenticate_api_key("inactive-key")
+    assert inactive.value.status_code == 401
