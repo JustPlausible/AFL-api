@@ -21,6 +21,7 @@ from db.init_db import create_api_keys_table
 from db.migration_runner import migrate_database
 
 NOW = datetime(2026, 8, 2, 12, tzinfo=timezone.utc).isoformat()
+OLDER = datetime(2026, 8, 2, 11, tzinfo=timezone.utc).isoformat()
 API_KEY = "v1-test-key"
 
 HOME_TEAM_ID = 10
@@ -100,6 +101,22 @@ def _seed_api_key(conn):
         "INSERT INTO api_keys (label, api_key, key_hash, key_prefix, is_active) VALUES (?, NULL, ?, ?, 1)",
         ("v1-tests", hash_api_key(API_KEY), api_key_prefix(API_KEY)),
     )
+    key_id = conn.execute("SELECT id FROM api_keys WHERE label = 'v1-tests'").fetchone()[0]
+    conn.execute(
+        "INSERT INTO api_key_capabilities(api_key_id, capability) VALUES(?, 'standard-read')",
+        (key_id,),
+    )
+
+
+def _grant_advanced(db_path):
+    conn = sqlite3.connect(db_path)
+    key_id = conn.execute("SELECT id FROM api_keys WHERE label = 'v1-tests'").fetchone()[0]
+    conn.execute(
+        "INSERT INTO api_key_capabilities(api_key_id, capability) VALUES(?, 'advanced-read')",
+        (key_id,),
+    )
+    conn.commit()
+    conn.close()
 
 
 def _make_db(tmp_path, seed):
@@ -136,7 +153,9 @@ def test_unknown_match_id_returns_404(tmp_path, monkeypatch):
     response = _get(client, match_id=999999)
 
     assert response.status_code == 404
-    assert response.json() == {"detail": "Match not found"}
+    assert response.json() == {
+        "error": {"code": "match_not_found", "message": "Match not found."}
+    }
 
 
 def test_match_without_provider_id_is_not_available(tmp_path, monkeypatch):
@@ -150,7 +169,7 @@ def test_match_without_provider_id_is_not_available(tmp_path, monkeypatch):
     assert body["match"]["match_provider_id"] is None
     assert body["players"] == []
     assert body["lifecycle"]["finality"] == "not_available"
-    assert body["lifecycle"]["authoritative_rows"] == 0
+    assert body["metadata"] == {"source_updated_at": None}
 
 
 def test_provider_id_with_no_stat_rows_is_not_available(tmp_path, monkeypatch):
@@ -164,6 +183,7 @@ def test_provider_id_with_no_stat_rows_is_not_available(tmp_path, monkeypatch):
     assert body["match"]["match_provider_id"] == MATCH_PROVIDER_ID
     assert body["players"] == []
     assert body["lifecycle"]["finality"] == "not_available"
+    assert body["metadata"] == {"source_updated_at": None}
 
 
 def test_live_partial_rows_are_not_available_but_populated(tmp_path, monkeypatch):
@@ -186,7 +206,8 @@ def test_live_partial_rows_are_not_available_but_populated(tmp_path, monkeypatch
     body = response.json()
     assert body["lifecycle"]["finality"] == "not_available"
     assert len(body["players"]) == 2
-    assert {player["snapshot_authority"] for player in body["players"]} == {1}
+    assert all("advanced" not in player for player in body["players"])
+    assert body["metadata"]["source_updated_at"] == NOW
 
 
 def test_one_sided_authoritative_rows_are_partial(tmp_path, monkeypatch):
@@ -245,8 +266,8 @@ def test_two_sided_concluded_rows_are_final(tmp_path, monkeypatch):
     assert response.status_code == 200
     body = response.json()
     assert body["lifecycle"]["finality"] == "final"
-    assert body["lifecycle"]["authoritative_rows"] == 2
-    assert body["lifecycle"]["authoritative_sides"] == 2
+    assert body["lifecycle"] == {"finality": "final"}
+    assert body["metadata"] == {"source_updated_at": NOW}
     home_player = next(p for p in body["players"] if p["side"] == "home")
     assert home_player["champion_data_player_id"] == "CD_I1"
     assert home_player["canonical_player_id"] == 1
@@ -288,7 +309,16 @@ def _two_player_seed(conn):
 
 
 def test_side_filter_narrows_results(tmp_path, monkeypatch):
-    db_path = _make_db(tmp_path, seed=_two_player_seed)
+    def seed(conn):
+        _seed_match(conn)
+        _seed_player(conn, 1, champion_data_id="CD_I1", afl_id=1)
+        _seed_player(conn, 2, champion_data_id="CD_I2", afl_id=2)
+        _seed_stat_row(conn, champion_data_player_id="CD_I1", side="home",
+                       snapshot_authority=2, canonical_player_id=1, collected_at=OLDER)
+        _seed_stat_row(conn, champion_data_player_id="CD_I2", side="away",
+                       snapshot_authority=2, canonical_player_id=2, collected_at=NOW)
+
+    db_path = _make_db(tmp_path, seed=seed)
     client = _client(db_path, monkeypatch)
 
     response = _get(client, side="home")
@@ -297,6 +327,7 @@ def test_side_filter_narrows_results(tmp_path, monkeypatch):
     players = response.json()["players"]
     assert len(players) == 1
     assert players[0]["side"] == "home"
+    assert response.json()["metadata"]["source_updated_at"] == OLDER
 
 
 def test_champion_data_player_id_filter_narrows_to_one_player(tmp_path, monkeypatch):
@@ -309,6 +340,17 @@ def test_champion_data_player_id_filter_narrows_to_one_player(tmp_path, monkeypa
     players = response.json()["players"]
     assert len(players) == 1
     assert players[0]["champion_data_player_id"] == "CD_I2"
+
+
+def test_filter_with_no_rows_has_no_source_timestamp(tmp_path, monkeypatch):
+    db_path = _make_db(tmp_path, seed=_two_player_seed)
+    client = _client(db_path, monkeypatch)
+
+    response = _get(client, champion_data_player_id="CD_MISSING")
+
+    assert response.status_code == 200
+    assert response.json()["players"] == []
+    assert response.json()["metadata"] == {"source_updated_at": None}
 
 
 def test_invalid_side_returns_422(tmp_path, monkeypatch):
@@ -350,26 +392,81 @@ def test_response_shape_regression(tmp_path, monkeypatch):
 
     assert response.status_code == 200
     body = response.json()
-    assert set(body.keys()) == {"match", "lifecycle", "players"}
+    assert set(body.keys()) == {"match", "lifecycle", "metadata", "players"}
     assert set(body["match"].keys()) == {
         "match_id", "match_provider_id", "round_id", "season_id", "status",
     }
-    assert set(body["lifecycle"].keys()) == {
-        "finality", "authoritative_rows", "authoritative_sides",
-        "min_snapshot_authority", "max_snapshot_authority",
-    }
-    player = body["players"][0]
-    assert set(player.keys()) == {
+    assert set(body["lifecycle"].keys()) == {"finality"}
+    assert set(body["metadata"].keys()) == {"source_updated_at"}
+    assert set(body["players"][0].keys()) == {
         "champion_data_player_id", "canonical_player_id", "afl_player_id",
-        "display_name", "side", "team_id", "stats", "snapshot_authority",
-        "resolved_match_status", "collected_at",
+        "display_name", "side", "team_id", "stats",
     }
-    assert set(player["stats"].keys()) == {
-        "goals", "behinds", "kicks", "handballs", "disposals", "marks",
-        "tackles", "hitouts",
+    assert set(body["players"][0]["stats"].keys()) == {
+        "goals", "behinds", "kicks", "handballs", "disposals", "marks", "tackles", "hitouts",
     }
-    assert "raw_player_json" not in player
-    assert "extra_stats_json" not in player
+
+
+def test_standard_key_cannot_request_advanced_metadata(tmp_path, monkeypatch):
+    db_path = _make_db(tmp_path, seed=_two_player_seed)
+    client = _client(db_path, monkeypatch)
+
+    response = _get(client, advanced="true")
+
+    assert response.status_code == 403
+    assert response.json() == {
+        "error": {
+            "code": "advanced_access_required",
+            "message": "This API key does not permit access to advanced metadata.",
+        }
+    }
+    assert "snapshot_authority" not in response.text
+
+
+def test_advanced_mode_is_strictly_additive(tmp_path, monkeypatch):
+    db_path = _make_db(tmp_path, seed=_two_player_seed)
+    _grant_advanced(db_path)
+    client = _client(db_path, monkeypatch)
+
+    normal = _get(client).json()
+    response = _get(client, advanced="true")
+
+    assert response.status_code == 200
+    advanced = response.json()
+    assert set(advanced) == {*normal, "advanced"}
+    evidence = advanced["advanced"]["finality_evidence"]
+    assert set(evidence) == {
+        "authoritative_rows", "authoritative_sides", "min_snapshot_authority",
+        "max_snapshot_authority",
+    }
+    assert evidence == {
+        "authoritative_rows": 2, "authoritative_sides": 2,
+        "min_snapshot_authority": 2, "max_snapshot_authority": 2,
+    }
+    for normal_player, advanced_player in zip(normal["players"], advanced["players"]):
+        provenance = advanced_player.pop("advanced")
+        assert set(provenance) == {
+            "snapshot_authority", "resolved_match_status", "collected_at",
+        }
+        assert advanced_player == normal_player
+    advanced.pop("advanced")
+    assert advanced == normal
+
+
+def test_openapi_documents_advanced_and_application_errors(tmp_path, monkeypatch):
+    db_path = _make_db(tmp_path, seed=lambda conn: _seed_match(conn))
+    client = _client(db_path, monkeypatch)
+
+    operation = client.get("/openapi.json").json()["paths"][
+        "/api/v1/matches/{match_id}/player-stats"
+    ]["get"]
+
+    parameters = {parameter["name"]: parameter for parameter in operation["parameters"]}
+    assert parameters["advanced"]["schema"]["default"] is False
+    assert {"200", "403", "404", "422"} <= set(operation["responses"])
+    assert operation["responses"]["403"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/ApplicationErrorResponse"
+    }
 
 
 def test_existing_unversioned_routes_are_unchanged(tmp_path, monkeypatch):

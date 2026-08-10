@@ -11,12 +11,14 @@ API contract this module implements.
 from enum import Enum
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from afl_json.player_stats import CANONICAL_STAT_FIELDS
 from afl_json.season_report import authoritative_stats_finality_for_match
-from auth import verify_api_key
+from api.errors_v1 import ApplicationErrorResponse, application_error
+from api_key_capabilities import ADVANCED_READ
+from auth import AuthenticatedCredential, authenticate_api_key
 from db.connection import get_db_connection
 from utils.log import log
 
@@ -41,10 +43,27 @@ FinalityStatus = Literal["final", "partial", "not_available"]
 
 class Lifecycle(BaseModel):
     finality: FinalityStatus
+
+
+class ResourceMetadata(BaseModel):
+    source_updated_at: str | None
+
+
+class PlayerAdvancedMetadata(BaseModel):
+    snapshot_authority: int
+    resolved_match_status: str | None
+    collected_at: str
+
+
+class FinalityEvidence(BaseModel):
     authoritative_rows: int
     authoritative_sides: int
     min_snapshot_authority: int | None
     max_snapshot_authority: int | None
+
+
+class AdvancedMetadata(BaseModel):
+    finality_evidence: FinalityEvidence
 
 
 class PlayerStatValues(BaseModel):
@@ -66,18 +85,28 @@ class PlayerStat(BaseModel):
     side: Literal["home", "away"]
     team_id: int | None
     stats: PlayerStatValues
-    snapshot_authority: int
-    resolved_match_status: str | None
-    collected_at: str
+
+
+class AdvancedPlayerStat(PlayerStat):
+    advanced: PlayerAdvancedMetadata
 
 
 class MatchPlayerStatsResponse(BaseModel):
     match: MatchInfo
     lifecycle: Lifecycle
+    metadata: ResourceMetadata
     players: list[PlayerStat]
 
 
-def _finality_payload(finality) -> Lifecycle:
+class AdvancedMatchPlayerStatsResponse(BaseModel):
+    match: MatchInfo
+    lifecycle: Lifecycle
+    metadata: ResourceMetadata
+    players: list[AdvancedPlayerStat]
+    advanced: AdvancedMetadata
+
+
+def _finality_status(finality) -> FinalityStatus:
     status: FinalityStatus
     if not finality.has_authoritative_snapshot:
         status = "not_available"
@@ -85,8 +114,11 @@ def _finality_payload(finality) -> Lifecycle:
         status = "partial"
     else:
         status = "final"
-    return Lifecycle(
-        finality=status,
+    return status
+
+
+def _finality_evidence(finality) -> FinalityEvidence:
+    return FinalityEvidence(
         authoritative_rows=finality.authoritative_rows,
         authoritative_sides=finality.authoritative_sides,
         min_snapshot_authority=finality.min_authority,
@@ -103,14 +135,20 @@ def _display_name(row) -> str | None:
 
 @router.get(
     "/api/v1/matches/{match_id}/player-stats",
-    response_model=MatchPlayerStatsResponse,
-    summary="Get canonical CFS player statistics for a match",
+    response_model=MatchPlayerStatsResponse | AdvancedMatchPlayerStatsResponse,
+    responses={
+        403: {"model": ApplicationErrorResponse, "description": "Advanced capability required"},
+        404: {"model": ApplicationErrorResponse, "description": "Match not found"},
+    },
+    summary="Get canonical player statistics for a match",
     description=(
-        "Returns authoritative Champion Data (CFS) player statistics for a match, "
-        "resolved via matches.match_id -> matches.match_provider_id. Reads only "
-        "cfs_player_stats (never the legacy player_stats table) and reports explicit "
-        "final/partial/not_available lifecycle semantics computed fresh on every "
-        "request via the repository's shared authoritative finality predicate."
+        "Returns canonical player identity and AFL statistics with final, partial, or "
+        "not_available lifecycle semantics. metadata.source_updated_at is the newest "
+        "source observation represented by the returned (and therefore filtered) rows, "
+        "or null when no rows are returned. Set advanced=true to add selected per-player "
+        "provenance and match-level finality evidence; this requires the advanced-read "
+        "API-key capability. Application 403 and 404 errors use the documented structured "
+        "error response."
     ),
 )
 def get_match_player_stats(
@@ -119,9 +157,19 @@ def get_match_player_stats(
     champion_data_player_id: str | None = Query(
         None, description="Filter to a single player by Champion Data player ID"
     ),
-    client_label: str = Depends(verify_api_key),
+    advanced: bool = Query(
+        False,
+        description="Add selected provenance metadata (requires advanced-read capability)",
+    ),
+    credential: AuthenticatedCredential = Depends(authenticate_api_key),
 ):
-    log(f"📊 {client_label} requested v1 player stats for match {match_id}", "INFO")
+    log(f"📊 {credential.label} requested v1 player stats for match {match_id}", "INFO")
+    if advanced and not credential.has_capability(ADVANCED_READ):
+        return application_error(
+            403,
+            "advanced_access_required",
+            "This API key does not permit access to advanced metadata.",
+        )
     conn = get_db_connection()
     try:
         match_row = conn.execute(
@@ -132,7 +180,7 @@ def get_match_player_stats(
 
         if not match_row:
             log(f"❌ No match found with Match ID: {match_id}", "WARN")
-            raise HTTPException(status_code=404, detail="Match not found")
+            return application_error(404, "match_not_found", "Match not found.")
 
         match_provider_id = match_row["match_provider_id"]
         match_payload = MatchInfo(
@@ -142,12 +190,22 @@ def get_match_player_stats(
             season_id=match_row["season_id"],
             status=match_row["status"],
         )
-        lifecycle_payload = _finality_payload(
-            authoritative_stats_finality_for_match(conn, match_provider_id)
-        )
+        finality = authoritative_stats_finality_for_match(conn, match_provider_id)
+        lifecycle_payload = Lifecycle(finality=_finality_status(finality))
 
         if not match_provider_id:
-            return MatchPlayerStatsResponse(match=match_payload, lifecycle=lifecycle_payload, players=[])
+            response_values = dict(
+                match=match_payload,
+                lifecycle=lifecycle_payload,
+                metadata=ResourceMetadata(source_updated_at=None),
+                players=[],
+            )
+            if advanced:
+                return AdvancedMatchPlayerStatsResponse(
+                    **response_values,
+                    advanced=AdvancedMetadata(finality_evidence=_finality_evidence(finality)),
+                )
+            return MatchPlayerStatsResponse(**response_values)
 
         filters = ["s.match_provider_id = ?"]
         values: list[object] = [match_provider_id]
@@ -178,8 +236,8 @@ def get_match_player_stats(
     finally:
         conn.close()
 
-    players = [
-        PlayerStat(
+    player_values = [
+        dict(
             champion_data_player_id=row["champion_data_player_id"],
             canonical_player_id=row["canonical_player_id"],
             afl_player_id=(
@@ -189,11 +247,33 @@ def get_match_player_stats(
             side=row["side"],
             team_id=row["team_id"],
             stats=PlayerStatValues(**{name: row[name] for name in CANONICAL_STAT_FIELDS}),
-            snapshot_authority=row["snapshot_authority"],
-            resolved_match_status=row["resolved_match_status"],
-            collected_at=row["collected_at"],
         )
         for row in rows
     ]
-
-    return MatchPlayerStatsResponse(match=match_payload, lifecycle=lifecycle_payload, players=players)
+    source_updated_at = max((row["collected_at"] for row in rows), default=None)
+    response_values = dict(
+        match=match_payload,
+        lifecycle=lifecycle_payload,
+        metadata=ResourceMetadata(source_updated_at=source_updated_at),
+    )
+    if advanced:
+        players = [
+            AdvancedPlayerStat(
+                **values,
+                advanced=PlayerAdvancedMetadata(
+                    snapshot_authority=row["snapshot_authority"],
+                    resolved_match_status=row["resolved_match_status"],
+                    collected_at=row["collected_at"],
+                ),
+            )
+            for values, row in zip(player_values, rows)
+        ]
+        return AdvancedMatchPlayerStatsResponse(
+            **response_values,
+            players=players,
+            advanced=AdvancedMetadata(finality_evidence=_finality_evidence(finality)),
+        )
+    return MatchPlayerStatsResponse(
+        **response_values,
+        players=[PlayerStat(**values) for values in player_values],
+    )
