@@ -5,7 +5,9 @@
 [Match player-stat collection](match_player_stats.md) and
 [Player-stat persistence and authority contract](architecture/player_stats_storage_contract.md).
 For the full accepted design, see
-[Canonical CFS player-stat read API design](architecture/workflows/player_stats_api_design.md).
+[Canonical CFS player-stat read API design](architecture/api/player_stats_api_design.md).
+For the broader human-led API target, see the
+[Consumer API workflow design](architecture/workflows/consumer_api_design.md).
 
 ## Endpoint
 
@@ -147,15 +149,18 @@ faster will not return fresher data.
 * Any breaking change (removed/renamed field, changed type or meaning,
   changed default filter behaviour) ships as `/api/v2` with a deprecation
   window for `/api/v1` — never as an in-place change.
-* The unversioned `/api/...` routes (including `GET /api/player-stats`,
-  documented as a legacy compatibility endpoint over the separate
-  `player_stats` table) are permanently frozen and are unaffected by this
-  endpoint or by this versioning policy.
+* The unversioned `/api/...` routes (including `GET /api/player-stats` over the
+  separate legacy `player_stats` table) are pre-v1 behaviour. This endpoint
+  does not change them, but they may be retired once the
+  [legacy capability checklist](architecture/workflows/consumer_api_design.md#16-legacy-capability-inventory-and-migration-checklist)
+  is satisfied; they are not a permanently supported parallel contract.
 
 ## Related documentation
 
-* [Canonical CFS player-stat read API design](architecture/workflows/player_stats_api_design.md)
+* [Canonical CFS player-stat read API design](architecture/api/player_stats_api_design.md)
   — the full accepted design this endpoint implements.
+* [Consumer API workflow design](architecture/workflows/consumer_api_design.md)
+  — the broader target that governs future v1 evolution.
 * [AFL data authority and identity map](architecture/data_authority_map.md)
   — the general identifier/crosswalk rules this endpoint follows.
 * [Player-stat persistence and authority contract](architecture/player_stats_storage_contract.md)
