@@ -4,7 +4,7 @@ This module is strictly additive: it introduces the first canonical,
 versioned consumer surface over authoritative ``cfs_player_stats`` and never
 touches ``api/routes.py``'s unversioned compatibility routes, tables, or
 response shapes. See
-``docs/architecture/workflows/player_stats_api_design.md`` for the accepted
+``docs/architecture/api/player_stats_api_design.md`` for the endpoint
 API contract this module implements.
 """
 
