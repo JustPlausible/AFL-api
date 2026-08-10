@@ -1,6 +1,18 @@
 # Canonical CFS Player-Stat Read API Design
 
-**Status:** Draft for implementation review
+**Status:** Stage 1 implementation design and current-behaviour record
+
+**Architectural authority:** [Consumer API workflow design](../workflows/consumer_api_design.md)
+
+> This document remains the endpoint-specific design record for the implemented
+> Stage 1 player-stat route. The human-led consumer API workflow now governs the
+> broader v1 direction. Where the documents differ, the workflow supersedes
+> this design for future work: unversioned routes may retire after capability
+> migration; advanced access is permission-controlled; ordinary freshness is a
+> resource-level `source_updated_at`; and collector-level authority, resolved
+> status, and collection timestamps move to advanced metadata. The shipped
+> [consumer reference](../../api_v1_player_stats.md) remains authoritative for
+> current behaviour until those follow-up changes are implemented.
 
 **Related reviews:** [Post-v0.5.0 engineering status review](../project_status_post_v0_5_0.md)
 (§13 Option A — canonical read API for downstream consumers),
@@ -62,12 +74,12 @@ concrete limitations relevant to player statistics:
   active-key table, no scopes). This is adequate for a first canonical surface
   and is reused rather than replaced (§4).
 
-### 1.1 Routes that remain compatibility routes (unchanged by this design)
+### 1.1 Pre-v1 routes unchanged by this Stage 1 design
 
 None of the following routes, tables, or response shapes change as a result of
 this document or its Stage 1 (§12):
 
-| Route | Backing table | Why it stays compatibility |
+| Route | Backing table | Why Stage 1 left it unchanged |
 | --- | --- | --- |
 | `GET /api/player-stats` | `player_stats` (legacy) | Explicitly named the legacy compatibility endpoint in `player_stats_storage_contract.md`; changing its table/response is out of scope here and requires its own versioned identity-compatibility design. |
 | `GET /api/players`, `/api/players/{afl_id}`, `/api/players/club/{club_slug}` | `players` (legacy) | Legacy profile/enrichment model, not `canonical_players`. Superseding this is a separate design (player identity/profile API), not part of the CFS player-stat surface. |
@@ -75,8 +87,9 @@ this document or its Stage 1 (§12):
 | `GET /api/injuries`, `/api/injuries/{afl_id}` | `injuries` | Different domain and already canonical-resolved; unaffected by CFS player-stat design. |
 | `GET /api/rounds`, `/api/rounds/{round_id}`, `GET /api/matches`, `/api/matches/{match_id}` | `rounds`, `matches` | Already populated by public AFL JSON (mostly-canonical source per `data_authority_map.md`), but unversioned `SELECT *` responses with no stability contract. A canonical `/api/v1` equivalent is useful but is **not** part of the CFS player-stat surface; it is named as a later stage (§12, Stage 3) so it can reuse the versioning policy established here, not designed in detail by this document.
 
-This document does not touch `api/routes.py`. It defines a new, additive
-`/api/v1` surface (§4) alongside it.
+Stage 1 did not touch `api/routes.py`; it added the first `/api/v1` surface
+alongside it. The broader consumer workflow now permits those pre-v1 routes to
+retire after their useful capabilities have been accounted for.
 
 ## 2. Goals
 
@@ -127,7 +140,7 @@ Consumer
    v
 FastAPI app (main.py)
    |-- health_router            (unchanged)
-   |-- api_router  (api/routes.py)      -- unversioned, frozen compatibility routes
+   |-- api_router  (api/routes.py)      -- unversioned pre-v1 routes
    |-- api_v1_router (api/routes_v1.py) -- NEW: versioned canonical routes
                         |
                         v
@@ -143,11 +156,11 @@ Versioning policy for `/api/v1`:
 * Any breaking change (removing/renaming a field, changing a field's type or
   meaning, changing default filter behaviour) requires `/api/v2` and a
   documented deprecation window for `/api/v1`; it must not be made in place.
-* Unversioned `/api/...` routes are permanently frozen legacy/compatibility
-  surface. They are never renamed to `/api/v1` and never gain new response
-  fields under this policy — a legacy route that needs to grow gets a `/api/v1`
-  (or later) replacement instead, per the existing instruction in
-  `player_stats_storage_contract.md`.
+* Unversioned `/api/...` routes are pre-v1 behaviour rather than part of the
+  versioned contract. They are not renamed or silently repointed in place; a
+  useful capability receives a canonical `/api/v1` (or later) replacement.
+  Once the consumer workflow's legacy checklist is satisfied, the old route
+  may be retired.
 * Authentication is unchanged: `verify_api_key` / `X-Api-Key`, reused as-is.
   No scope or key-type distinction is introduced by this design.
 

@@ -2,6 +2,13 @@
 
 This directory contains historical engineering and architectural assessments for AFL-api releases.
 
+Active design areas:
+
+- [Workflow designs](workflows/README.md) define human-led, cross-component
+  behaviour and implementation targets.
+- [API implementation designs](api/README.md) translate the consumer API
+  workflow into bounded endpoint and interface specifications.
+
 - [AFL data authority and identity map](data_authority_map.md) — concise active
   contributor reference for source, persistence and identifier choices.
 

@@ -25,7 +25,8 @@ for the reusable release summary and upgrade cautions.
 - [Match roster collection](match_rosters.md)
 - [Match player-stat collection](match_player_stats.md)
 - [Player-stat persistence and authority contract](architecture/player_stats_storage_contract.md)
-- [Canonical CFS player-stat read API design](architecture/workflows/player_stats_api_design.md) — proposed first versioned consumer read surface
+- [Consumer API workflow design](architecture/workflows/consumer_api_design.md) — human-led target for the complete versioned consumer surface
+- [Canonical CFS player-stat read API design](architecture/api/player_stats_api_design.md) — endpoint-specific implementation design for the first versioned player-stat resource
 - [Canonical player-stat API (`/api/v1`) — consumer reference](api_v1_player_stats.md) — `GET /api/v1/matches/{match_id}/player-stats`, Stage 1 of the design above
 - [JSON payload fixtures and offline contract regression tests](json_contract_fixtures.md)
 
