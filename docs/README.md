@@ -28,6 +28,7 @@ for the reusable release summary and upgrade cautions.
 - [Consumer API workflow design](architecture/workflows/consumer_api_design.md) — human-led target for the complete versioned consumer surface
 - [Canonical CFS player-stat read API design](architecture/api/player_stats_api_design.md) — endpoint-specific implementation design for the first versioned player-stat resource
 - [Canonical player-stat API (`/api/v1`) — consumer reference](api_v1_player_stats.md) — `GET /api/v1/matches/{match_id}/player-stats`, Stage 1 of the design above
+- [API v1 discovery and canonical seasons — consumer reference](api_v1_seasons.md) — start at `GET /api/v1` and discover persisted seasons through `GET /api/v1/seasons`
 - [JSON payload fixtures and offline contract regression tests](json_contract_fixtures.md)
 
 ## Reviews and planning

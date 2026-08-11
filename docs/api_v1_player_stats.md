@@ -13,7 +13,9 @@ GET /api/v1/matches/{match_id}/player-stats
 
 The endpoint resolves the numeric `matches.match_id` used elsewhere by the
 API and returns the persisted canonical player-stat resource. Send an API key
-in `X-Api-Key`. An ordinary authenticated credential can use normal mode.
+in `X-Api-Key`. An ordinary authenticated credential can use normal mode. A
+missing or invalid API key receives `401` with
+`{"detail": "Invalid or missing API Key"}`.
 
 ### Parameters
 
@@ -125,12 +127,12 @@ Application errors use this common `/api/v1` shape:
 | `200` | Match exists; `players` may legitimately be empty. |
 | `403` | `advanced_access_required` when a valid key without `advanced-read` requests advanced mode. Message: `This API key does not permit access to advanced metadata.` |
 | `404` | `match_not_found` when the addressed match does not exist. |
-| `401` | Invalid API key (existing authentication behaviour). |
-| `422` | Framework request validation, including a missing required key header or invalid parameter shape. |
+| `401` | Missing or invalid API key. Message: `Invalid or missing API Key`. |
+| `422` | Framework request or parameter validation, such as an invalid `side` value or parameter shape. |
 
 Application errors do not expose SQL, table names, stack traces, secrets,
-provider URLs, or raw collector failures. FastAPI framework validation remains
-in its standard `422` shape.
+provider URLs, or raw collector failures. Authentication failures use `401`;
+FastAPI request and parameter validation remains in its standard `422` shape.
 
 ## Ordering and scope
 

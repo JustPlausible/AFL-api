@@ -21,8 +21,86 @@ from api_key_capabilities import ADVANCED_READ
 from auth import AuthenticatedCredential, authenticate_api_key
 from db.connection import get_db_connection
 from utils.log import log
+from version import __version__
 
 router = APIRouter()
+
+
+class ApiDiscoveryResponse(BaseModel):
+    """Stable, deliberately minimal entry point for consumer discovery."""
+
+    name: str
+    version: str
+    documentation: str
+
+
+class Season(BaseModel):
+    """Public projection of one persisted canonical AFL season."""
+
+    season_id: int
+    year: int
+    name: str
+    is_current: bool
+    current_round_number: int | None
+
+
+class SeasonsResponse(BaseModel):
+    seasons: list[Season]
+
+
+@router.get(
+    "/api/v1",
+    response_model=ApiDiscoveryResponse,
+    summary="Discover the AFL-api v1 consumer API",
+    description=(
+        "Authenticated discovery entry point containing only the public API name, "
+        "version, and generated documentation location. Use the seasons resource "
+        "as the first step in the consumer navigation hierarchy."
+    ),
+)
+def get_api_discovery(
+    credential: AuthenticatedCredential = Depends(authenticate_api_key),
+) -> ApiDiscoveryResponse:
+    log(f"🧭 {credential.label} requested v1 API discovery", "INFO")
+    return ApiDiscoveryResponse(name="AFL-api", version=__version__, documentation="/docs")
+
+
+@router.get(
+    "/api/v1/seasons",
+    response_model=SeasonsResponse,
+    summary="List canonical AFL seasons",
+    description=(
+        "Returns persisted AFL seasons in descending year order. season_id is the "
+        "numeric AFL season identifier. is_current and current_round_number are read "
+        "directly from season-sync persistence and are not independently calculated. "
+        "Provider payloads and internal metadata are never exposed."
+    ),
+)
+def get_seasons(
+    credential: AuthenticatedCredential = Depends(authenticate_api_key),
+) -> SeasonsResponse:
+    log(f"📅 {credential.label} requested v1 seasons", "INFO")
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            "SELECT afl_id, year, name, is_current, current_round_number "
+            "FROM afl_seasons ORDER BY year DESC, afl_id DESC"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    return SeasonsResponse(
+        seasons=[
+            Season(
+                season_id=row["afl_id"],
+                year=row["year"],
+                name=row["name"],
+                is_current=bool(row["is_current"]),
+                current_round_number=row["current_round_number"],
+            )
+            for row in rows
+        ]
+    )
 
 
 class MatchSide(str, Enum):

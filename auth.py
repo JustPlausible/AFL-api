@@ -30,14 +30,14 @@ class AuthenticatedCredential:
         return capability in self.capabilities
 
 
-def authenticate_api_key(x_api_key: str = Header(...)) -> AuthenticatedCredential:
+def authenticate_api_key(x_api_key: str | None = Header(None)) -> AuthenticatedCredential:
     conn = get_db_connection()
     cursor = conn.execute(
         "SELECT id, label, key_hash FROM api_keys WHERE is_active = 1 AND key_hash IS NOT NULL",
     )
     result = None
     for row in cursor.fetchall():
-        if verify_api_key_hash(x_api_key, row["key_hash"]):
+        if x_api_key is not None and verify_api_key_hash(x_api_key, row["key_hash"]):
             result = row
             break
     if not result:

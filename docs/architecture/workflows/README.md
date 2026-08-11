@@ -24,6 +24,9 @@ is retained under `architecture/api/` as the implementation design for the
 first versioned player-stat resource. Stage 1,
 `GET /api/v1/matches/{match_id}/player-stats`, is implemented; see the
 [consumer reference](../../api_v1_player_stats.md) for shipped behaviour.
+The foundational navigation stage begins with the authenticated discovery root
+and canonical seasons resource; see the
+[v1 discovery and seasons consumer reference](../../api_v1_seasons.md).
 
 The scheduler composes the same source-policy and collector boundaries used by
 season synchronisation. The season workflow remains the bounded bulk-loading
