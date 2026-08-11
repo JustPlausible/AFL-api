@@ -7,12 +7,25 @@
 > This document remains the endpoint-specific design record for the implemented
 > Stage 1 player-stat route. The human-led consumer API workflow now governs the
 > broader v1 direction. Where the documents differ, the workflow supersedes
-> this design for future work: unversioned routes may retire after capability
-> migration; advanced access is permission-controlled; ordinary freshness is a
-> resource-level `source_updated_at`; and collector-level authority, resolved
-> status, and collection timestamps move to advanced metadata. The shipped
-> [consumer reference](../../api_v1_player_stats.md) remains authoritative for
-> current behaviour until those follow-up changes are implemented.
+> this design for future work.
+>
+> **Implemented:** the advanced-metadata reconciliation this banner used to
+> describe as pending has shipped, via
+> [PR #161](https://github.com/JustPlausible/AFL-api/pull/161) (closing issue
+> #156, "Reconcile GET /api/v1/matches/{match_id}/player-stats with the
+> consumer API workflow contract") — advanced access is now
+> permission-controlled (`advanced-read` capability, `?advanced=true`);
+> ordinary freshness is the resource-level `metadata.source_updated_at`; and
+> collector-level `snapshot_authority`, row-level `resolved_match_status`, and
+> `collected_at` have moved out of the normal response into advanced
+> metadata. §6.2 and §8 below describe the shipped shape. The
+> [consumer reference](../../api_v1_player_stats.md) is the current, accurate
+> description of this behaviour.
+>
+> **Still open / deferred:** unversioned pre-v1 routes have not yet retired —
+> that still depends on the capability-migration checklist in
+> `consumer_api_design.md`. Anything not explicitly called out as implemented
+> above remains governed by that document, not this one.
 
 **Related reviews:** [Post-v0.5.0 engineering status review](../project_status_post_v0_5_0.md)
 (§13 Option A — canonical read API for downstream consumers),
@@ -232,6 +245,10 @@ consumer read API (§13).
 
 ### 6.2 Response model
 
+As shipped (PR #161, closing issue #156), the response is split into a normal shape and an
+additive `?advanced=true` shape gated by the `advanced-read` capability. The
+normal shape is the one every consumer receives by default:
+
 ```json
 {
   "match": {
@@ -241,13 +258,8 @@ consumer read API (§13).
     "season_id": 2026,
     "status": "CONCLUDED"
   },
-  "lifecycle": {
-    "finality": "final",
-    "authoritative_rows": 44,
-    "authoritative_sides": 2,
-    "min_snapshot_authority": 2,
-    "max_snapshot_authority": 2
-  },
+  "lifecycle": {"finality": "final"},
+  "metadata": {"source_updated_at": "2026-08-09T09:32:11+00:00"},
   "players": [
     {
       "champion_data_player_id": "CD_I1004321",
@@ -265,12 +277,35 @@ consumer read API (§13).
         "marks": 5,
         "tackles": 4,
         "hitouts": 0
-      },
+      }
+    }
+  ]
+}
+```
+
+A key with the `advanced-read` capability may add `?advanced=true` to
+additively gain per-player provenance and match-level finality evidence; the
+normal fields above are unchanged in value or meaning. Each player row gains
+an `advanced` object, and the response gains a top-level `advanced` object:
+
+```json
+"players": [
+  {
+    "...": "... all normal fields unchanged ...",
+    "advanced": {
       "snapshot_authority": 2,
       "resolved_match_status": "CONCLUDED",
       "collected_at": "2026-08-09T09:32:11+00:00"
     }
-  ]
+  }
+],
+"advanced": {
+  "finality_evidence": {
+    "authoritative_rows": 44,
+    "authoritative_sides": 2,
+    "min_snapshot_authority": 2,
+    "max_snapshot_authority": 2
+  }
 }
 ```
 
@@ -280,16 +315,24 @@ Field notes:
   JSON, kept fresh by existing match-status reconciliation), not any single
   stat row's `resolved_match_status`. The two can legitimately disagree
   briefly — see §8.
-* `players[].resolved_match_status` and `players[].snapshot_authority` are the
-  values persisted on that specific row (per-row, not per-response — see §8
-  for why rows are not guaranteed to share one authority).
+* `metadata.source_updated_at` is the resource-level freshness signal for the
+  normal response — the newest `collected_at` among the rows actually
+  returned (`null` when no rows are returned). It replaces any per-row
+  freshness field in the normal shape.
+* `players[].advanced.resolved_match_status` and
+  `players[].advanced.snapshot_authority` are the values persisted on that
+  specific row (per-row, not per-response — see §8 for why rows are not
+  guaranteed to share one authority), visible only in advanced mode.
 * `players` is ordered by `side, champion_data_player_id` (consistent with the
   operator verification query already documented in
-  `player_stats_storage_contract.md`).
+  `player_stats_storage_contract.md`), in both normal and advanced mode.
 * Numeric CFS stat fields (`goals`, `behinds`, ...) may be stored as SQLite
   `NUMERIC` (including a small number of `Decimal`-derived non-integers per
   `afl_json/player_stats.py::_number`); serialise them as JSON numbers as-is,
   do not coerce to `int`.
+* See [`docs/api_v1_player_stats.md`](../../api_v1_player_stats.md) for the
+  full consumer-facing description, including the `advanced_access_required`
+  `403` returned to a standard key requesting `?advanced=true`.
 
 ## 7. Authoritative vs. assumption-requiring joins
 
@@ -359,13 +402,31 @@ Field notes:
 
 Consumers need to distinguish "this is a live/partial observation that may
 still change" from "this is concluded, authoritative data" without guessing
-from timing.
+from timing. As shipped (PR #161, closing issue #156), that distinction is split between the
+normal response, advanced-only metadata, and evidence that is never exposed
+at all:
+
+* **Part of normal consumer output:** `lifecycle.finality` (`"final"` /
+  `"partial"` / `"not_available"`) and `metadata.source_updated_at`. These are
+  the only lifecycle/freshness signals every consumer sees regardless of
+  capability.
+* **Advanced-only** (`?advanced=true` with the `advanced-read` capability):
+  per-player `advanced.snapshot_authority`, `advanced.resolved_match_status`,
+  `advanced.collected_at`, and the response-level
+  `advanced.finality_evidence` (`authoritative_rows`, `authoritative_sides`,
+  `min_snapshot_authority`, `max_snapshot_authority`). None of these appear in
+  the normal response.
+* **Deliberately not exposed at any capability level:** raw collector
+  failures, `match_stat_windows` scheduler/lease state, and any evidence
+  beyond the selected `finality_evidence` fields above (§7.2, §9).
+
+Mechanics behind those fields:
 
 * Every persisted row already carries `snapshot_authority` (`1` = non-final —
   covers both `live_partial` and `unknown` collector states — or `2` =
   `concluded`; `unavailable`/`empty` results are never persisted, per
   `upsert_player_stats`). The API surfaces this per row as
-  `players[].snapshot_authority`, unchanged.
+  `players[].advanced.snapshot_authority`, gated behind advanced mode.
 * `upsert_player_stats`'s `WHERE excluded.snapshot_authority > ... OR (== AND
   newer AND changed)` guard makes authority **monotonic per row** but does
   **not** guarantee every row for a match advances in lockstep — one side's
@@ -391,28 +452,34 @@ from timing.
     consumer building a live view should still read the `players` array (it
     can be non-empty with live data) but must treat `finality != "final"` as
     "may still change."
-* `lifecycle.authoritative_rows`, `authoritative_sides`,
+* `advanced.finality_evidence`'s `authoritative_rows`, `authoritative_sides`,
   `min_snapshot_authority`, and `max_snapshot_authority` are the evidence
-  fields from the same predicate, exposed so a consumer can distinguish
-  "zero rows" from "one-sided" from "mixed authority" instead of only getting
-  a single opaque enum.
-* Per-row `collected_at` and `resolved_match_status` are exposed so a
-  consumer can reason about freshness directly rather than polling faster
-  than the source. Consumer guidance to document alongside this endpoint: do
-  not poll faster than the default live collection cadence recorded in
-  `match_window_planner.md` (60 seconds per live match); this API reflects
-  whatever the scheduler has most recently persisted; it does not fetch from
-  CFS on demand.
+  fields from the same predicate, exposed only in advanced mode so a
+  consumer with the `advanced-read` capability can distinguish "zero rows"
+  from "one-sided" from "mixed authority" instead of only getting a single
+  opaque enum. Normal-mode consumers get only the `lifecycle.finality` enum.
+* `metadata.source_updated_at` (normal mode) is the newest `collected_at`
+  among the rows actually returned by the request — including any `side` /
+  `champion_data_player_id` filter — and is `null` when no rows are returned;
+  it never reflects request-serve time, current time, or scheduler-run time.
+  Per-row `advanced.collected_at` and `advanced.resolved_match_status`
+  (advanced mode only) let a consumer with that capability reason about a
+  specific row's freshness and status directly. Either way, consumer guidance
+  to document alongside this endpoint stands: do not poll faster than the
+  default live collection cadence recorded in `match_window_planner.md` (60
+  seconds per live match); this API reflects whatever the scheduler has most
+  recently persisted; it does not fetch from CFS on demand.
 * `match.status` (from `matches`, §6.2) is the canonical match lifecycle and
-  may be one step ahead of what a given stat row's `resolved_match_status`
-  shows immediately after a lifecycle transition (e.g. `match.status =
-  CONCLUDED` while some `players[].resolved_match_status` still reads
-  `POSTGAME` until the next poll writes that row) — this is expected,
-  documented behaviour, not a bug, matching
-  `stats.authority_lifecycle_conflict`'s inverse (a genuinely wrong direction,
-  concluded-authority stats before the match is concluded) already being a
-  season-report error condition. This API surfaces both fields so consumers
-  can see the (usually momentary) disagreement rather than papering over it.
+  may be one step ahead of what a given stat row's
+  `advanced.resolved_match_status` shows immediately after a lifecycle
+  transition (e.g. `match.status = CONCLUDED` while some
+  `players[].advanced.resolved_match_status` still reads `POSTGAME` until the
+  next poll writes that row) — this is expected, documented behaviour, not a
+  bug, matching `stats.authority_lifecycle_conflict`'s inverse (a genuinely
+  wrong direction, concluded-authority stats before the match is concluded)
+  already being a season-report error condition. This disagreement is only
+  visible to a consumer in advanced mode, since normal mode does not expose
+  `resolved_match_status` at all.
 
 ## 9. Stable contract fields, `extra_stats_json`, and `raw_player_json`
 
