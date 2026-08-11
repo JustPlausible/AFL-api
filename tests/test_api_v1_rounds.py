@@ -35,11 +35,26 @@ def _rounds_client(tmp_path, monkeypatch):
     return _client(_make_db(tmp_path, _seed_rounds), monkeypatch)
 
 
-def test_season_rounds_require_authentication(tmp_path, monkeypatch):
-    response = _rounds_client(tmp_path, monkeypatch).get(
-        f"/api/v1/seasons/{SEASON_ID}/rounds"
-    )
-    assert response.status_code == 401
+def test_season_rounds_require_api_key_with_shared_auth_error(tmp_path, monkeypatch):
+    client = _rounds_client(tmp_path, monkeypatch)
+    path = f"/api/v1/seasons/{SEASON_ID}/rounds"
+
+    missing = client.get(path)
+    invalid = client.get(path, headers={"x-api-key": "invalid"})
+
+    assert missing.status_code == invalid.status_code == 401
+    assert missing.json() == invalid.json() == {"detail": "Invalid or missing API Key"}
+
+
+def test_round_detail_requires_api_key_with_shared_auth_error(tmp_path, monkeypatch):
+    client = _rounds_client(tmp_path, monkeypatch)
+    path = "/api/v1/rounds/102"
+
+    missing = client.get(path)
+    invalid = client.get(path, headers={"x-api-key": "invalid"})
+
+    assert missing.status_code == invalid.status_code == 401
+    assert missing.json() == invalid.json() == {"detail": "Invalid or missing API Key"}
 
 
 def test_season_rounds_are_scoped_ordered_typed_and_safe(tmp_path, monkeypatch):

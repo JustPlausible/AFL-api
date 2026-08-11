@@ -12,13 +12,14 @@ def _seed_historical_season(conn):
     )
 
 
-def test_discovery_requires_api_key(tmp_path, monkeypatch):
+def test_discovery_requires_api_key_with_shared_auth_error(tmp_path, monkeypatch):
     client = _client(_make_db(tmp_path, _seed_historical_season), monkeypatch)
 
-    response = client.get("/api/v1")
+    missing = client.get("/api/v1")
+    invalid = client.get("/api/v1", headers={"x-api-key": "invalid"})
 
-    assert response.status_code == 401
-    assert response.json() == {"detail": "Invalid or missing API Key"}
+    assert missing.status_code == invalid.status_code == 401
+    assert missing.json() == invalid.json() == {"detail": "Invalid or missing API Key"}
 
 
 def test_discovery_returns_only_typed_public_fields(tmp_path, monkeypatch):

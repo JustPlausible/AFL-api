@@ -53,11 +53,26 @@ def _matches_client(tmp_path, monkeypatch):
     return _client(_make_db(tmp_path, _seed_matches), monkeypatch)
 
 
-def test_round_match_listing_requires_authentication(tmp_path, monkeypatch):
-    response = _matches_client(tmp_path, monkeypatch).get(
-        f"/api/v1/rounds/{ROUND_ID}/matches"
-    )
-    assert response.status_code == 401
+def test_round_match_listing_requires_api_key_with_shared_auth_error(tmp_path, monkeypatch):
+    client = _matches_client(tmp_path, monkeypatch)
+    path = f"/api/v1/rounds/{ROUND_ID}/matches"
+
+    missing = client.get(path)
+    invalid = client.get(path, headers={"x-api-key": "invalid"})
+
+    assert missing.status_code == invalid.status_code == 401
+    assert missing.json() == invalid.json() == {"detail": "Invalid or missing API Key"}
+
+
+def test_match_detail_requires_api_key_with_shared_auth_error(tmp_path, monkeypatch):
+    client = _matches_client(tmp_path, monkeypatch)
+    path = f"/api/v1/matches/{MATCH_ID}"
+
+    missing = client.get(path)
+    invalid = client.get(path, headers={"x-api-key": "invalid"})
+
+    assert missing.status_code == invalid.status_code == 401
+    assert missing.json() == invalid.json() == {"detail": "Invalid or missing API Key"}
 
 
 def test_listing_is_scoped_ordered_typed_and_safe(tmp_path, monkeypatch):
