@@ -14,7 +14,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from afl_json.player_stats import CANONICAL_STAT_FIELDS
 from afl_json.season_report import authoritative_stats_finality_for_match
@@ -73,6 +73,72 @@ class Round(BaseModel):
 
 class RoundsResponse(BaseModel):
     rounds: list[Round]
+
+
+class MatchTeam(BaseModel):
+    """Minimal canonical team identity for one side of a match."""
+
+    team_id: int = Field(description="Canonical AFL team identifier.")
+    name: str | None = Field(
+        description="Canonical persisted team name, or null when unavailable."
+    )
+
+
+class Match(BaseModel):
+    """Stable public projection of one persisted canonical AFL match."""
+
+    match_id: int = Field(description="Canonical match identifier used by player-stats.")
+    round_id: int
+    season_id: int | None
+    status: str | None = Field(description="Persisted match lifecycle status.")
+    start_time_utc: str | None = Field(
+        description="Persisted scheduled start in UTC, or null when unknown."
+    )
+    home_team: MatchTeam | None = Field(
+        description="Canonical home-team identity, or null when it cannot be resolved."
+    )
+    away_team: MatchTeam | None = Field(
+        description="Canonical away-team identity, or null when it cannot be resolved."
+    )
+    score_home: int | None = Field(description="Persisted home score, or null when unavailable.")
+    score_away: int | None = Field(description="Persisted away score, or null when unavailable.")
+
+
+class MatchesResponse(BaseModel):
+    matches: list[Match]
+
+
+def _match_from_row(row) -> Match:
+    """Project only reviewed canonical fields from a match/team join."""
+    return Match(
+        match_id=row["match_id"],
+        round_id=row["round_id"],
+        season_id=row["season_id"],
+        status=row["status"],
+        start_time_utc=row["start_time_utc"],
+        home_team=(
+            MatchTeam(team_id=row["canonical_home_team_id"], name=row["home_team_name"])
+            if row["canonical_home_team_id"] is not None
+            else None
+        ),
+        away_team=(
+            MatchTeam(team_id=row["canonical_away_team_id"], name=row["away_team_name"])
+            if row["canonical_away_team_id"] is not None
+            else None
+        ),
+        score_home=row["score_home"],
+        score_away=row["score_away"],
+    )
+
+
+_MATCH_SELECT = (
+    "SELECT m.match_id, m.round_id, m.season_id, m.status, m.start_time_utc, "
+    "m.score_home, m.score_away, ht.afl_id AS canonical_home_team_id, "
+    "ht.name AS home_team_name, at.afl_id AS canonical_away_team_id, "
+    "at.name AS away_team_name FROM matches m "
+    "LEFT JOIN afl_teams ht ON ht.afl_id = m.home_team_id "
+    "LEFT JOIN afl_teams at ON at.afl_id = m.away_team_id "
+)
 
 
 def _round_from_row(row, teams: dict[int, tuple[str | None, str | None]]) -> Round:
@@ -241,6 +307,67 @@ def get_round(
     finally:
         conn.close()
     return _round_from_row(row, teams)
+
+
+@router.get(
+    "/api/v1/rounds/{round_id}/matches",
+    response_model=MatchesResponse,
+    responses={404: {"model": ApplicationErrorResponse, "description": "Round not found"}},
+    summary="List canonical matches for a round",
+    description=(
+        "Returns persisted matches belonging to an existing canonical round. Known UTC "
+        "start times sort first in ascending order, followed by unknown times; match_id "
+        "is the stable tie-breaker. Team identities resolve only through canonical "
+        "afl_teams persistence. A valid round without matches returns an empty collection."
+    ),
+)
+def get_round_matches(
+    round_id: int,
+    credential: AuthenticatedCredential = Depends(authenticate_api_key),
+) -> MatchesResponse | JSONResponse:
+    log(f"📦 {credential.label} requested v1 matches for round {round_id}", "INFO")
+    conn = get_db_connection()
+    try:
+        round_row = conn.execute(
+            "SELECT round_id FROM rounds WHERE round_id = ?", (round_id,)
+        ).fetchone()
+        if round_row is None:
+            return application_error(404, "round_not_found", "Round not found.")
+        rows = conn.execute(
+            _MATCH_SELECT
+            + "WHERE m.round_id = ? "
+            "ORDER BY m.start_time_utc IS NULL ASC, m.start_time_utc ASC, m.match_id ASC",
+            (round_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return MatchesResponse(matches=[_match_from_row(row) for row in rows])
+
+
+@router.get(
+    "/api/v1/matches/{match_id}",
+    response_model=Match,
+    responses={404: {"model": ApplicationErrorResponse, "description": "Match not found"}},
+    summary="Get a canonical match",
+    description=(
+        "Returns the stable canonical projection of one persisted match. match_id is the "
+        "same identifier accepted by the match player-stats resource. Raw provider and "
+        "collector payloads are not part of this contract."
+    ),
+)
+def get_match(
+    match_id: int,
+    credential: AuthenticatedCredential = Depends(authenticate_api_key),
+) -> Match | JSONResponse:
+    log(f"🔍 {credential.label} requested v1 match {match_id}", "INFO")
+    conn = get_db_connection()
+    try:
+        row = conn.execute(_MATCH_SELECT + "WHERE m.match_id = ?", (match_id,)).fetchone()
+        if row is None:
+            return application_error(404, "match_not_found", "Match not found.")
+    finally:
+        conn.close()
+    return _match_from_row(row)
 
 
 class MatchSide(str, Enum):

@@ -30,6 +30,9 @@ and canonical seasons resource; see the
 Canonical round navigation is also implemented; see the
 [v1 rounds consumer reference](../../api_v1_rounds.md) for the shipped typed
 bye-team contract.
+Canonical round-scoped match listing and match detail complete the foundational
+season → round → match → player-stats navigation chain entirely under
+`/api/v1`; see the [v1 matches consumer reference](../../api_v1_matches.md).
 
 The scheduler composes the same source-policy and collector boundaries used by
 season synchronisation. The season workflow remains the bounded bulk-loading
