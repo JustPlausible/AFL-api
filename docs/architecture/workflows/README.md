@@ -27,6 +27,9 @@ first versioned player-stat resource. Stage 1,
 The foundational navigation stage begins with the authenticated discovery root
 and canonical seasons resource; see the
 [v1 discovery and seasons consumer reference](../../api_v1_seasons.md).
+Canonical round navigation is also implemented; see the
+[v1 rounds consumer reference](../../api_v1_rounds.md) for the shipped typed
+bye-team contract.
 
 The scheduler composes the same source-policy and collector boundaries used by
 season synchronisation. The season workflow remains the bounded bulk-loading
