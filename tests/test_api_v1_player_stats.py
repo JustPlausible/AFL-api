@@ -379,6 +379,7 @@ def test_invalid_api_key_returns_401(tmp_path, monkeypatch):
     response = _get(client, headers={"x-api-key": "wrong-key"})
 
     assert response.status_code == 401
+    assert response.json() == {"detail": "Invalid or missing API Key"}
 
 
 def test_response_shape_regression(tmp_path, monkeypatch):
