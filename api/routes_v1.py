@@ -13,6 +13,7 @@ from enum import Enum
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from afl_json.player_stats import CANONICAL_STAT_FIELDS
@@ -84,14 +85,26 @@ def _round_from_row(row, teams: dict[int, tuple[str | None, str | None]]) -> Rou
         except (TypeError, json.JSONDecodeError):
             stored = None
         if isinstance(stored, list):
-            byes = []
-            seen: set[int] = set()
-            for value in stored:
-                team_id = value.get("id") if isinstance(value, dict) else None
-                if isinstance(team_id, int) and not isinstance(team_id, bool) and team_id not in seen:
-                    seen.add(team_id)
-                    name, abbreviation = teams.get(team_id, (None, None))
-                    byes.append(ByeTeam(team_id=team_id, name=name, abbreviation=abbreviation))
+            if not stored:
+                byes = []
+            else:
+                resolved: list[ByeTeam] = []
+                seen: set[int] = set()
+                complete = True
+                for value in stored:
+                    team_id = value.get("id") if isinstance(value, dict) else None
+                    if not isinstance(team_id, int) or isinstance(team_id, bool):
+                        complete = False
+                        continue
+                    if team_id not in seen:
+                        seen.add(team_id)
+                        name, abbreviation = teams.get(team_id, (None, None))
+                        resolved.append(
+                            ByeTeam(team_id=team_id, name=name, abbreviation=abbreviation)
+                        )
+                # Never present a partial projection as a complete source bye list.
+                if complete:
+                    byes = resolved
 
     return Round(
         round_id=row["round_id"], season_id=row["season_id"],
@@ -166,10 +179,12 @@ def _team_projection(conn) -> dict[int, tuple[str | None, str | None]]:
 @router.get(
     "/api/v1/seasons/{season_id}/rounds",
     response_model=RoundsResponse,
+    responses={404: {"model": ApplicationErrorResponse, "description": "Season not found"}},
     summary="List canonical rounds for a season",
     description=(
-        "Returns rounds using their persisted season relationship, ordered by round_number "
-        "ascending and round_id ascending. byes is a typed list of canonical team identities; "
+        "Returns rounds using their persisted season relationship, with numbered rounds "
+        "ordered by round_number and round_id ascending and unknown numbers last. byes is a "
+        "typed list of canonical team identities; "
         "an empty list means the source explicitly reported no byes, while null means bye "
         "information was unavailable or could not be safely interpreted."
     ),
@@ -177,14 +192,19 @@ def _team_projection(conn) -> dict[int, tuple[str | None, str | None]]:
 def get_season_rounds(
     season_id: int,
     credential: AuthenticatedCredential = Depends(authenticate_api_key),
-) -> RoundsResponse:
+) -> RoundsResponse | JSONResponse:
     log(f"📅 {credential.label} requested v1 rounds for season {season_id}", "INFO")
     conn = get_db_connection()
     try:
+        season = conn.execute(
+            "SELECT afl_id FROM afl_seasons WHERE afl_id = ?", (season_id,)
+        ).fetchone()
+        if season is None:
+            return application_error(404, "season_not_found", "Season not found.")
         rows = conn.execute(
             "SELECT round_id, round_label, season_id, round_number, abbreviation, "
             "start_time, end_time, byes_json FROM rounds WHERE season_id = ? "
-            "ORDER BY round_number ASC, round_id ASC",
+            "ORDER BY round_number IS NULL ASC, round_number ASC, round_id ASC",
             (season_id,),
         ).fetchall()
         teams = _team_projection(conn)
@@ -206,7 +226,7 @@ def get_season_rounds(
 def get_round(
     round_id: int,
     credential: AuthenticatedCredential = Depends(authenticate_api_key),
-):
+) -> Round | JSONResponse:
     log(f"🔍 {credential.label} requested v1 round {round_id}", "INFO")
     conn = get_db_connection()
     try:

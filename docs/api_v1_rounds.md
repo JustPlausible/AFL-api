@@ -33,13 +33,16 @@ Only the numeric `id` is accepted as a canonical team identity; public names
 are read from canonical team persistence rather than copied from that payload.
 Duplicate IDs are collapsed in source order. An explicit persisted empty array
 is returned as `[]`. A null, invalid, or non-array stored value is returned as
-`null`, because bye availability is unknown. Array entries without a valid
-numeric team ID are ignored rather than guessed.
+`null`, because bye availability is unknown. A non-empty array containing any
+entry without a valid numeric team ID also returns `null`: this conservative
+rule prevents either an entirely unresolvable or a partially resolved source
+array from being presented as a complete bye list.
 
 The season listing reads `rounds.season_id`; it does not derive membership from
-dates or matches. Results are ordered by `round_number` ascending, then
-`round_id` ascending as a stable tie-breaker. The response does not embed match
-or fixture summaries.
+dates or matches. Numbered results are ordered by `round_number` ascending
+(including Opening Round as `0`), then `round_id` ascending as a stable
+tie-breaker. Rounds whose number is unknown (`null`) appear last, ordered by
+`round_id`. The response does not embed match or fixture summaries.
 
 ## Examples
 
@@ -90,3 +93,7 @@ An unknown `round_id` returns `404` using the shared v1 application error:
 ```json
 {"error": {"code": "round_not_found", "message": "Round not found."}}
 ```
+
+The season-scoped route first validates the canonical persisted season. A
+known season with no rounds returns `200` with `{"rounds": []}`; an unknown
+season returns `404` with code `season_not_found` in the same error shape.
