@@ -362,17 +362,14 @@ def test_invalid_side_returns_422(tmp_path, monkeypatch):
     assert response.status_code == 422
 
 
-def test_missing_api_key_header_returns_422(tmp_path, monkeypatch):
-    # verify_api_key's `x_api_key: str = Header(...)` is a required parameter,
-    # so FastAPI's own validation rejects a wholly missing header before the
-    # dependency runs -- this matches every existing route using the same
-    # dependency (see api/routes.py's echo-headers route).
+def test_missing_api_key_header_returns_401(tmp_path, monkeypatch):
     db_path = _make_db(tmp_path, seed=lambda conn: _seed_match(conn))
     client = _client(db_path, monkeypatch)
 
     response = client.get(f"/api/v1/matches/{MATCH_ID}/player-stats")
 
-    assert response.status_code == 422
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Invalid or missing API Key"}
 
 
 def test_invalid_api_key_returns_401(tmp_path, monkeypatch):
