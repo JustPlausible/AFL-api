@@ -47,7 +47,7 @@
             {% for job in jobs %}
                 <tr>
                     <td>{{ job.id }}</td>
-                    <td>{{ job.func }}</td>
+                    <td>{{ job.func or "—" }}</td>
                     <td>{{ job.next_run_time or "—" }}</td>
                     <td>{{ job.trigger or "—" }}</td>
                     <td>{{ job.apscheduler_state or "unknown" }}</td>

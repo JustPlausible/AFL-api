@@ -119,6 +119,45 @@ def home(request: Request):
     return templates.TemplateResponse(request=request, name="index.html", context={})
 
 
+def _schedule_group_label(job: dict) -> str:
+    """Pick a display group for a scheduler job.
+
+    Prefers structured persisted registry metadata (job_type/match_id/round_id),
+    since persisted-only rows (e.g. CFS polling attempts) have no `func` to
+    parse. Falls back to substring-matching the APScheduler func reference for
+    in-memory jobs that lack persisted metadata.
+    """
+    persisted = job.get("persisted") or {}
+    job_type = job.get("persisted_job_type") or persisted.get("job_type")
+    match_id = persisted.get("match_id")
+    round_id = persisted.get("round_id")
+
+    if round_id not in (None, ""):
+        return f"Round {round_id}"
+    if match_id not in (None, ""):
+        return f"Match {match_id}"
+    if job_type:
+        job_type = str(job_type)
+        if "injur" in job_type.lower():
+            return "Daily Injuries"
+        return job_type.replace("_", " ").title()
+
+    func = job.get("func") or ""
+    if not isinstance(func, str):
+        func = str(func)
+    args = job.get("args")
+    if not isinstance(args, (list, tuple)) or not args:
+        args = None
+
+    if "run_scraper" in func and args:
+        return f"Round {args[0]}"
+    if "run_match_scraper" in func and args:
+        return f"Match {args[0]}"
+    if "injury" in func:
+        return "Daily Injuries"
+    return "General"
+
+
 @app.get("/schedule", response_class=HTMLResponse)
 def show_schedule(request: Request):
     try:
@@ -129,19 +168,10 @@ def show_schedule(request: Request):
         log(f"❌ Failed to contact scheduler: {e}", "ERROR")
         raw_jobs = []
 
-    # Group by round_id if found in args
+    # Group persisted-only and in-memory jobs alike; nothing is filtered out.
     grouped = defaultdict(list)
-
     for job in raw_jobs:
-        # Assume round_id is first arg for run_scraper or run_match_scraper
-        round_id = "General"
-        if "run_scraper" in job["func"] and "args" in job:
-            round_id = f"Round {job['args'][0]}"
-        elif "run_match_scraper" in job["func"] and "args" in job:
-            round_id = f"Match {job['args'][0]}"
-        elif "injury" in job["func"]:
-            round_id = "Daily Injuries"
-        grouped[round_id].append(job)
+        grouped[_schedule_group_label(job)].append(job)
 
     return templates.TemplateResponse(
         request=request,
