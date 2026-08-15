@@ -118,3 +118,9 @@ AFL_RECOVERY_SCRAPE_RUN_STALE_SECONDS = _parse_int_env("AFL_RECOVERY_SCRAPE_RUN_
 AFL_RECOVERY_SHUTDOWN_GRACE_SECONDS = _parse_int_env("AFL_RECOVERY_SHUTDOWN_GRACE_SECONDS", 120)
 AFL_SCHEDULER_HEARTBEAT_SECONDS = _parse_int_env("AFL_SCHEDULER_HEARTBEAT_SECONDS", 15)
 AFL_RECOVERY_STARTUP_CANDIDATE_LIMIT = _parse_int_env("AFL_RECOVERY_STARTUP_CANDIDATE_LIMIT", 500)
+
+# Diagnostic-only opt-in live matchItem evidence capture for quarter/half/three-quarter/
+# full-time investigation (Issue #148). Disabled by default; never feeds scheduler
+# decisions and never normalises AFL period/break semantics into production state.
+AFL_CAPTURE_MATCH_STATE_EVIDENCE = _parse_bool_env("AFL_CAPTURE_MATCH_STATE_EVIDENCE", False)
+AFL_MATCH_STATE_CAPTURE_INTERVAL_SECONDS = _parse_int_env("AFL_MATCH_STATE_CAPTURE_INTERVAL_SECONDS", 15)

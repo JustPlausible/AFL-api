@@ -98,6 +98,28 @@ def list_match_windows():
         conn.close()
 
 
+@app.get("/scheduler/match-state-evidence")
+def match_state_evidence(match_id: int | None = None, match_provider_id: str | None = None,
+                          transitions_only: bool = False, limit: int = 500):
+    """Read-only diagnostic evidence for Issue #148 (opt-in capture only)."""
+    from scheduler.match_state_capture import MatchStateCaptureSettings
+    from collection.match_state_evidence import evidence_rows
+    settings = MatchStateCaptureSettings.from_config()
+    conn = get_read_only_db_connection()
+    try:
+        rows = evidence_rows(
+            conn, match_id=match_id, match_provider_id=match_provider_id,
+            transitions_only=transitions_only, limit=limit,
+        )
+    finally:
+        conn.close()
+    return {
+        "enabled": settings.enabled,
+        "interval_seconds": settings.interval_seconds,
+        "observations": rows,
+    }
+
+
 @app.get("/scheduler/player-stat-polling")
 def polling_status():
     from scheduler.player_stat_polling import get_player_stat_polling_worker
