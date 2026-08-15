@@ -17,7 +17,7 @@ environment variable.
 | --- | --- | --- | --- | --- |
 | Show the application version | `python cli.py --version` | Does not open the database | Local, lightweight version probe | None |
 | Apply migrations | `python -m db.migrate` | Creates/upgrades the configured `DB_PATH`; also refreshes the canonical club seed when a migration calls for it | Repository migration modules; run before bootstrap | Filesystem write access to `DB_PATH` |
-| Bootstrap one AFL season | `python cli.py --bootstrap-afl-season <SEASON_YEAR>` | Opens the database; upserts canonical metadata, players, provider mappings, team links, and season membership | Public AFL JSON metadata followed by CFS season players; no HTML fallback | Outbound AFL access and CFS auth |
+| Bootstrap one AFL season | `python cli.py --bootstrap-afl-season <SEASON_YEAR>` | Opens the database; upserts canonical metadata, players, provider mappings, team links, and season membership | Public AFL JSON metadata followed by CFS season players; concise summary by default, full result with `--print-json`; no HTML fallback | Outbound AFL access and CFS auth |
 | Inspect season metadata without persistence | `python cli.py --collect-afl-metadata --afl-season <SEASON_YEAR> --print-json` | Does not open or write the database | Public AFL competition, season, rounds, teams, and matches only | Outbound public AFL access; no CFS auth |
 | Collect several resources to artifacts only | `python cli.py --collect-afl-data --afl-season <SEASON_YEAR> --collection-round 1 --collection-endpoints metadata,players,fixtures,rosters,lineups,player-stats --collection-output collection-runs/season-round-1 --no-database` | Never opens the database | Writes raw/normalised files under the output directory; selected families can combine public AFL and CFS JSON | Outbound AFL access; CFS auth for protected families |
 | Persist authoritative stats for one completed match | `python cli.py --collect-match-player-stats CD_M20260142001 --afl-match-id 8001` | Opens the database; upserts `cfs_player_stats` | CFS JSON canonical snapshot; one `CD_M...` match; never HTML fallback or a `player_stats` dual-write | Outbound AFL access and CFS auth |
@@ -72,7 +72,22 @@ including writer shutdown, backups, restore, and rollback, remains in the
    python cli.py --bootstrap-afl-season <SEASON_YEAR>
    ```
 
-4. Verify the configured database without changing it. The following portable
+4. Populate authoritative statistics for concluded matches in the normal
+   full-season first-run path:
+
+   ```bash
+   python cli.py --sync-afl-season <SEASON_YEAR>
+   ```
+
+   An operator who explicitly wants only canonical metadata/player membership
+   without historical concluded-match statistics may omit this step.
+5. Verify season completeness after synchronization, without changing the database:
+
+   ```bash
+   python cli.py --report-afl-season 2026
+   ```
+
+6. Verify the configured database at the SQLite level. The following portable
    Python/SQLite check confirms integrity, applied migrations, the club seed, and
    canonical season/player membership for the requested year:
 
@@ -93,7 +108,7 @@ including writer shutdown, backups, restore, and rollback, remains in the
    PY
    ```
 
-5. Only after those checks pass, start the services required by the deployment.
+7. Only after those checks pass, start the services required by the deployment.
    API, Scheduler, and Admin are **not** required to migrate or bootstrap. See the
    [portable Compose service definitions](../compose.example.yaml), the
    [API/Admin deployment guidance](../README.md#-docker-and-deployment-layout),
@@ -263,6 +278,12 @@ player-refresh job. The value is a season selector
 (normally a four-digit year), not a round ID. It requires a migrated database
 and CFS authentication for the player phase.
 
+Successful default output summarises the resolved season and persisted entity
+counts, then points to `--sync-afl-season` and the subsequent
+`--report-afl-season` verification step. Add
+`--print-json` to emit the complete structured diagnostic and bootstrap result;
+this changes output only, never persistence.
+
 ## Preferred Champion Data/CFS JSON commands
 
 Provider identifiers are opaque strings. A round provider ID must begin
@@ -400,7 +421,7 @@ support it; without it JSON commands print a compact summary. It does not turn
 a persistent command into a dry run. Shell redirection saves standard output:
 
 ```bash
-python cli.py --collect-afl-metadata --afl-season 2026 --print-json > metadata-2026.json
+python cli.py --bootstrap-afl-season 2026 --print-json > bootstrap-2026.json
 ```
 
 `--afl-raw-directory PATH` retains original per-endpoint/page AFL or CFS JSON

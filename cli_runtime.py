@@ -417,6 +417,25 @@ def handle_bootstrap_afl_season(args):
             summary, player_summary = result.metadata, result.players
             audit["rows_read"] = summary.records_read + player_summary.records_read
             audit["rows_written"] = summary.inserted + summary.updated + player_summary.rows_written
+            persisted_counts = {
+                "teams": conn.execute(
+                    "SELECT COUNT(*) FROM afl_teams WHERE season_id=?", (result.season_id,)
+                ).fetchone()[0],
+                "rounds": conn.execute(
+                    "SELECT COUNT(*) FROM rounds WHERE season_id=?", (result.season_id,)
+                ).fetchone()[0],
+                "matches": conn.execute(
+                    "SELECT COUNT(*) FROM matches WHERE season_id=?", (result.season_id,)
+                ).fetchone()[0],
+                "players": conn.execute(
+                    "SELECT COUNT(DISTINCT player_id) FROM competition_season_players "
+                    "WHERE competition_season_id=?", (result.season_id,)
+                ).fetchone()[0],
+                "season_memberships": conn.execute(
+                    "SELECT COUNT(*) FROM competition_season_players "
+                    "WHERE competition_season_id=?", (result.season_id,)
+                ).fetchone()[0],
+            }
     finally:
         conn.close()
     details = {
@@ -435,6 +454,7 @@ def handle_bootstrap_afl_season(args):
         "player_seasons_unchanged": player_summary.unchanged,
         "missing_team_links": player_summary.missing_team_links,
         "player_diagnostics": list(result.player_diagnostics),
+        "persisted_counts": persisted_counts,
     }
     status = "unavailable" if player_summary.status == "unavailable" else (
         "unchanged" if summary.inserted + summary.updated + player_summary.rows_written == 0
@@ -454,7 +474,22 @@ def handle_bootstrap_afl_season(args):
         diagnostic_count=len(result.player_diagnostics), season_id=result.season_id,
         audit_id=audit["run_id"],
     )
-    print(_diagnostic_output(diagnostic, details=details, pretty=args.print_json))
+    if args.print_json:
+        print(_diagnostic_output(diagnostic, details=details, pretty=True))
+        return
+
+    completion = "SUCCESS" if status in {"success", "unchanged"} else status.upper()
+    print(f"AFL {args.bootstrap_afl_season} bootstrap complete")
+    print(f"\nCompetition: {result.competition_name or args.afl_competition_code}")
+    print(f"Season: {result.season_name or args.bootstrap_afl_season}")
+    print(f"Teams: {persisted_counts['teams']}")
+    print(f"Rounds: {persisted_counts['rounds']}")
+    print(f"Matches: {persisted_counts['matches']}")
+    print(f"Players: {persisted_counts['players']}")
+    print(f"Season memberships: {persisted_counts['season_memberships']}")
+    print(f"\nResult: {completion}")
+    print(f"Next: python cli.py --sync-afl-season {args.bootstrap_afl_season}")
+    print(f"Then verify: python cli.py --report-afl-season {args.bootstrap_afl_season}")
 
 
 def handle_sync_afl_season(args):
