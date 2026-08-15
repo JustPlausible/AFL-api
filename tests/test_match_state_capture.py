@@ -7,7 +7,7 @@ AFL/CFS access is required or attempted.
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -42,19 +42,23 @@ def db(tmp_path, monkeypatch):
     conn.close()
 
 
-def add_match(conn, match_id, provider, status="LIVE"):
+def add_match(conn, match_id, provider, status="LIVE", start=None):
     conn.execute(
         "INSERT INTO matches(match_id, match_provider_id, round_id, home_team, away_team, venue, status, start_time_utc, season_id, scraped_at) "
         "VALUES(?,?,1,'A','B','V',?,?,73,?)",
-        (match_id, provider, status, NOW.isoformat(), NOW.isoformat()),
+        (match_id, provider, status, start or NOW.isoformat(), NOW.isoformat()),
     )
     conn.commit()
 
 
-def _enable(monkeypatch, *, interval=15):
+def _enable(monkeypatch, *, interval=15, kickoff_tolerance=None, post_live_grace=None):
     import config
     monkeypatch.setattr(config, "AFL_CAPTURE_MATCH_STATE_EVIDENCE", True, raising=False)
     monkeypatch.setattr(config, "AFL_MATCH_STATE_CAPTURE_INTERVAL_SECONDS", interval, raising=False)
+    if kickoff_tolerance is not None:
+        monkeypatch.setattr(config, "AFL_MATCH_STATE_CAPTURE_KICKOFF_TOLERANCE_SECONDS", kickoff_tolerance, raising=False)
+    if post_live_grace is not None:
+        monkeypatch.setattr(config, "AFL_MATCH_STATE_CAPTURE_POST_LIVE_GRACE_SECONDS", post_live_grace, raising=False)
 
 
 def _disable(monkeypatch):
@@ -163,10 +167,159 @@ def test_capture_continues_after_one_match_fails(db, monkeypatch):
     ).fetchone()[0] == 1
 
 
+# --- Kickoff tolerance boundary (local status lags real LIVE transition) --
+
+def test_capture_polls_scheduled_match_whose_kickoff_has_passed_within_tolerance(db, monkeypatch):
+    conn, _ = db
+    start = NOW - timedelta(seconds=300)
+    add_match(conn, 8001, "CD_M1", status="SCHEDULED", start=start.isoformat())
+    _enable(monkeypatch, kickoff_tolerance=600)
+    client = FakeClient({
+        "CD_M1": [match_item_payload([{"periodNumber": 1, "periodSeconds": 5, "periodCompleted": False}])],
+    })
+    results = capture_live_match_state(client=client, clock=lambda: NOW)
+    assert len(results) == 1
+    assert len(client.calls) == 1
+
+
+def test_capture_skips_scheduled_match_whose_kickoff_is_beyond_tolerance(db, monkeypatch):
+    conn, _ = db
+    start = NOW - timedelta(seconds=1200)
+    add_match(conn, 8001, "CD_M1", status="SCHEDULED", start=start.isoformat())
+    _enable(monkeypatch, kickoff_tolerance=600)
+    client = FakeClient({"CD_M1": [match_item_payload([])]})
+    assert capture_live_match_state(client=client, clock=lambda: NOW) == []
+    assert client.calls == []
+
+
+def test_capture_skips_scheduled_match_with_future_kickoff(db, monkeypatch):
+    conn, _ = db
+    start = NOW + timedelta(seconds=300)
+    add_match(conn, 8001, "CD_M1", status="SCHEDULED", start=start.isoformat())
+    _enable(monkeypatch, kickoff_tolerance=600)
+    client = FakeClient({"CD_M1": [match_item_payload([])]})
+    assert capture_live_match_state(client=client, clock=lambda: NOW) == []
+    assert client.calls == []
+
+
+def test_capture_kickoff_tolerance_disabled_by_zero_setting(db, monkeypatch):
+    conn, _ = db
+    start = NOW - timedelta(seconds=60)
+    add_match(conn, 8001, "CD_M1", status="SCHEDULED", start=start.isoformat())
+    _enable(monkeypatch, kickoff_tolerance=0)
+    client = FakeClient({"CD_M1": [match_item_payload([])]})
+    assert capture_live_match_state(client=client, clock=lambda: NOW) == []
+    assert client.calls == []
+
+
+# --- Post-LIVE grace boundary (local status can leave LIVE before the final
+# Q4/full-time matchItem transition is captured) ----------------------------
+
+def test_capture_continues_after_local_status_leaves_live_within_grace(db, monkeypatch):
+    conn, _ = db
+    add_match(conn, 8001, "CD_M1", status="LIVE")
+    _enable(monkeypatch, post_live_grace=600)
+    client = FakeClient({
+        "CD_M1": [match_item_payload([{"periodNumber": 4, "periodSeconds": 1780, "periodCompleted": False}])],
+    })
+    first = capture_live_match_state(client=client, clock=lambda: NOW)
+    assert len(first) == 1
+
+    # The independently-scheduled ~5 minute status refresh moves matches.status
+    # away from LIVE before the next 15s evidence poll fires.
+    conn.execute("UPDATE matches SET status='POSTGAME' WHERE match_id=8001")
+    conn.commit()
+
+    later = NOW + timedelta(seconds=15)
+    client.calls.clear()
+    client._payloads["CD_M1"] = [
+        match_item_payload([{"periodNumber": 4, "periodSeconds": 1789, "periodCompleted": True}])
+    ]
+    second = capture_live_match_state(client=client, clock=lambda: later)
+    assert len(second) == 1
+    assert second[0]["transitions"] == ["latest_period_completed"]
+    assert len(client.calls) == 1
+
+
+def test_capture_stops_once_post_live_grace_expires(db, monkeypatch):
+    conn, _ = db
+    add_match(conn, 8001, "CD_M1", status="LIVE")
+    _enable(monkeypatch, post_live_grace=60)
+    client = FakeClient({
+        "CD_M1": [match_item_payload([{"periodNumber": 4, "periodSeconds": 1780, "periodCompleted": False}])],
+    })
+    capture_live_match_state(client=client, clock=lambda: NOW)
+
+    conn.execute("UPDATE matches SET status='POSTGAME' WHERE match_id=8001")
+    conn.commit()
+
+    long_after = NOW + timedelta(seconds=600)
+    client.calls.clear()
+    assert capture_live_match_state(client=client, clock=lambda: long_after) == []
+    assert client.calls == []
+
+
+def test_capture_candidates_deduplicate_when_live_and_recently_live_overlap(db, monkeypatch):
+    conn, _ = db
+    add_match(conn, 8001, "CD_M1", status="LIVE")
+    _enable(monkeypatch, post_live_grace=600)
+    client = FakeClient({
+        "CD_M1": [match_item_payload([{"periodNumber": 1, "periodSeconds": 5, "periodCompleted": False}])] * 2,
+    })
+    capture_live_match_state(client=client, clock=lambda: NOW)
+    # Still LIVE locally on the next poll: must not be polled twice via both
+    # the primary LIVE query and the post-LIVE grace query.
+    second = capture_live_match_state(client=client, clock=lambda: NOW + timedelta(seconds=15))
+    assert len(second) == 1
+
+
+# --- Restart safety: no in-memory state carries between independent calls --
+
+def test_capture_state_is_fully_durable_across_independent_process_style_calls(db, monkeypatch):
+    """Simulates a scheduler restart: a brand-new client (as the pooled
+    singleton would be after a process restart) and a fresh top-level call,
+    sharing only the durable database. Sequencing and transition detection
+    must be unaffected."""
+    conn, _ = db
+    add_match(conn, 8001, "CD_M1", status="LIVE")
+    _enable(monkeypatch)
+
+    client_before_restart = FakeClient({
+        "CD_M1": [match_item_payload([{"periodNumber": 1, "periodSeconds": 10, "periodCompleted": False}])],
+    })
+    capture_live_match_state(client=client_before_restart, clock=lambda: NOW)
+
+    # "Restart": a new client instance, no shared Python state except the DB.
+    client_after_restart = FakeClient({
+        "CD_M1": [match_item_payload([{"periodNumber": 1, "periodSeconds": 25, "periodCompleted": False}])],
+    })
+    results = capture_live_match_state(client=client_after_restart, clock=lambda: NOW + timedelta(seconds=15))
+    assert results[0]["poll_sequence"] == 2
+    assert results[0]["transitions"] == []
+
+    rows = conn.execute(
+        "SELECT poll_sequence, latest_period_seconds FROM match_state_evidence_observations "
+        "WHERE match_provider_id='CD_M1' ORDER BY poll_sequence"
+    ).fetchall()
+    assert [(r["poll_sequence"], r["latest_period_seconds"]) for r in rows] == [(1, 10), (2, 25)]
+
+
 def test_settings_reject_non_positive_interval(monkeypatch):
     import config
     monkeypatch.setattr(config, "AFL_CAPTURE_MATCH_STATE_EVIDENCE", True, raising=False)
     monkeypatch.setattr(config, "AFL_MATCH_STATE_CAPTURE_INTERVAL_SECONDS", 0, raising=False)
+    with pytest.raises(ValueError):
+        MatchStateCaptureSettings.from_config()
+
+
+@pytest.mark.parametrize("field", [
+    "AFL_MATCH_STATE_CAPTURE_KICKOFF_TOLERANCE_SECONDS",
+    "AFL_MATCH_STATE_CAPTURE_POST_LIVE_GRACE_SECONDS",
+])
+def test_settings_reject_negative_boundary_windows(monkeypatch, field):
+    import config
+    monkeypatch.setattr(config, "AFL_CAPTURE_MATCH_STATE_EVIDENCE", True, raising=False)
+    monkeypatch.setattr(config, field, -1, raising=False)
     with pytest.raises(ValueError):
         MatchStateCaptureSettings.from_config()
 

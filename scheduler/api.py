@@ -116,6 +116,8 @@ def match_state_evidence(match_id: int | None = None, match_provider_id: str | N
     return {
         "enabled": settings.enabled,
         "interval_seconds": settings.interval_seconds,
+        "kickoff_tolerance_seconds": settings.kickoff_tolerance_seconds,
+        "post_live_grace_seconds": settings.post_live_grace_seconds,
         "observations": rows,
     }
 

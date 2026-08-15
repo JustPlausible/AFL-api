@@ -27,6 +27,7 @@ from collection.match_state_evidence import (
     load_previous_observation,
     parse_match_item,
     persist_observation,
+    recently_live_match_provider_ids,
 )
 from db.migration_runner import migrate_database
 
@@ -267,3 +268,45 @@ def test_evidence_rows_filters_by_match_id_and_transitions_only(db):
     assert [row["poll_sequence"] for row in transitions] == [1, 3]
     none_for_other_match = evidence_rows(db, match_id=9999)
     assert none_for_other_match == []
+
+
+# --- Post-LIVE grace continuation query -----------------------------------
+
+def _persist_at(db, *, match_id, match_provider_id, offset_seconds, match_status, score_status):
+    payload = match_item_payload(
+        match_status=match_status, score_status=score_status,
+        periods=[{"periodNumber": 4, "periodSeconds": 1800, "periodCompleted": True}],
+    )
+    observation = parse_match_item(
+        payload, match_id=match_id, match_provider_id=match_provider_id, observed_at=_iso(offset_seconds)
+    )
+    persist_observation(db, observation, [])
+
+
+def test_recently_live_match_provider_ids_is_empty_when_never_observed_live(db):
+    _persist_at(db, match_id=8001, match_provider_id="CD_M1", offset_seconds=0,
+                match_status="SCHEDULED", score_status="SCHEDULED")
+    db.commit()
+    assert recently_live_match_provider_ids(db, now=NOW, grace_seconds=600) == []
+
+
+def test_recently_live_match_provider_ids_continues_within_grace_after_last_live_sighting(db):
+    _persist_at(db, match_id=8001, match_provider_id="CD_M1", offset_seconds=-40,
+                match_status="LIVE", score_status="LIVE")
+    # Local matches.status has since moved on; CFS-side LIVE was last seen 40s ago.
+    _persist_at(db, match_id=8001, match_provider_id="CD_M1", offset_seconds=-10,
+                match_status="POSTGAME", score_status="POSTGAME")
+    db.commit()
+
+    within_grace = recently_live_match_provider_ids(db, now=NOW, grace_seconds=600)
+    assert within_grace == [(8001, "CD_M1")]
+
+    expired_grace = recently_live_match_provider_ids(db, now=NOW, grace_seconds=30)
+    assert expired_grace == []
+
+
+def test_recently_live_match_provider_ids_zero_grace_disables_continuation(db):
+    _persist_at(db, match_id=8001, match_provider_id="CD_M1", offset_seconds=0,
+                match_status="LIVE", score_status="LIVE")
+    db.commit()
+    assert recently_live_match_provider_ids(db, now=NOW, grace_seconds=0) == []

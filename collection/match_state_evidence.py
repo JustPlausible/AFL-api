@@ -19,6 +19,7 @@ import json
 import sqlite3
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Any, Mapping, Sequence
 
 from afl_json.contracts import EndpointDefinition, HttpMethod, SourceSystem
@@ -215,6 +216,37 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     raw = data.pop("raw_match_item_json")
     data["raw_match_item"] = json.loads(raw) if raw else None
     return data
+
+
+def recently_live_match_provider_ids(conn: sqlite3.Connection, *, now: datetime,
+                                     grace_seconds: int) -> list[tuple[int, str]]:
+    """Matches whose *captured evidence* last reported CFS-side LIVE within
+    ``grace_seconds`` of ``now``, regardless of the current local
+    ``matches.status`` value.
+
+    This exists so a bounded post-LIVE observation window (see
+    ``scheduler.match_state_capture``) can keep polling a match for a short
+    while after the local status-refresh cadence (independently scheduled,
+    every ~5 minutes) moves ``matches.status`` away from ``LIVE`` -- for
+    example while the Q4 ``periodCompleted`` transition is still settling.
+    It is driven entirely by this diagnostic module's own durable evidence
+    table, never by production scheduling state, and self-terminates once no
+    further LIVE observation lands within the grace window.
+    """
+    if grace_seconds <= 0:
+        return []
+    cutoff = (now - timedelta(seconds=grace_seconds)).isoformat()
+    rows = conn.execute(
+        """
+        SELECT match_id, match_provider_id, MAX(observed_at) AS last_live_at
+        FROM match_state_evidence_observations
+        WHERE match_status='LIVE' OR score_status='LIVE'
+        GROUP BY match_provider_id
+        HAVING last_live_at >= ?
+        """,
+        (cutoff,),
+    ).fetchall()
+    return [(row["match_id"], row["match_provider_id"]) for row in rows]
 
 
 def evidence_rows(conn: sqlite3.Connection, *, match_id: int | None = None,

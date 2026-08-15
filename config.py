@@ -124,3 +124,12 @@ AFL_RECOVERY_STARTUP_CANDIDATE_LIMIT = _parse_int_env("AFL_RECOVERY_STARTUP_CAND
 # decisions and never normalises AFL period/break semantics into production state.
 AFL_CAPTURE_MATCH_STATE_EVIDENCE = _parse_bool_env("AFL_CAPTURE_MATCH_STATE_EVIDENCE", False)
 AFL_MATCH_STATE_CAPTURE_INTERVAL_SECONDS = _parse_int_env("AFL_MATCH_STATE_CAPTURE_INTERVAL_SECONDS", 15)
+# Bounded windows that widen candidate selection slightly beyond a strict
+# matches.status='LIVE' snapshot, to avoid missing evidence at either edge of
+# the local ~5 minute match-status refresh cadence (see
+# scheduler/schedule_match_scrapes.py): capturing shortly after kickoff even
+# if matches.status has not yet flipped to LIVE, and continuing shortly after
+# it flips away from LIVE so a Q4/full-time transition near that boundary is
+# not missed. See scheduler/match_state_capture.py for details.
+AFL_MATCH_STATE_CAPTURE_KICKOFF_TOLERANCE_SECONDS = _parse_int_env("AFL_MATCH_STATE_CAPTURE_KICKOFF_TOLERANCE_SECONDS", 600)
+AFL_MATCH_STATE_CAPTURE_POST_LIVE_GRACE_SECONDS = _parse_int_env("AFL_MATCH_STATE_CAPTURE_POST_LIVE_GRACE_SECONDS", 600)
