@@ -78,7 +78,8 @@ def test_supported_bootstrap_prints_human_summary_by_default(tmp_path, monkeypat
         "AFL 2026 bootstrap complete\n\n"
         "Competition: AFL\nSeason: 2026 AFL\nTeams: 1\nRounds: 1\nMatches: 0\n"
         "Players: 1\nSeason memberships: 1\n\nResult: SUCCESS\n"
-        "Next: python cli.py --report-afl-season 2026\n"
+        "Next: python cli.py --sync-afl-season 2026\n"
+        "Then verify: python cli.py --report-afl-season 2026\n"
     )
     assert sqlite3.connect(path).execute(
         "SELECT COUNT(*) FROM competition_season_players"

@@ -99,16 +99,19 @@ different name):
 docker compose -f compose.production.example.yaml build --pull
 docker compose -f compose.production.example.yaml run --rm --no-build afl-api python -m db.migrate
 docker compose -f compose.production.example.yaml run --rm --no-build afl-api python cli.py --bootstrap-afl-season 2026
-docker compose -f compose.production.example.yaml run --rm --no-build afl-api python cli.py --report-afl-season 2026
-# Optional: backfill authoritative statistics for concluded matches
 docker compose -f compose.production.example.yaml run --rm --no-build afl-api python cli.py --sync-afl-season 2026
+docker compose -f compose.production.example.yaml run --rm --no-build afl-api python cli.py --report-afl-season 2026
 docker compose -f compose.production.example.yaml up -d
 docker compose -f compose.production.example.yaml exec afl-api python cli.py --add-api-key "2026-live"
 ```
 
 Bootstrap creates or refreshes the canonical season foundation and membership;
-sync also processes concluded authoritative CFS match statistics; report is a
-read-only completeness and reconciliation check. See the
+sync then populates authoritative CFS statistics for concluded matches; report
+finally performs a read-only completeness and reconciliation check. This
+bootstrap → sync → report order is the normal full-season production-like
+first-run path. Sync may be omitted only when an operator explicitly wants the
+canonical metadata/player foundation without historical concluded-match
+statistics. See the
 [CLI command selector](docs/cli.md#which-command-should-i-run) for their detailed
 contracts rather than treating these abbreviated commands as the full reference.
 

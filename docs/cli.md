@@ -72,7 +72,22 @@ including writer shutdown, backups, restore, and rollback, remains in the
    python cli.py --bootstrap-afl-season <SEASON_YEAR>
    ```
 
-4. Verify the configured database without changing it. The following portable
+4. Populate authoritative statistics for concluded matches in the normal
+   full-season first-run path:
+
+   ```bash
+   python cli.py --sync-afl-season <SEASON_YEAR>
+   ```
+
+   An operator who explicitly wants only canonical metadata/player membership
+   without historical concluded-match statistics may omit this step.
+5. Verify season completeness after synchronization, without changing the database:
+
+   ```bash
+   python cli.py --report-afl-season 2026
+   ```
+
+6. Verify the configured database at the SQLite level. The following portable
    Python/SQLite check confirms integrity, applied migrations, the club seed, and
    canonical season/player membership for the requested year:
 
@@ -93,7 +108,7 @@ including writer shutdown, backups, restore, and rollback, remains in the
    PY
    ```
 
-5. Only after those checks pass, start the services required by the deployment.
+7. Only after those checks pass, start the services required by the deployment.
    API, Scheduler, and Admin are **not** required to migrate or bootstrap. See the
    [portable Compose service definitions](../compose.example.yaml), the
    [API/Admin deployment guidance](../README.md#-docker-and-deployment-layout),
@@ -264,7 +279,8 @@ player-refresh job. The value is a season selector
 and CFS authentication for the player phase.
 
 Successful default output summarises the resolved season and persisted entity
-counts, then points to `--report-afl-season` as the next verification step. Add
+counts, then points to `--sync-afl-season` and the subsequent
+`--report-afl-season` verification step. Add
 `--print-json` to emit the complete structured diagnostic and bootstrap result;
 this changes output only, never persistence.
 

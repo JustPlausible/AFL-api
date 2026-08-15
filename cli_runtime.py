@@ -488,7 +488,8 @@ def handle_bootstrap_afl_season(args):
     print(f"Players: {persisted_counts['players']}")
     print(f"Season memberships: {persisted_counts['season_memberships']}")
     print(f"\nResult: {completion}")
-    print(f"Next: python cli.py --report-afl-season {args.bootstrap_afl_season}")
+    print(f"Next: python cli.py --sync-afl-season {args.bootstrap_afl_season}")
+    print(f"Then verify: python cli.py --report-afl-season {args.bootstrap_afl_season}")
 
 
 def handle_sync_afl_season(args):
