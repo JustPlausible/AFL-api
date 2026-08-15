@@ -30,7 +30,7 @@ def test_discovery_returns_only_typed_public_fields(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert response.json() == {
         "name": "AFL-api",
-        "version": "0.5.0",
+        "version": "0.6.0",
         "documentation": "/docs",
     }
     assert ApiDiscoveryResponse.model_validate(response.json())
