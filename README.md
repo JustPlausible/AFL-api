@@ -40,11 +40,12 @@ reads the authoritative declaration in [`version.py`](version.py).
 - 🧠 Nickname resolution and suffix cleaning for fuzzy player matching
 - ⏰ Scheduled scraping of injuries, lineups, and live player stats using APScheduler
 - 🧭 Lineup scrapes run at predictable times (T-1 day 5pm, Thursday 5pm, and 1h before each match)
-- 📈 Player stat scrapes run automatically 2 minutes before each match start
+- 📈 Durable match windows drive bounded live/post-match polling through final authoritative snapshots
+- ♻️ Scheduler heartbeats and leases recover interrupted collection attempts after restart
 - 🕒 Admin page shows all upcoming scheduled jobs
 ---
 
-## 🚀 Quick Start
+## 🚀 Development Quick Start
 
 For a clean database, follow the authoritative
 **[supported first-run sequence and command-selection table](docs/cli.md#which-command-should-i-run)**
@@ -57,7 +58,7 @@ migration, season bootstrap, and verification.
 - Docker & Docker Compose installed
 - Ports `8000` and `8001` available on your host, or override `AFL_API_PORT` and `AFL_ADMIN_PORT` in `.env`
 
-### 1. Clone and Run
+### Clone and run the demo stack
 
 ```bash
 git clone https://github.com/JustPlausible/afl-api.git
@@ -67,6 +68,58 @@ docker compose -f compose.example.yaml up --build
 ```
 
 The repository root is the Docker build context. The Python source layout remains flat at the repository root; do not `cd` into a nested `src` directory.
+
+This development/demo path uses source mounts and reload processes. For a clean
+database, run migrations and bootstrap before starting the stack; the complete
+native sequence is maintained in the [CLI first-run guide](docs/cli.md#supported-first-run-on-a-clean-installation).
+
+## 🚀 Production-like Fresh Install
+
+Use `compose.production.example.yaml` as the starting point for one carefully
+operated SQLite instance. Put the Compose file and uncommitted `.env` outside the
+checkout as described below, adapt its build context and bind mounts to the
+operator's absolute host paths, and set the container database path to the
+absolute persistent path `DB_PATH=/app/data/afl_players.db`.
+
+Before exposure, set `ENVIRONMENT=production`, replace `ADMIN_PASSWORD` and
+`SESSION_SECRET` with strong secrets, and select one reviewed release or exact
+commit tag with `AFL_API_IMAGE` and `AFL_API_TAG`. API, Admin, and the single
+Scheduler replica must all use that same image. Do not add a Scheduler host port.
+For 2026, the canonical selectors are `AFL_COMPETITION_CODE=AFL`,
+`AFL_COMPETITION_PROVIDER_ID=CD_C014`, and `AFL_SEASON_YEAR=2026`. The similarly
+named `AFL_COMPETITION_ID`, `AFL_SEASON_ID`, and `AFL_SEASON_PID` values are
+legacy scraper identifiers: confirm them from current provider data rather than
+assuming the illustrative values in `.env.example` identify 2026.
+
+From the directory containing the adapted production Compose file, initialise
+the deployment in this order (replace the file flag if the deployed file has a
+different name):
+
+```bash
+docker compose -f compose.production.example.yaml build --pull
+docker compose -f compose.production.example.yaml run --rm --no-build afl-api python -m db.migrate
+docker compose -f compose.production.example.yaml run --rm --no-build afl-api python cli.py --bootstrap-afl-season 2026
+docker compose -f compose.production.example.yaml run --rm --no-build afl-api python cli.py --report-afl-season 2026
+# Optional: backfill authoritative statistics for concluded matches
+docker compose -f compose.production.example.yaml run --rm --no-build afl-api python cli.py --sync-afl-season 2026
+docker compose -f compose.production.example.yaml up -d
+docker compose -f compose.production.example.yaml exec afl-api python cli.py --add-api-key "2026-live"
+```
+
+Bootstrap creates or refreshes the canonical season foundation and membership;
+sync also processes concluded authoritative CFS match statistics; report is a
+read-only completeness and reconciliation check. See the
+[CLI command selector](docs/cli.md#which-command-should-i-run) for their detailed
+contracts rather than treating these abbreviated commands as the full reference.
+
+After startup, run `docker compose -f compose.production.example.yaml ps`, check
+`/healthz` and `/readyz`, test the newly printed key in an `x-api-key` request,
+confirm every service resolves the same `DB_PATH`, and inspect Scheduler startup,
+heartbeat, and recovery logs. Also confirm exactly one Scheduler replica exists
+and that it has no published host port. Deeper deployment guidance remains in
+the [Docker deployment guide](docs/operations/docker_deployment.md); use the
+[release/backup/rollback runbook](docs/operations/release_runbook_v0_5_0.md) for
+state-safe operational procedures.
 
 ---
 
@@ -351,7 +404,11 @@ The system uses APScheduler for timing recurring and per-match scraping jobs.
 Jobs are registered during startup via `scheduler/start.py`, including:
 - Daily injury scrapes (11:00 AM AWST)
 - Line-up scrapes (T-1 day 5pm, Thursday 5pm, 1h before each match)
-- Player stats scraping (2 minutes before match start)
+- Durable match-window planning with configured, concurrency-bounded live and
+  post-match polling until a final authoritative player-stat snapshot is stored
+- Runtime heartbeats plus lease-based recovery of interrupted attempts
+
+Run exactly one Scheduler replica for each SQLite database.
 
 Admin UI `/schedule` shows all currently registered jobs.
 

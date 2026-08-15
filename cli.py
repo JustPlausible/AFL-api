@@ -160,7 +160,8 @@ def create_parser() -> argparse.ArgumentParser:
     output_group = parser.add_argument_group("Output and JSON diagnostics")
     output_group.add_argument("--print-json", action="store_true",
                               help=("With --sync-afl-season: emit the complete machine readable result "
-                                    "including match details instead of the default concise human summary; "
+                                    "including match details; with --bootstrap-afl-season: emit the full "
+                                    "structured bootstrap result instead of the default concise human summary; "
                                     "with --report-afl-season emit the complete structured report; "
                                     "persistence is unchanged"))
     output_group.add_argument("--afl-raw-directory", type=Path, metavar="PATH",

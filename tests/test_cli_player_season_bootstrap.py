@@ -48,20 +48,21 @@ class FakeCollector:
         )
 
 
-def run(tmp_path, monkeypatch, capsys, status="published"):
+def run(tmp_path, monkeypatch, capsys, status="published", *extra_args):
     path = tmp_path / f"cli-{status}.db"
     migrate_database(path)
     FakeCollector.player_status = status
     monkeypatch.setattr(afl_json, "AflJsonClient", FakeClient)
     monkeypatch.setattr(afl_json, "PublicAflCollector", FakeCollector)
     monkeypatch.setattr("db.connection.get_db_connection", lambda: sqlite3.connect(path))
-    monkeypatch.setattr(sys, "argv", ["cli.py", "--bootstrap-afl-season", "2026"])
+    monkeypatch.setattr(sys, "argv", ["cli.py", "--bootstrap-afl-season", "2026", *extra_args])
     cli.main()
-    return path, json.loads(capsys.readouterr().out)
+    return path, capsys.readouterr().out
 
 
 def test_supported_bootstrap_dispatch_persists_players_and_prints_counts(tmp_path, monkeypatch, capsys):
-    path, output = run(tmp_path, monkeypatch, capsys)
+    path, output = run(tmp_path, monkeypatch, capsys, "published", "--print-json")
+    output = json.loads(output)
     assert output["player_collection_status"] == "published"
     assert output["canonical_players_inserted"] == 1
     assert output["provider_mappings_inserted"] == 2
@@ -71,8 +72,22 @@ def test_supported_bootstrap_dispatch_persists_players_and_prints_counts(tmp_pat
     assert conn.execute("SELECT COUNT(*) FROM competition_season_players").fetchone() == (1,)
 
 
+def test_supported_bootstrap_prints_human_summary_by_default(tmp_path, monkeypatch, capsys):
+    path, output = run(tmp_path, monkeypatch, capsys)
+    assert output == (
+        "AFL 2026 bootstrap complete\n\n"
+        "Competition: AFL\nSeason: 2026 AFL\nTeams: 1\nRounds: 1\nMatches: 0\n"
+        "Players: 1\nSeason memberships: 1\n\nResult: SUCCESS\n"
+        "Next: python cli.py --report-afl-season 2026\n"
+    )
+    assert sqlite3.connect(path).execute(
+        "SELECT COUNT(*) FROM competition_season_players"
+    ).fetchone() == (1,)
+
+
 def test_supported_bootstrap_distinguishes_unavailable_without_deleting(tmp_path, monkeypatch, capsys):
-    path, output = run(tmp_path, monkeypatch, capsys, "unavailable")
+    path, output = run(tmp_path, monkeypatch, capsys, "unavailable", "--print-json")
+    output = json.loads(output)
     assert output["player_collection_status"] == "unavailable"
     assert output["players_collected"] == output["player_seasons_inserted"] == 0
     assert sqlite3.connect(path).execute(
