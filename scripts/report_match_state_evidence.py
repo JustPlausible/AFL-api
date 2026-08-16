@@ -2,8 +2,8 @@
 
 Reads the (opt-in) ``match_state_evidence_observations`` table and prints,
 per match, the sequence of detected transitions so an operator can manually
-assess how ``matchClock.periods``, ``periodCompleted``, ``periodSeconds`` and
-``match.status``/``score.status`` behave around quarter time, half time,
+assess how ``score.matchClock.periods``, ``periodCompleted``, ``periodSeconds``
+and ``match.status``/``score.status`` behave around quarter time, half time,
 three-quarter time and full time.
 
 This is a read-only report over already-collected evidence: it never talks
@@ -14,14 +14,22 @@ directly and is not wired into cli.py because it is diagnostic-only tooling.
 Usage:
     python -m scripts.report_match_state_evidence [--match-id ID]
         [--match-provider-id CD_M...] [--transitions-only] [--json]
+
+To backfill period fields on already-captured rows after a parser fix (see
+``collection.match_state_evidence.reparse_stored_raw_observations``), which
+only affects rows where the full raw matchItem payload was retained
+(first-observation and detected-transition rows):
+
+    python -m scripts.report_match_state_evidence --reparse-raw [--dry-run]
+        [--match-id ID] [--match-provider-id CD_M...]
 """
 from __future__ import annotations
 
 import argparse
 import json
 
-from db.connection import get_read_only_db_connection
-from collection.match_state_evidence import evidence_rows
+from db.connection import get_db_connection, get_read_only_db_connection
+from collection.match_state_evidence import evidence_rows, reparse_stored_raw_observations
 
 
 def _print_match_report(match_provider_id: str, rows: list[dict]) -> None:
@@ -42,13 +50,47 @@ def _print_match_report(match_provider_id: str, rows: list[dict]) -> None:
         )
 
 
+def _run_reparse(args: argparse.Namespace) -> int:
+    conn = get_db_connection()
+    try:
+        results = reparse_stored_raw_observations(
+            conn, match_id=args.match_id, match_provider_id=args.match_provider_id, dry_run=args.dry_run
+        )
+        if not args.dry_run:
+            conn.commit()
+    finally:
+        conn.close()
+
+    changed = [row for row in results if row["changed"]]
+    suffix = " (dry run, no changes written)" if args.dry_run else ""
+    print(f"Considered {len(results)} row(s) with retained raw evidence; {len(changed)} updated{suffix}.")
+    for row in changed:
+        before, after = row["before"], row["after"]
+        print(
+            f"  id={row['id']} match_provider_id={row['match_provider_id']} "
+            f"latest_period_number: {before['latest_period_number']} -> {after['latest_period_number']} "
+            f"latest_period_seconds: {before['latest_period_seconds']} -> {after['latest_period_seconds']} "
+            f"latest_period_completed: {before['latest_period_completed']} -> {after['latest_period_completed']}"
+        )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--match-id", type=int, default=None, help="Filter to one internal match_id")
     parser.add_argument("--match-provider-id", default=None, help="Filter to one CD_M... provider ID")
     parser.add_argument("--transitions-only", action="store_true", help="Only print rows where a transition was detected")
     parser.add_argument("--json", action="store_true", help="Print raw JSON instead of a human-readable report")
+    parser.add_argument(
+        "--reparse-raw", action="store_true",
+        help="Re-extract period fields from stored raw_match_item_json using the current parser "
+             "and update those rows in place; only affects rows where the raw payload was retained",
+    )
+    parser.add_argument("--dry-run", action="store_true", help="With --reparse-raw, report changes without writing them")
     args = parser.parse_args(argv)
+
+    if args.reparse_raw:
+        return _run_reparse(args)
 
     conn = get_read_only_db_connection()
     try:

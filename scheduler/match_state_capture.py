@@ -1,7 +1,7 @@
 """Diagnostic-only opt-in capture of live CFS matchItem evidence (Issue #148).
 
 Polls the existing CFS matchItem endpoint for live matches at a configurable
-interval and retains lightweight/raw evidence about matchClock.periods,
+interval and retains lightweight/raw evidence about score.matchClock.periods,
 periodCompleted, periodSeconds, match.status and score.status so a future
 decision can be evaluated against real evidence.
 

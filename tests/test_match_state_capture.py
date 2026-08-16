@@ -66,11 +66,12 @@ def _disable(monkeypatch):
     monkeypatch.setattr(config, "AFL_CAPTURE_MATCH_STATE_EVIDENCE", False, raising=False)
 
 
-def match_item_payload(periods):
+def match_item_payload(periods, *, match_status="LIVE", score_status="LIVE"):
+    # matchClock is nested under score in the real upstream payload, not a
+    # top-level sibling of match/score -- confirmed from live capture.
     return {
-        "match": {"status": "LIVE"},
-        "score": {"status": "LIVE"},
-        "matchClock": {"periods": periods},
+        "match": {"status": match_status},
+        "score": {"status": score_status, "matchClock": {"periods": periods}},
     }
 
 

@@ -1,9 +1,14 @@
 """Diagnostic-only capture of live CFS ``matchItem`` evidence (Issue #148).
 
-This module exists solely to observe and retain how ``matchClock.periods``,
+This module exists solely to observe and retain how ``score.matchClock.periods``,
 ``periodCompleted``, ``periodSeconds``, ``match.status`` and ``score.status``
 behave around quarter time, half time, three-quarter time and full time, so a
 future decision can be evaluated against real evidence.
+
+Confirmed from live capture on 2026-08-16: ``matchClock`` is nested under
+``score``, not a top-level sibling of ``match``/``score`` -- i.e. the real
+shape is ``payload["score"]["matchClock"]["periods"]``, not
+``payload["matchClock"]["periods"]``.
 
 It is deliberately isolated from the maintained, verified AFL JSON contract
 registry in ``afl_json.contracts``: the ``matchItem`` endpoint and its
@@ -39,7 +44,7 @@ MATCH_ITEM_ENDPOINT = EndpointDefinition(
     required_path_parameters=("match_provider_id",),
     verified=False,
     unverified_fields=(
-        "matchClock.periods semantics for quarter/half/three-quarter/full time (issue #148)",
+        "score.matchClock.periods semantics for quarter/half/three-quarter/full time (issue #148)",
     ),
 )
 
@@ -89,6 +94,9 @@ def parse_match_item(payload: Any, *, match_id: int, match_provider_id: str,
 
     Deliberately tolerant of missing/malformed optional structure (matchClock
     is not published for every match state) but requires an object payload.
+    ``matchClock`` is nested under ``score`` in the real upstream payload
+    (``score.matchClock.periods``), confirmed from live capture -- it is not
+    a top-level sibling of ``match``/``score``.
     """
     if not isinstance(payload, dict):
         raise MatchStateEvidenceError("matchItem payload is not an object")
@@ -96,7 +104,7 @@ def parse_match_item(payload: Any, *, match_id: int, match_provider_id: str,
     match = match if isinstance(match, dict) else {}
     score = payload.get("score")
     score = score if isinstance(score, dict) else {}
-    match_clock = payload.get("matchClock")
+    match_clock = score.get("matchClock")
     match_clock = match_clock if isinstance(match_clock, dict) else {}
     periods_raw = match_clock.get("periods")
     periods = deepcopy(periods_raw) if isinstance(periods_raw, list) else []
@@ -204,6 +212,78 @@ def persist_observation(conn: sqlite3.Connection, observation: MatchStateObserva
         "is_transition": is_transition,
         "transitions": list(transitions),
     }
+
+
+def reparse_stored_raw_observations(conn: sqlite3.Connection, *, match_id: int | None = None,
+                                    match_provider_id: str | None = None,
+                                    dry_run: bool = False) -> list[dict[str, Any]]:
+    """Diagnostic-only backfill: re-extract period fields from already-stored
+    ``raw_match_item_json`` using the current ``parse_match_item``, for rows
+    where the raw payload was retained (first-observation and
+    detected-transition rows).
+
+    This never invents data for rows without a retained raw payload -- those
+    are left completely unchanged -- and never touches ``poll_sequence``,
+    ``observed_at``, ``match_status``, ``score_status``, ``is_transition`` or
+    ``transition_flags_json``. It only overwrites ``periods_json``,
+    ``latest_period_number``, ``latest_period_seconds`` and
+    ``latest_period_completed`` when a corrected re-extraction differs from
+    what is currently stored. Idempotent: a second run reports zero changes.
+    Returns one summary dict per row considered, with ``changed``/``before``/
+    ``after`` keys so a caller can report exactly what was recovered.
+    """
+    clauses = ["raw_match_item_json IS NOT NULL"]
+    params: list[Any] = []
+    if match_id is not None:
+        clauses.append("match_id=?")
+        params.append(match_id)
+    if match_provider_id is not None:
+        clauses.append("match_provider_id=?")
+        params.append(match_provider_id)
+    rows = conn.execute(
+        f"""SELECT id, match_id, match_provider_id, observed_at, raw_match_item_json,
+                   periods_json, latest_period_number, latest_period_seconds, latest_period_completed
+            FROM match_state_evidence_observations WHERE {' AND '.join(clauses)} ORDER BY id""",
+        params,
+    ).fetchall()
+    results: list[dict[str, Any]] = []
+    for row in rows:
+        raw = json.loads(row["raw_match_item_json"])
+        reparsed = parse_match_item(
+            raw, match_id=row["match_id"], match_provider_id=row["match_provider_id"],
+            observed_at=row["observed_at"],
+        )
+        before = {
+            "periods": json.loads(row["periods_json"]),
+            "latest_period_number": row["latest_period_number"],
+            "latest_period_seconds": row["latest_period_seconds"],
+            "latest_period_completed": (None if row["latest_period_completed"] is None
+                                        else bool(row["latest_period_completed"])),
+        }
+        after = {
+            "periods": reparsed.periods,
+            "latest_period_number": reparsed.latest_period_number,
+            "latest_period_seconds": reparsed.latest_period_seconds,
+            "latest_period_completed": reparsed.latest_period_completed,
+        }
+        changed = before != after
+        if changed and not dry_run:
+            conn.execute(
+                """UPDATE match_state_evidence_observations
+                   SET periods_json=?, latest_period_number=?, latest_period_seconds=?, latest_period_completed=?
+                   WHERE id=?""",
+                (
+                    json.dumps(reparsed.periods, sort_keys=True),
+                    reparsed.latest_period_number, reparsed.latest_period_seconds,
+                    None if reparsed.latest_period_completed is None else int(bool(reparsed.latest_period_completed)),
+                    row["id"],
+                ),
+            )
+        results.append({
+            "id": row["id"], "match_id": row["match_id"], "match_provider_id": row["match_provider_id"],
+            "changed": changed, "before": before, "after": after,
+        })
+    return results
 
 
 def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
