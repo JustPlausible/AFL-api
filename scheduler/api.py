@@ -98,6 +98,20 @@ def list_match_windows():
         conn.close()
 
 
+@app.get("/scheduler/diagnostics")
+def diagnostics_status():
+    """Read-only status for the diagnostic evidence-capture framework and every
+    checked-in profile (Issue #148's match_clock and beyond). Never used by
+    scheduler decision-making. See docs/diagnostics_framework.md."""
+    import diagnostics.profiles  # noqa: F401 - ensure checked-in profiles are registered
+    from diagnostics.framework import diagnostics_enabled, registered_profiles
+
+    return {
+        "enabled": diagnostics_enabled(),
+        "profiles": {name: profile.status() for name, profile in registered_profiles().items()},
+    }
+
+
 @app.get("/scheduler/match-state-evidence")
 def match_state_evidence(match_id: int | None = None, match_provider_id: str | None = None,
                           transitions_only: bool = False, limit: int = 500):

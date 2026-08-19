@@ -119,17 +119,25 @@ AFL_RECOVERY_SHUTDOWN_GRACE_SECONDS = _parse_int_env("AFL_RECOVERY_SHUTDOWN_GRAC
 AFL_SCHEDULER_HEARTBEAT_SECONDS = _parse_int_env("AFL_SCHEDULER_HEARTBEAT_SECONDS", 15)
 AFL_RECOVERY_STARTUP_CANDIDATE_LIMIT = _parse_int_env("AFL_RECOVERY_STARTUP_CANDIDATE_LIMIT", 500)
 
-# Diagnostic-only opt-in live matchItem evidence capture for quarter/half/three-quarter/
-# full-time investigation (Issue #148). Disabled by default; never feeds scheduler
-# decisions and never normalises AFL period/break semantics into production state.
-AFL_CAPTURE_MATCH_STATE_EVIDENCE = _parse_bool_env("AFL_CAPTURE_MATCH_STATE_EVIDENCE", False)
-AFL_MATCH_STATE_CAPTURE_INTERVAL_SECONDS = _parse_int_env("AFL_MATCH_STATE_CAPTURE_INTERVAL_SECONDS", 15)
+# Diagnostic evidence-capture framework (see diagnostics/framework.py). Disabled by
+# default; diagnostic profiles never feed production scheduler decisions and never
+# become source authority for the consumer API. AFL_DIAGNOSTIC_PROFILES only ever
+# selects among profiles already checked in and registered in this process -- it is
+# not a generic scripting/configuration mechanism for arbitrary URLs or JSON paths.
+AFL_DIAGNOSTICS_ENABLED = _parse_bool_env("AFL_DIAGNOSTICS_ENABLED", False)
+AFL_DIAGNOSTIC_PROFILES = _parse_csv_env("AFL_DIAGNOSTIC_PROFILES")
+
+# match_clock profile (Issue #148): diagnostic-only live matchItem evidence capture
+# investigating score.matchClock.periods/periodCompleted/periodSeconds and
+# match.status/score.status behaviour around quarter/half/three-quarter/full time.
+# See diagnostics/profiles/match_clock.py and scheduler/match_state_capture.py.
+AFL_DIAGNOSTIC_MATCH_CLOCK_INTERVAL_SECONDS = _parse_int_env("AFL_DIAGNOSTIC_MATCH_CLOCK_INTERVAL_SECONDS", 15)
 # Bounded windows that widen candidate selection slightly beyond a strict
 # matches.status='LIVE' snapshot, to avoid missing evidence at either edge of
 # the local ~5 minute match-status refresh cadence (see
 # scheduler/schedule_match_scrapes.py): capturing shortly after kickoff even
 # if matches.status has not yet flipped to LIVE, and continuing shortly after
 # it flips away from LIVE so a Q4/full-time transition near that boundary is
-# not missed. See scheduler/match_state_capture.py for details.
-AFL_MATCH_STATE_CAPTURE_KICKOFF_TOLERANCE_SECONDS = _parse_int_env("AFL_MATCH_STATE_CAPTURE_KICKOFF_TOLERANCE_SECONDS", 600)
-AFL_MATCH_STATE_CAPTURE_POST_LIVE_GRACE_SECONDS = _parse_int_env("AFL_MATCH_STATE_CAPTURE_POST_LIVE_GRACE_SECONDS", 600)
+# not missed.
+AFL_DIAGNOSTIC_MATCH_CLOCK_KICKOFF_TOLERANCE_SECONDS = _parse_int_env("AFL_DIAGNOSTIC_MATCH_CLOCK_KICKOFF_TOLERANCE_SECONDS", 600)
+AFL_DIAGNOSTIC_MATCH_CLOCK_POST_LIVE_GRACE_SECONDS = _parse_int_env("AFL_DIAGNOSTIC_MATCH_CLOCK_POST_LIVE_GRACE_SECONDS", 600)
