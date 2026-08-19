@@ -1,15 +1,6 @@
 {% extends "base.html" %}
-
-{% block title %}Database Tables{% endblock %}
-
+{% block title %}Data · AFL API Admin{% endblock %}
 {% block content %}
-<h2>📚 Available Tables</h2>
-<ul class="list-group">
-  {% for table in tables %}
-    <li class="list-group-item d-flex justify-content-between align-items-center">
-      {{ table }}
-      <a href="/table/{{ table }}" class="btn btn-sm btn-outline-primary">View</a>
-    </li>
-  {% endfor %}
-</ul>
+<div class="page-heading"><h1 class="h2">Data</h1><p class="text-muted mb-0">Read-only browser for the SQLite tables available to the application.</p></div>
+{% if tables %}<div class="list-group">{% for table in tables %}<a href="/table/{{ table }}" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center"><span class="technical">{{ table }}</span><span class="text-primary">View table →</span></a>{% endfor %}</div>{% else %}<div class="empty-state"><h2 class="h5">No database tables found</h2><p class="text-muted mb-0">The configured database does not currently contain any tables.</p></div>{% endif %}
 {% endblock %}

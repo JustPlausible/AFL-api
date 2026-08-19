@@ -160,6 +160,7 @@ def _schedule_group_label(job: dict) -> str:
 
 @app.get("/schedule", response_class=HTMLResponse)
 def show_schedule(request: Request):
+    scheduler_error = None
     try:
         response = httpx.get("http://afl-scheduler:8000/scheduler/jobs", timeout=5)
         response.raise_for_status()
@@ -167,6 +168,7 @@ def show_schedule(request: Request):
     except Exception as e:
         log(f"❌ Failed to contact scheduler: {e}", "ERROR")
         raw_jobs = []
+        scheduler_error = "The scheduler service could not be reached. Job data may be temporarily unavailable."
 
     # Group persisted-only and in-memory jobs alike; nothing is filtered out.
     grouped = defaultdict(list)
@@ -176,7 +178,7 @@ def show_schedule(request: Request):
     return templates.TemplateResponse(
         request=request,
         name="schedule_grouped.html",
-        context={"grouped_jobs": dict(grouped)},
+        context={"grouped_jobs": dict(grouped), "scheduler_error": scheduler_error},
     )
 
 @app.post("/scheduler/refresh", response_class=HTMLResponse)
@@ -485,13 +487,31 @@ def view_logs_raw(
     try:
         file_name = LOG_FILES.get(log, None)
         if not file_name:
-            return HTMLResponse(f"<h2>⚠️ Unknown log file: {log}</h2>", status_code=400)
+            return templates.TemplateResponse(
+                request=request,
+                name="logs.html",
+                context={
+                    "logs": [], "selected_log": log, "log_options": LOG_FILES.keys(),
+                    "q": q, "lines": lines, "log_error": "Unknown log selection.",
+                    "expected_file": None,
+                },
+                status_code=400,
+            )
 
         log_path = Path("logs") / file_name
         LOCAL_TZ = timezone(timedelta(hours=8))  # AWST
 
         if not log_path.exists():
-            return HTMLResponse(f"<h2>⚠️ Log file not found: {file_name}</h2>", status_code=404)
+            return templates.TemplateResponse(
+                request=request,
+                name="logs.html",
+                context={
+                    "logs": [], "selected_log": log, "log_options": LOG_FILES.keys(),
+                    "q": q, "lines": lines,
+                    "log_error": "No log entries are available yet.",
+                    "expected_file": str(log_path),
+                },
+            )
 
         with open(log_path, "r", encoding="utf-8") as f:
             raw_lines = f.readlines()
@@ -520,6 +540,8 @@ def view_logs_raw(
                 "log_options": LOG_FILES.keys(),
                 "q": q,
                 "lines": lines,
+                "log_error": None,
+                "expected_file": str(log_path),
             },
         )
 

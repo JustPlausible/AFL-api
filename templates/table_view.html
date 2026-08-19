@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 
-{% block title %}{{ table }} Table{% endblock %}
+{% block title %}{{ table }} · Data · AFL API Admin{% endblock %}
 
 {% block content %}
-<h2>📄 Table: {{ table }}</h2>
+<div class="page-heading"><a href="/tables" class="small text-decoration-none">← All tables</a><h1 class="h2 mt-2"><span class="technical">{{ table }}</span></h1><p class="text-muted mb-0">Search, sort, and inspect database records. This view does not modify data.</p></div>
 
 <form method="get" class="row g-2 align-items-end mb-3">
   <div class="col-md-3">
@@ -54,12 +54,12 @@
             <td>{{ value }}</td>
           {% endfor %}
         </tr>
-      {% endfor %}
+      {% else %}<tr><td colspan="{{ headers|length }}" class="text-center text-muted py-4">No rows match the current filters.</td></tr>{% endfor %}
     </tbody>
   </table>
 </div>
 
-<nav aria-label="Table pagination" class="mt-3">
+{% if total_pages > 1 %}<nav aria-label="Table pagination" class="mt-3">
   <ul class="pagination pagination-sm">
   <div class="pagination my-3 d-flex justify-content-center align-items-center gap-1">
       {% if 1 not in pagination_window %}
@@ -82,4 +82,5 @@
   </div>
   </ul>
 </nav>
+{% endif %}
 {% endblock %}

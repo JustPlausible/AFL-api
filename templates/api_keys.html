@@ -3,7 +3,7 @@
 {% block title %}API Keys{% endblock %}
 
 {% block content %}
-<h2>🔑 API Key Management</h2>
+<div class="page-heading"><a href="/setup" class="small text-decoration-none">← System</a><h1 class="h2 mt-2">API keys</h1><p class="text-muted mb-0">Manage credentials used by API clients. Secret values are only displayed immediately after creation or renewal.</p></div>
 {% if one_time_api_key %}
 <div class="alert alert-warning">Copy this API key now. It will not be shown again: <code>{{ one_time_api_key }}</code></div>
 {% endif %}
@@ -57,7 +57,7 @@
                 </form>
             </td>
         </tr>
-    {% endfor %}
+    {% else %}<tr><td colspan="6" class="text-center text-muted py-4">No API keys have been created.</td></tr>{% endfor %}
     </tbody>
 </table>
 
