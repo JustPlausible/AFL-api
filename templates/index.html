@@ -1,50 +1,22 @@
 {% extends "base.html" %}
-
-{% block title %}AFL API Admin Home{% endblock %}
-
+{% block title %}Overview · AFL API Admin{% endblock %}
 {% block content %}
-<h2>🏉 AFL API Admin Dashboard</h2>
-<p class="lead">Welcome to the AFL scraping api admin tools.</p>
-
-<div class="row gy-3">
-    <div class="col-md-6">
-        <div class="card shadow-sm">
-            <div class="card-body">
-                <h5 class="card-title">🗓 Scheduler</h5>
-                <p class="card-text">View and refresh stat scraping jobs for current or future matches.</p>
-                <a href="/schedule" class="btn btn-primary btn-sm">View Schedule</a>
-            </div>
-        </div>
-    </div>
-
-    <div class="col-md-6">
-        <div class="card shadow-sm">
-            <div class="card-body">
-                <h5 class="card-title">📊 Tables</h5>
-                <p class="card-text">Explore AFL database tables and view or query raw data.</p>
-                <a href="/tables" class="btn btn-primary btn-sm">View Tables</a>
-            </div>
-        </div>
-    </div>
-
-    <div class="col-md-6">
-        <div class="card shadow-sm">
-            <div class="card-body">
-                <h5 class="card-title">📄 Logs</h5>
-                <p class="card-text">Inspect player stat logs with live filtering and time conversion.</p>
-                <a href="/logs" class="btn btn-primary btn-sm">View Logs</a>
-            </div>
-        </div>
-    </div>
-
-    <div class="col-md-6">
-      <div class="card shadow-sm">
-        <div class="card-body">
-          <h5 class="card-title">⚙️ Setup</h5>
-          <p class="card-text">Manage clubs and API keys used by the system.</p>
-          <a href="/setup" class="btn btn-secondary btn-sm">Go to Setup</a>
-        </div>
-      </div>
-    </div>
+<div class="page-heading">
+  <h1 class="h2">Overview</h1>
+  <p class="text-muted mb-0">Review and operate the AFL API's scheduling, data, diagnostics, and system tools.</p>
+</div>
+<div class="row g-3">
+{% set sections = [
+  ('Scheduling', 'Review scheduled jobs, inspect status, and queue targeted refreshes.', '/schedule', 'Open scheduling'),
+  ('Data', 'Browse database tables, search records, and inspect stored AFL data.', '/tables', 'Browse data'),
+  ('Logs & diagnostics', 'Inspect recent collector and scheduler log output.', '/logs', 'View logs'),
+  ('System', 'Manage API access keys and compare club reference data.', '/setup', 'Open system tools')
+] %}
+{% for title, description, href, action in sections %}
+  <div class="col-md-6"><section class="card h-100 shadow-sm"><div class="card-body d-flex flex-column">
+    <h2 class="h5">{{ title }}</h2><p class="text-muted flex-grow-1">{{ description }}</p>
+    <a href="{{ href }}" class="btn btn-outline-primary align-self-start">{{ action }}</a>
+  </div></section></div>
+{% endfor %}
 </div>
 {% endblock %}

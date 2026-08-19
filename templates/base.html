@@ -1,44 +1,41 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>{% block title %}AFL Admin Panel{% endblock %}</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-    <style>
-    .page-link {
-        display: inline-block;
-        padding: 6px 12px;
-        margin: 0 2px;
-        border: 1px solid #ccc;
-        border-radius: 3px;
-        text-decoration: none;
-        color: #333;
-        background: #f8f9fa;
-    }
-    .page-link.active {
-        background: #007bff;
-        color: white;
-        border-color: #007bff;
-    }
-    .page-ellipsis {
-        display: inline-block;
-        padding: 6px 8px;
-        color: #888;
-    }
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}AFL API Admin{% endblock %}</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    :root { --admin-navy: #17324d; --admin-blue: #2563a6; }
+    body { min-height: 100vh; }
+    .admin-header { background: var(--admin-navy); }
+    .admin-nav .nav-link { color: rgba(255,255,255,.78); border-radius: .35rem; padding: .45rem .7rem; }
+    .admin-nav .nav-link:hover, .admin-nav .nav-link:focus { color: white; background: rgba(255,255,255,.1); }
+    .admin-nav .nav-link.active { color: white; background: var(--admin-blue); }
+    .page-heading { margin-bottom: 1.5rem; }
+    .page-heading p { max-width: 52rem; }
+    .empty-state { border: 1px dashed #adb5bd; border-radius: .5rem; padding: 2rem; text-align: center; background: white; }
+    .table td, .table th { vertical-align: middle; }
+    .technical { font-family: var(--bs-font-monospace); font-size: .875em; overflow-wrap: anywhere; }
+    .page-link { text-decoration: none; }
+  </style>
 </head>
 <body class="bg-light text-dark">
-    <div class="container py-4">
-        <header class="d-flex justify-content-between align-items-center mb-4">
-            <h1 class="h3 mb-0">AFL API Admin</h1>
-            <nav>
-                <a class="btn btn-sm btn-outline-primary me-1" href="/">Home</a>
-                <a class="btn btn-sm btn-outline-secondary me-1" href="/schedule">Schedule</a>
-                <a class="btn btn-sm btn-outline-secondary me-1" href="/tables">Tables</a>
-                <a class="btn btn-sm btn-outline-secondary me-1" href="/logs">Logs</a>
-            </nav>
-        </header>
-        {% block content %}{% endblock %}
+  <header class="admin-header text-white">
+    <div class="container py-3 d-lg-flex align-items-center justify-content-between">
+      <a class="h4 text-white text-decoration-none mb-2 mb-lg-0 d-block" href="/">AFL API <span class="fw-normal opacity-75">Admin</span></a>
+      {% set path = request.url.path %}
+      <nav class="admin-nav nav flex-wrap gap-1" aria-label="Admin sections">
+        <a class="nav-link {% if path == '/' %}active{% endif %}" href="/" {% if path == '/' %}aria-current="page"{% endif %}>Overview</a>
+        <a class="nav-link {% if path.startswith('/schedule') or path.startswith('/scheduler') %}active{% endif %}" href="/schedule">Scheduling</a>
+        <a class="nav-link {% if path.startswith('/table') %}active{% endif %}" href="/tables">Data</a>
+        <a class="nav-link {% if path.startswith('/logs') %}active{% endif %}" href="/logs">Logs &amp; diagnostics</a>
+        <a class="nav-link {% if path.startswith('/setup') or path.startswith('/clubs-diff') %}active{% endif %}" href="/setup">System</a>
+      </nav>
     </div>
+  </header>
+  <main class="container py-4">
+    {% block content %}{% endblock %}
+  </main>
 </body>
 </html>

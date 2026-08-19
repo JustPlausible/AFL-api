@@ -3,7 +3,7 @@
 {% block title %}API Key Details{% endblock %}
 
 {% block content %}
-<h2>🔐 API Key #{{ key.id }}</h2>
+<div class="page-heading"><a href="/setup/api-keys" class="small text-decoration-none">← API keys</a><h1 class="h2 mt-2">API key #{{ key.id }}</h1></div>
 <p><strong>Label:</strong> {{ key.label }}</p>
 {% if one_time_api_key %}
 <div class="alert alert-warning">Copy this renewed API key now. It will not be shown again: <code>{{ one_time_api_key }}</code></div>
@@ -17,5 +17,5 @@
   {% endif %}
 </p>
 
-<a href="/setup/api-keys" class="btn btn-outline-secondary btn-sm">← Back to All Keys</a>
+<p class="text-muted small">Renewing or changing key status is available from the API keys list.</p>
 {% endblock %}

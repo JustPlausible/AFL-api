@@ -1,62 +1,46 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <title>Clubs Diff</title>
-  <style>
-    body { font-family: sans-serif; padding: 20px; background-color: #f9f9f9; }
-    h1 { font-size: 1.8em; margin-bottom: 10px; }
-    .section { margin-top: 20px; }
-    .added { color: green; }
-    .removed { color: red; }
-    .changed { color: orange; }
-    table { border-collapse: collapse; width: 100%; margin-top: 10px; }
-    th, td { border: 1px solid #ccc; padding: 6px 10px; text-align: left; }
-    th { background-color: #eee; }
-    td.diff { font-weight: bold; background-color: #fff8e1; }
-  </style>
-</head>
-<body>
+{% extends "base.html" %}
+{% block title %}Club reference data · AFL API Admin{% endblock %}
+{% block content %}
 {% if message %}
-  <div style="background-color: #e0ffe0; border: 1px solid #66cc66; padding: 10px; margin-bottom: 20px;">
+  <div class="alert alert-success" role="status">
     {{ message }}
   </div>
 {% endif %}
-  <a href="/">← Back Home</a>
-  <h1>🔍 Clubs Comparison (JSON ↔ DB)</h1>
+  <div class="page-heading"><a href="/setup" class="small text-decoration-none">← System</a><h1 class="h2 mt-2">Club reference data</h1><p class="text-muted mb-0">Compare bundled JSON and database records. Review every difference before running an import or export.</p></div>
 
-  <form method="post" action="/clubs-diff/import" style="display:inline;">
+  <form method="post" action="/clubs-diff/import" class="d-inline">
     {{ csrf_input(request) | safe }}
-    <button type="submit">📥 Import clubs from JSON</button>
+    <button type="submit" class="btn btn-outline-primary">📥 Import clubs from JSON</button>
   </form>
-  <form method="post" action="/clubs-diff/export" style="display:inline; margin-left: 10px;">
+  <form method="post" action="/clubs-diff/export" class="d-inline ms-2">
     {{ csrf_input(request) | safe }}
-    <button type="submit">📤 Export clubs to backup JSON</button>
+    <button type="submit" class="btn btn-outline-primary">📤 Export clubs to backup JSON</button>
   </form>
 
-  <div class="section added">
-    <h2>🟢 Added Clubs (in JSON only)</h2>
+  <section class="card card-body mt-4">
+    <h2 class="h5">Only in JSON</h2>
     {% if added %}
       <ul>{% for club in added %}
         <li>{{ club.code }} — {{ club.name }}</li>
       {% endfor %}</ul>
     {% else %}
-      <p><em>None</em></p>
+      <p class="text-muted mb-0">No differences in this category.</p>
     {% endif %}
-  </div>
+  </section>
 
-  <div class="section removed">
-    <h2>🔴 Removed Clubs (in DB only)</h2>
+  <section class="card card-body mt-3">
+    <h2 class="h5">Only in database</h2>
     {% if removed %}
       <ul>{% for club in removed %}
         <li>{{ club.code }} — {{ club.name }}</li>
       {% endfor %}</ul>
     {% else %}
-      <p><em>None</em></p>
+      <p class="text-muted mb-0">No differences in this category.</p>
     {% endif %}
-  </div>
+  </section>
 
-  <div class="section changed">
-    <h2>🟡 Changed Clubs</h2>
+  <section class="card card-body mt-3">
+    <h2 class="h5">Changed clubs</h2>
     {% if changed %}
       <table>
         <tr>
@@ -74,9 +58,9 @@
         {% endfor %}
       </table>
     {% else %}
-      <p><em>None</em></p>
+      <p class="text-muted mb-0">No differences in this category.</p>
     {% endif %}
-  </div>
+  </section>
 
-</body>
-</html>
+
+{% endblock %}
