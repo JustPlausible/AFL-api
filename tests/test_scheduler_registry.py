@@ -19,6 +19,26 @@ def noop(value=None):
     return value
 
 
+def test_registry_readable_succeeds_on_empty_table_without_loading_rows(tmp_path, monkeypatch):
+    _db(tmp_path, monkeypatch)
+    assert registry.registry_readable() is None
+
+
+def test_registry_readable_raises_when_table_missing(tmp_path, monkeypatch):
+    import sqlite3
+    path = _db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(path)
+    conn.execute("DROP TABLE scheduler_job_registry")
+    conn.commit()
+    conn.close()
+
+    try:
+        registry.registry_readable()
+        assert False, "expected sqlite3.Error"
+    except sqlite3.Error:
+        pass
+
+
 def boom():
     raise RuntimeError("failed token=supersecret")
 

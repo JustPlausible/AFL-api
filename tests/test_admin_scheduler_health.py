@@ -129,6 +129,75 @@ def test_schedule_page_shows_unavailable_on_malformed_health_body(tmp_path, monk
     assert "Unavailable" in response.text
 
 
+def test_schedule_page_shows_unavailable_when_healthy_state_missing_job_count(tmp_path, monkeypatch):
+    """Regression: a recognised `state` alone must not be enough to mark the
+    response available -- a missing/wrong-typed required field must fall
+    back to Unavailable rather than rendering as a false "healthy"."""
+    admin, client = _client(tmp_path, monkeypatch)
+    monkeypatch.setattr("admin.httpx.get", _fake_get(health_payload={
+        "state": "healthy", "scheduler_running": True,
+        "database_accessible": True, "registry_accessible": True,
+        "diagnostics": [], "version": "0.6.0",
+        # job_count intentionally omitted
+    }))
+
+    response = client.get("/schedule", headers=_auth())
+
+    assert response.status_code == 200
+    assert "Unavailable" in response.text
+    assert "None registered job" not in response.text
+
+
+def test_schedule_page_shows_unavailable_when_healthy_state_contradicts_flags(tmp_path, monkeypatch):
+    """Regression: `state: healthy` with an unreachable dependency is an
+    internally-contradictory body and must not be trusted as healthy."""
+    admin, client = _client(tmp_path, monkeypatch)
+    monkeypatch.setattr("admin.httpx.get", _fake_get(health_payload={
+        "state": "healthy", "scheduler_running": True,
+        "database_accessible": False, "registry_accessible": True,
+        "job_count": 0, "diagnostics": [], "version": "0.6.0",
+    }))
+
+    response = client.get("/schedule", headers=_auth())
+
+    assert response.status_code == 200
+    assert "Unavailable" in response.text
+
+
+def test_schedule_page_shows_unavailable_on_unexpected_http_status(tmp_path, monkeypatch):
+    admin, client = _client(tmp_path, monkeypatch)
+    monkeypatch.setattr("admin.httpx.get", _fake_get(health_payload={
+        "state": "healthy", "scheduler_running": True,
+        "database_accessible": True, "registry_accessible": True,
+        "job_count": 0, "diagnostics": [], "version": "0.6.0",
+    }, health_status=500))
+
+    response = client.get("/schedule", headers=_auth())
+
+    assert response.status_code == 200
+    assert "Unavailable" in response.text
+
+
+def test_is_valid_scheduler_health_accepts_well_formed_contract():
+    import admin as admin_module
+
+    assert admin_module._is_valid_scheduler_health({
+        "state": "unhealthy", "scheduler_running": True,
+        "database_accessible": False, "registry_accessible": True,
+        "job_count": 0, "diagnostics": ["database_unavailable"], "version": "0.6.0",
+    })
+
+
+def test_is_valid_scheduler_health_rejects_boolean_job_count():
+    import admin as admin_module
+
+    assert not admin_module._is_valid_scheduler_health({
+        "state": "healthy", "scheduler_running": True,
+        "database_accessible": True, "registry_accessible": True,
+        "job_count": True, "diagnostics": [], "version": "0.6.0",
+    })
+
+
 def test_scheduler_health_display_is_independent_of_jobs_error():
     """The jobs-list failure path must not affect the health display mapping."""
     import admin as admin_module

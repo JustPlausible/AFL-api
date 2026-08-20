@@ -24,6 +24,7 @@ def _client(tmp_path, monkeypatch):
 class _FakeResponse:
     def __init__(self, payload):
         self._payload = payload
+        self.status_code = 200
 
     def raise_for_status(self):
         pass

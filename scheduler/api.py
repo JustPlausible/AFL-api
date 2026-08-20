@@ -11,7 +11,7 @@ from scraper.scrape_afl_fixtures import update_fixture_cache
 from scheduler.scheduled_tasks import scheduler  # same scheduler you already use
 from scheduler.schedule_refresh_jobs import register_refresh_jobs
 from scheduler.schedule_lineup_scrapes import register_lineup_jobs
-from scheduler.registry import registry_rows
+from scheduler.registry import registry_rows, registry_readable
 from db.connection import get_read_only_db_connection
 from scheduler.match_windows import inspection_rows
 from utils.log import log
@@ -81,7 +81,7 @@ def scheduler_health(response: Response) -> SchedulerHealthResponse:
 
     registry_accessible = True
     try:
-        registry_rows()
+        registry_readable()
     except (FileNotFoundError, sqlite3.Error):
         registry_accessible = False
         diagnostics.append(DIAGNOSTIC_REGISTRY_UNREADABLE)

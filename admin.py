@@ -159,24 +159,63 @@ def _schedule_group_label(job: dict) -> str:
     return "General"
 
 
+_SCHEDULER_HEALTH_STATES = {"healthy", "starting", "unhealthy"}
+
+
+def _is_valid_scheduler_health(data) -> bool:
+    """Validate the full scheduler health contract, not just the presence of `state`.
+
+    A response that names a recognised state but carries a missing/wrong-typed
+    field, or contradicts the state it reports (for example `state: healthy`
+    while a required dependency is unreachable), is treated the same as an
+    unparseable one: this must never let a malformed body render as healthy.
+    """
+    if not isinstance(data, dict):
+        return False
+    if data.get("state") not in _SCHEDULER_HEALTH_STATES:
+        return False
+    for field in ("scheduler_running", "database_accessible", "registry_accessible"):
+        if not isinstance(data.get(field), bool):
+            return False
+    job_count = data.get("job_count")
+    if not isinstance(job_count, int) or isinstance(job_count, bool) or job_count < 0:
+        return False
+    diagnostics = data.get("diagnostics")
+    if not isinstance(diagnostics, list) or not all(isinstance(d, str) for d in diagnostics):
+        return False
+    if not isinstance(data.get("version"), str):
+        return False
+
+    if data["state"] == "unhealthy":
+        if data["database_accessible"] and data["registry_accessible"]:
+            return False
+    elif data["state"] == "healthy":
+        if not (data["database_accessible"] and data["registry_accessible"] and data["scheduler_running"]):
+            return False
+    return True
+
+
 def _fetch_scheduler_health() -> dict:
     """Fetch the stable scheduler health contract (Issue #178), independent of the jobs list.
 
-    Any transport failure (connection error, timeout, non-2xx we can't
-    interpret, unparseable body) is normalised to an "unavailable" result so
-    the admin UI never has to distinguish a network failure from a malformed
-    response body.
+    Any transport failure (connection error, timeout, unexpected HTTP status,
+    unparseable body, or a body that fails the contract's field/invariant
+    checks) is normalised to the same "unavailable" result, so the admin UI
+    never has to distinguish a network failure from a malformed response.
     """
     try:
         response = httpx.get(SCHEDULER_HEALTH_URL, timeout=5)
     except Exception as e:
         log(f"❌ Failed to contact scheduler health endpoint: {e}", "ERROR")
         return {"available": False}
+    if response.status_code not in (200, 503):
+        log(f"❌ Unexpected scheduler health status code: {response.status_code}", "ERROR")
+        return {"available": False}
     try:
         data = response.json()
     except ValueError:
         return {"available": False}
-    if not isinstance(data, dict) or "state" not in data:
+    if not _is_valid_scheduler_health(data):
         return {"available": False}
     return {"available": True, **data}
 
