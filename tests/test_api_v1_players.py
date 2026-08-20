@@ -194,6 +194,29 @@ def test_membership_in_non_current_season_does_not_leak_into_current_team(tmp_pa
     assert response.json()["player"]["current_team"] is None
 
 
+def test_membership_found_even_when_another_season_also_marked_current(tmp_path, monkeypatch):
+    """A second season sharing is_current=1 (e.g. a second competition) must not
+    hide a player's real current-season membership in the other one."""
+
+    def seed(conn):
+        _seed_seasons(conn)
+        # A second, higher-afl_id "current" season the player has no membership in.
+        conn.execute(
+            "INSERT INTO afl_seasons VALUES(?,'CD_S99',1,'2026W','2026W',2026,1,1,NULL,NULL,'{}','{}',?)",
+            (99, NOW),
+        )
+        _seed_player(conn, display_name="Nick Daicos")
+        _seed_membership(conn, PLAYER_ID, CURRENT_SEASON_ID, TEAM_ID)
+
+    db_path = _make_db(tmp_path, seed=seed)
+    client = _client(db_path, monkeypatch)
+
+    response = _get(client)
+
+    assert response.status_code == 200
+    assert response.json()["player"]["current_team"] == {"team_id": TEAM_ID, "name": "Collingwood"}
+
+
 def test_current_season_membership_with_unresolved_team_is_null(tmp_path, monkeypatch):
     def seed(conn):
         _seed_seasons(conn)

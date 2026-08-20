@@ -661,17 +661,20 @@ class PlayerResponse(BaseModel):
 
 
 def _current_team(conn, canonical_player_id: int) -> MatchTeam | None:
-    """Resolve a player's team for the current season, if cleanly resolvable."""
-    season_row = conn.execute(
-        "SELECT afl_id FROM afl_seasons WHERE is_current = 1 ORDER BY year DESC, afl_id DESC LIMIT 1"
-    ).fetchone()
-    if season_row is None:
-        return None
+    """Resolve a player's team for the current season, if cleanly resolvable.
+
+    Joins the player's own membership rows to current seasons directly,
+    rather than picking one global "current" season up front, so a player
+    is not missed merely because a different season also has
+    ``is_current = 1`` (e.g. under a second configured competition).
+    """
     membership_row = conn.execute(
         "SELECT csp.team_id, t.name FROM competition_season_players csp "
+        "JOIN afl_seasons s ON s.afl_id = csp.competition_season_id AND s.is_current = 1 "
         "LEFT JOIN afl_teams t ON t.afl_id = csp.team_id "
-        "WHERE csp.player_id = ? AND csp.competition_season_id = ?",
-        (canonical_player_id, season_row["afl_id"]),
+        "WHERE csp.player_id = ? "
+        "ORDER BY s.year DESC, s.afl_id DESC LIMIT 1",
+        (canonical_player_id,),
     ).fetchone()
     if membership_row is None or membership_row["team_id"] is None:
         return None
