@@ -1,9 +1,11 @@
 # scheduler/api.py
+import sqlite3
 from datetime import datetime
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response, status
 from apscheduler.jobstores.base import JobLookupError
 from fastapi import APIRouter
+from pydantic import BaseModel
 from scheduler.schedule_stat_scrapes import register_stat_scrape_jobs
 from scraper.scrape_afl_fixtures import update_fixture_cache
 from scheduler.scheduled_tasks import scheduler  # same scheduler you already use
@@ -14,11 +16,97 @@ from db.connection import get_read_only_db_connection
 from scheduler.match_windows import inspection_rows
 from utils.log import log
 from scheduler.manual_triggers import router as manual_triggers_router
+from version import __version__
 
 log("🔍 scheduler/api.py loaded", "DEBUG")
 
 app = FastAPI(title="Scheduler API")
 app.include_router(manual_triggers_router)
+
+# Stable top-level states for /scheduler/health (Issue #178). An empty job
+# registry is never by itself a reason to report anything other than
+# "healthy" -- these constants intentionally say nothing about job_count.
+SCHEDULER_STATE_HEALTHY = "healthy"
+SCHEDULER_STATE_STARTING = "starting"
+SCHEDULER_STATE_UNHEALTHY = "unhealthy"
+
+# Stable, sanitized diagnostic codes. Never derived from exception text so a
+# raw error message (which could carry a path, DSN, or other operational
+# detail) can never leak through this contract.
+DIAGNOSTIC_DATABASE_UNAVAILABLE = "database_unavailable"
+DIAGNOSTIC_REGISTRY_UNREADABLE = "registry_unreadable"
+DIAGNOSTIC_SCHEDULER_NOT_RUNNING = "scheduler_not_running"
+
+
+class SchedulerHealthResponse(BaseModel):
+    """Small, stable scheduler health/readiness contract.
+
+    Deliberately excludes scheduler internals (job payloads, credentials,
+    exception text, filesystem paths). ``job_count`` is informational only;
+    ``job_count == 0`` with ``state == "healthy"`` is a normal, healthy
+    outcome, not a degraded one.
+    """
+
+    state: str
+    scheduler_running: bool
+    database_accessible: bool
+    registry_accessible: bool
+    job_count: int
+    diagnostics: list[str]
+    version: str
+
+
+@app.get("/scheduler/health", response_model=SchedulerHealthResponse)
+def scheduler_health(response: Response) -> SchedulerHealthResponse:
+    """Read-only scheduler health/status contract (Issue #178).
+
+    Required-for-readiness dependencies are the application database and the
+    persisted job registry table it hosts -- both are load-bearing for every
+    other scheduler endpoint. Optional runtime data (match windows, CFS
+    polling state) is intentionally not consulted here.
+    """
+    diagnostics: list[str] = []
+
+    database_accessible = True
+    conn = None
+    try:
+        conn = get_read_only_db_connection()
+        conn.execute("SELECT 1").fetchone()
+    except (FileNotFoundError, sqlite3.Error):
+        database_accessible = False
+        diagnostics.append(DIAGNOSTIC_DATABASE_UNAVAILABLE)
+    finally:
+        if conn is not None:
+            conn.close()
+
+    registry_accessible = True
+    try:
+        registry_rows()
+    except (FileNotFoundError, sqlite3.Error):
+        registry_accessible = False
+        diagnostics.append(DIAGNOSTIC_REGISTRY_UNREADABLE)
+
+    scheduler_running = scheduler.running
+    job_count = len(scheduler.get_jobs())
+
+    if not database_accessible or not registry_accessible:
+        state = SCHEDULER_STATE_UNHEALTHY
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    elif not scheduler_running:
+        state = SCHEDULER_STATE_STARTING
+        diagnostics.append(DIAGNOSTIC_SCHEDULER_NOT_RUNNING)
+    else:
+        state = SCHEDULER_STATE_HEALTHY
+
+    return SchedulerHealthResponse(
+        state=state,
+        scheduler_running=scheduler_running,
+        database_accessible=database_accessible,
+        registry_accessible=registry_accessible,
+        job_count=job_count,
+        diagnostics=diagnostics,
+        version=__version__,
+    )
 
 @app.get("/scheduler/jobs")
 def list_jobs():

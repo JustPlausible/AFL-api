@@ -20,6 +20,7 @@ for the reusable release summary and upgrade cautions.
 - [API key storage migration](api_key_migration.md)
 - [SQLite database migrations](database_migrations.md)
 - [Scheduler registry and restart recovery](scheduler_registry.md)
+- [Scheduler health and diagnostics endpoint](scheduler_health.md)
 - [Scrape run audit records](scrape_run_audit.md)
 - [Public AFL metadata collection](public_afl_metadata.md)
 - [Match roster collection](match_rosters.md)
