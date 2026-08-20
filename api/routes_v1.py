@@ -622,3 +622,110 @@ def get_match_player_stats(
         **response_values,
         players=[PlayerStat(**values) for values in player_values],
     )
+
+
+class PlayerIdentifiers(BaseModel):
+    """Known provider-ID crosswalks for one canonical player."""
+
+    afl_player_id: int | None = Field(
+        description="Numeric AFL player identifier, or null when no crosswalk exists."
+    )
+    champion_data_player_id: str | None = Field(
+        description="Opaque Champion Data player identifier, or null when no crosswalk exists."
+    )
+
+
+class CanonicalPlayer(BaseModel):
+    """Stable public projection of one persisted canonical player."""
+
+    canonical_player_id: int = Field(
+        description="Stable internal canonical player identifier; the primary consumer identity."
+    )
+    display_name: str | None = Field(
+        description="Canonical display name, or null when not yet resolved."
+    )
+    current_team: MatchTeam | None = Field(
+        description=(
+            "Canonical team identity for the player's current-season membership, or null "
+            "when no current season exists, the player has no membership row for it, or "
+            "that membership's team is unresolved."
+        )
+    )
+    identifiers: PlayerIdentifiers = Field(
+        description="Known provider-ID crosswalks. Unresolved mappings are null, never guessed."
+    )
+
+
+class PlayerResponse(BaseModel):
+    player: CanonicalPlayer
+
+
+def _current_team(conn, canonical_player_id: int) -> MatchTeam | None:
+    """Resolve a player's team for the current season, if cleanly resolvable."""
+    season_row = conn.execute(
+        "SELECT afl_id FROM afl_seasons WHERE is_current = 1 ORDER BY year DESC, afl_id DESC LIMIT 1"
+    ).fetchone()
+    if season_row is None:
+        return None
+    membership_row = conn.execute(
+        "SELECT csp.team_id, t.name FROM competition_season_players csp "
+        "LEFT JOIN afl_teams t ON t.afl_id = csp.team_id "
+        "WHERE csp.player_id = ? AND csp.competition_season_id = ?",
+        (canonical_player_id, season_row["afl_id"]),
+    ).fetchone()
+    if membership_row is None or membership_row["team_id"] is None:
+        return None
+    return MatchTeam(team_id=membership_row["team_id"], name=membership_row["name"])
+
+
+@router.get(
+    "/api/v1/players/{canonical_player_id}",
+    response_model=PlayerResponse,
+    responses={404: {"model": ApplicationErrorResponse, "description": "Player not found"}},
+    summary="Get a canonical player",
+    description=(
+        "Returns the stable canonical projection of one persisted player, resolved from "
+        "canonical player and provider-identity persistence rather than the legacy players "
+        "table. canonical_player_id is the primary consumer identity; identifiers exposes "
+        "known AFL and Champion Data crosswalks, which are null rather than guessed when "
+        "unresolved. current_team reflects the player's competition-season membership for "
+        "the current season only, and is null when that cannot be resolved cleanly."
+    ),
+)
+def get_player(
+    canonical_player_id: int,
+    credential: AuthenticatedCredential = Depends(authenticate_api_key),
+) -> PlayerResponse | JSONResponse:
+    log(f"🔍 {credential.label} requested v1 player {canonical_player_id}", "INFO")
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            "SELECT id, display_name, given_name, family_name FROM canonical_players WHERE id = ?",
+            (canonical_player_id,),
+        ).fetchone()
+        if row is None:
+            return application_error(404, "player_not_found", "Player not found.")
+
+        providers = {
+            provider_row["provider"]: provider_row["provider_player_id"]
+            for provider_row in conn.execute(
+                "SELECT provider, provider_player_id FROM player_provider_ids WHERE player_id = ?",
+                (canonical_player_id,),
+            ).fetchall()
+        }
+        afl_player_id = providers.get("afl")
+        current_team = _current_team(conn, canonical_player_id)
+    finally:
+        conn.close()
+
+    return PlayerResponse(
+        player=CanonicalPlayer(
+            canonical_player_id=row["id"],
+            display_name=_display_name(row),
+            current_team=current_team,
+            identifiers=PlayerIdentifiers(
+                afl_player_id=int(afl_player_id) if afl_player_id is not None else None,
+                champion_data_player_id=providers.get("champion_data"),
+            ),
+        )
+    )
