@@ -33,6 +33,7 @@ from .collectors import (
     RawResponseWriter,
     is_current_season,
     resolve_competition,
+    resolve_current_season,
     select_season,
 )
 from .rosters import (
@@ -96,6 +97,7 @@ __all__ = [
     "RawResponseWriter",
     "is_current_season",
     "resolve_competition",
+    "resolve_current_season",
     "select_season",
     "MatchRosterCollector",
     "RosterChanges",

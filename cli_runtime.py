@@ -401,6 +401,7 @@ def handle_collect_match_rosters(args):
 def handle_bootstrap_afl_season(args):
     from afl_json import AflJsonClient
     from afl_json.season_sync import bootstrap_afl_season
+    from config import AFL_SEASON_YEAR
     from db.connection import get_db_connection
     from db.scrape_runs import audited_scrape_run
 
@@ -413,7 +414,8 @@ def handle_bootstrap_afl_season(args):
                     client, conn, season=args.bootstrap_afl_season,
                     competition_code=args.afl_competition_code,
                     competition_provider_id=args.afl_competition_provider_id,
-                    raw_directory=args.afl_raw_directory)
+                    raw_directory=args.afl_raw_directory,
+                    current_season_year=AFL_SEASON_YEAR)
             summary, player_summary = result.metadata, result.players
             audit["rows_read"] = summary.records_read + player_summary.records_read
             audit["rows_written"] = summary.inserted + summary.updated + player_summary.rows_written
@@ -495,6 +497,7 @@ def handle_bootstrap_afl_season(args):
 def handle_sync_afl_season(args):
     from afl_json import AflJsonClient
     from afl_json.season_sync import SeasonSynchronizer, SeasonSyncOptions
+    from config import AFL_SEASON_YEAR
     from db.connection import get_db_connection
 
     conn = get_db_connection()
@@ -505,6 +508,7 @@ def handle_sync_afl_season(args):
                 competition_code=args.afl_competition_code,
                 competition_provider_id=args.afl_competition_provider_id,
                 raw_directory=args.afl_raw_directory,
+                current_season_year=AFL_SEASON_YEAR,
                 options=SeasonSyncOptions(
                     round_number=args.round, round_from=args.round_from,
                     round_to=args.round_to, match_ids=tuple(args.match_id),

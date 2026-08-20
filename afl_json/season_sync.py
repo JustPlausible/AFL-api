@@ -59,15 +59,23 @@ class SeasonBootstrapResult:
 
 def bootstrap_afl_season(client, conn: sqlite3.Connection, *, season: str | int,
                          competition_code: str, competition_provider_id: str,
-                         raw_directory=None) -> SeasonBootstrapResult:
-    """Collect and persist the canonical season foundation without invoking the CLI."""
+                         raw_directory=None,
+                         current_season_year: str | int | None = None) -> SeasonBootstrapResult:
+    """Collect and persist the canonical season foundation without invoking the CLI.
+
+    ``current_season_year`` is an operator-configured override (e.g. the
+    ``AFL_SEASON_YEAR`` deployment setting) identifying the canonical current
+    season independently of ``season`` -- so bootstrapping a specific (e.g.
+    historical) season does not disturb an already-established current
+    season marker. See ``afl_json.collectors.resolve_current_season``.
+    """
     # Resolve through the public package boundary so existing callers can
     # inject the collector without patching implementation globals.
     from afl_json import PublicAflCollector
     collector = PublicAflCollector(client, raw_directory=raw_directory)
     result = collector.collect(competition_code=competition_code,
                                competition_provider_id=competition_provider_id,
-                               season=season)
+                               season=season, current_season_year=current_season_year)
     player_result = collector.collect_players(result.season["provider_id"])
     metadata = persist_afl_metadata(conn, result)
     players = persist_player_seasons(conn, player_result,
@@ -188,7 +196,7 @@ class SeasonSynchronizer:
 
     def run(self, *, season: str | int, competition_code: str,
             competition_provider_id: str, options: SeasonSyncOptions = SeasonSyncOptions(),
-            raw_directory=None) -> SeasonSyncResult:
+            raw_directory=None, current_season_year: str | int | None = None) -> SeasonSyncResult:
         """Synchronise a season using an exclusively owned, transaction-free connection.
 
         ``RuntimeError`` is raised before any side effect when ``conn`` already
@@ -212,6 +220,7 @@ class SeasonSynchronizer:
                 competition_code=competition_code,
                 competition_provider_id=competition_provider_id,
                 raw_directory=raw_directory,
+                current_season_year=current_season_year,
             )
             summary.competition_id = foundation.competition_id
             summary.competition_provider_id = foundation.competition_provider_id

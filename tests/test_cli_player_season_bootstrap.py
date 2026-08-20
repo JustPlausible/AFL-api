@@ -17,10 +17,12 @@ class FakeClient:
 
 class FakeCollector:
     player_status = "published"
+    last_collect_kwargs = {}
 
     def __init__(self, _client, **_kwargs): pass
 
     def collect(self, **_kwargs):
+        FakeCollector.last_collect_kwargs = _kwargs
         return CollectionResult(
             {"afl_id": 1, "provider_id": "CD_C014", "code": "AFL", "name": "AFL",
              "metadata": None, "source": {}},
@@ -94,3 +96,25 @@ def test_supported_bootstrap_distinguishes_unavailable_without_deleting(tmp_path
     assert sqlite3.connect(path).execute(
         "SELECT COUNT(*) FROM competition_season_players"
     ).fetchone() == (0,)
+
+
+def test_bootstrap_forwards_the_configured_afl_season_year_as_current_season_override(
+        tmp_path, monkeypatch, capsys):
+    """`--bootstrap-afl-season YEAR` selects which season to persist this run;
+    AFL_SEASON_YEAR is an independent, operator-configured declaration of
+    which season is canonically current (issue #184 follow-up)."""
+    import config
+    monkeypatch.setattr(config, "AFL_SEASON_YEAR", "2027")
+
+    run(tmp_path, monkeypatch, capsys)
+
+    assert FakeCollector.last_collect_kwargs.get("current_season_year") == "2027"
+
+
+def test_bootstrap_forwards_no_override_when_afl_season_year_is_unset(tmp_path, monkeypatch, capsys):
+    import config
+    monkeypatch.setattr(config, "AFL_SEASON_YEAR", None)
+
+    run(tmp_path, monkeypatch, capsys)
+
+    assert FakeCollector.last_collect_kwargs.get("current_season_year") is None
