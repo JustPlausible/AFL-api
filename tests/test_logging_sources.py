@@ -63,6 +63,36 @@ def test_disabled_source_does_not_report_a_missing_file_error(tmp_path):
     assert status.exists is False
 
 
+def test_disabled_source_preserves_metadata_for_a_previously_captured_log(tmp_path):
+    # Disabling a source stops future writes; it must not discard the size
+    # and modified-time of a log the source already wrote while enabled.
+    log_file = tmp_path / "captured-before-disabling.log"
+    log_file.write_text("captured while enabled\n")
+    source = _source(
+        tmp_path, filename=str(log_file), enabled=False, disabled_reason="Turned off for testing.",
+    )
+
+    status = get_log_source_status(source)
+
+    assert status.status == STATUS_DISABLED
+    assert status.exists is True
+    assert status.size_bytes == log_file.stat().st_size
+    assert status.modified_at is not None
+    assert "previously captured log is still available" in status.reason
+
+
+def test_expected_log_path_that_is_a_directory_is_unavailable_not_available(tmp_path):
+    a_directory = tmp_path / "not-a-file.log"
+    a_directory.mkdir()
+    source = _source(tmp_path, filename=str(a_directory))
+
+    status = get_log_source_status(source)
+
+    assert status.status == STATUS_UNAVAILABLE
+    assert status.size_bytes is None
+    assert "not a regular file" in status.reason
+
+
 def test_disabled_via_callable_is_reevaluated_each_call(tmp_path):
     flag = {"on": False}
     source = _source(tmp_path, enabled=lambda: flag["on"])
@@ -99,7 +129,10 @@ def test_match_state_capture_source_is_disabled_by_default():
     status = get_log_source_status(source)
 
     assert status.status == STATUS_DISABLED
-    assert status.reason == source.disabled_reason
+    # A real match_state_capture.log may already exist in this shared "logs"
+    # directory from another test/process importing the module; either way
+    # the reason must start with the static disabled explanation.
+    assert status.reason.startswith(source.disabled_reason)
 
 
 def test_match_state_capture_source_reflects_enabled_diagnostics(monkeypatch):
@@ -124,3 +157,17 @@ def test_registry_does_not_leak_arbitrary_paths():
 def test_get_log_source_statuses_covers_every_registered_source():
     statuses = get_log_source_statuses()
     assert {s.id for s in statuses} == set(logging_sources.LOG_SOURCES.keys())
+
+
+def test_registry_includes_actively_written_scheduler_and_diagnostics_sources():
+    # These modules write their log unconditionally whenever the scheduler
+    # process runs (scheduler/start.py, scheduler/registry.py,
+    # scheduler/scheduled_tasks.py + job_cleaner.py, schedule_match_scrapes,
+    # schedule_lineup_scrapes, diagnostics/framework.py) -- the registry
+    # should not silently omit them alongside the scraper-triggered ones.
+    assert set(logging_sources.LOG_SOURCES.keys()) >= {
+        "player_stats", "injuries", "lineups", "matches", "scheduler_jobs",
+        "scheduler_start", "scheduler_registry", "scheduled_tasks",
+        "refresh_live_matches", "refresh_afl_lineups", "diagnostics_framework",
+        "match_state_capture",
+    }

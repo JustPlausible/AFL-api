@@ -671,7 +671,10 @@ def view_logs_raw(
                 status_code=400,
             )
 
-        if selected.status != STATUS_AVAILABLE:
+        # A readable file (`size_bytes is not None`) is shown even for a
+        # currently-disabled source: disabling a source stops new writes, it
+        # must not hide a log that was already captured while it was enabled.
+        if selected.size_bytes is None:
             display = _log_source_display(selected)
             return templates.TemplateResponse(
                 request=request,
@@ -686,7 +689,7 @@ def view_logs_raw(
         log_path = LOG_SOURCES[selected.id].path
         LOCAL_TZ = timezone(timedelta(hours=8))  # AWST
 
-        with open(log_path, "r", encoding="utf-8") as f:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
             raw_lines = f.readlines()
 
         filtered = [line for line in raw_lines if q.lower() in line.lower()]
@@ -712,6 +715,7 @@ def view_logs_raw(
                 "logs": formatted_lines,
                 "log_error": None,
                 "expected_file": selected.resolved_path,
+                "viewing_disabled_source": not selected.enabled,
             },
         )
 

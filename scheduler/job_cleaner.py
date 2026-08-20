@@ -2,8 +2,9 @@
 
 from scheduler.scheduled_tasks import scheduler
 from utils.log import setup_logger
+from logging_sources import LOG_SOURCES
 
-log = setup_logger("job_cleaner", "scheduled_tasks.log")
+log = setup_logger("job_cleaner", LOG_SOURCES["scheduled_tasks"].filename)
 
 def clean_broken_jobs():
     broken_jobs = []

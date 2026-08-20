@@ -80,6 +80,14 @@ class LogSource:
 # Known operational log sources, in the order the Admin UI should present
 # them. Adding a new operational log means adding an entry here -- nothing
 # else should need a filename literal for it.
+#
+# Deliberately not registered: scraper/scrape_afl_lineups-early2025.py (dead
+# code -- unimportable module name, referenced nowhere, and writes into the
+# same scrape_afl_lineups.log as the real "lineups" source above rather than
+# a distinct file); scraper/monitor_match_status.py (a one-off manual debug
+# script targeting a single hard-coded match ID, not a running collector);
+# utils.log's own "default" fallback logger (a catch-all used ad hoc across
+# many unrelated modules, not one discrete operational source).
 _SOURCES: tuple[LogSource, ...] = (
     LogSource(
         id="player_stats",
@@ -117,6 +125,52 @@ _SOURCES: tuple[LogSource, ...] = (
         filename="scheduler_jobs.log",
     ),
     LogSource(
+        id="scheduler_start",
+        display_name="Scheduler Start",
+        description="Scheduler process startup/shutdown output.",
+        logger_name="scheduler_start",
+        filename="scheduler_start.log",
+    ),
+    LogSource(
+        id="scheduler_registry",
+        display_name="Scheduler Registry",
+        description="Persistent scheduler job registry and restart reconciliation output.",
+        logger_name="scheduler_registry",
+        filename="scheduler_registry.log",
+    ),
+    LogSource(
+        id="scheduled_tasks",
+        display_name="Scheduled Tasks",
+        description="APScheduler bootstrap and broken-job cleanup output.",
+        logger_name="scheduled_tasks",
+        filename="scheduled_tasks.log",
+    ),
+    LogSource(
+        id="refresh_live_matches",
+        display_name="Live Match Refresh",
+        description="Recurring live-match status refresh job output.",
+        logger_name="refresh_live_matches",
+        filename="refresh_live_matches.log",
+    ),
+    LogSource(
+        id="refresh_afl_lineups",
+        display_name="Lineup Refresh",
+        description="Recurring lineup refresh scheduling output.",
+        logger_name="refresh_afl_lineups",
+        filename="refresh_afl_lineups.log",
+    ),
+    LogSource(
+        id="diagnostics_framework",
+        display_name="Diagnostics Framework",
+        description=(
+            "Diagnostic evidence-capture framework registration/runtime output "
+            "(Issue #148). Written whenever the scheduler starts, whether or not "
+            "any diagnostic profile is enabled."
+        ),
+        logger_name="diagnostics_framework",
+        filename="diagnostics_framework.log",
+    ),
+    LogSource(
         id="match_state_capture",
         display_name="Match State Capture",
         description="Diagnostic-only live matchItem evidence capture (Issue #148).",
@@ -148,99 +202,112 @@ class LogSourceStatus:
     rotation: dict[str, int] | None
 
 
+@dataclass(frozen=True)
+class _Probe:
+    """Raw filesystem facts about a resolved log path, independent of whether
+    the owning source is enabled. Kept separate from LogSourceStatus so a
+    disabled source's historical file (size/modified time) is never silently
+    discarded just because the source itself is currently disabled."""
+
+    exists: bool
+    size_bytes: int | None
+    modified_at: datetime | None
+    unavailable_reason: str | None
+
+
+def _probe_path(path: Path) -> _Probe:
+    try:
+        parent_ok = path.parent.is_dir()
+    except OSError:
+        parent_ok = False
+    if not parent_ok:
+        return _Probe(
+            exists=False, size_bytes=None, modified_at=None,
+            unavailable_reason=f"Expected log directory '{path.parent}' is not accessible.",
+        )
+
+    try:
+        exists = path.exists()
+    except OSError:
+        return _Probe(
+            exists=False, size_bytes=None, modified_at=None,
+            unavailable_reason="Expected log path could not be accessed.",
+        )
+
+    if not exists:
+        return _Probe(exists=False, size_bytes=None, modified_at=None, unavailable_reason=None)
+
+    if not path.is_file():
+        return _Probe(
+            exists=True, size_bytes=None, modified_at=None,
+            unavailable_reason="Expected log path exists but is not a regular file.",
+        )
+
+    try:
+        stat_result = path.stat()
+    except OSError:
+        return _Probe(
+            exists=True, size_bytes=None, modified_at=None,
+            unavailable_reason="Log file exists but its metadata could not be read.",
+        )
+
+    return _Probe(
+        exists=True,
+        size_bytes=stat_result.st_size,
+        modified_at=datetime.fromtimestamp(stat_result.st_mtime, tz=timezone.utc),
+        unavailable_reason=None,
+    )
+
+
 def get_log_source_status(source: LogSource) -> LogSourceStatus:
     """Resolve one source's current, safe-to-display status.
 
     Never raises: any filesystem error resolving or reading the target is
     reported as ``STATUS_UNAVAILABLE`` rather than propagating, since a log
     being unreadable must stay a diagnostic detail, not a request failure.
+
+    The filesystem is probed unconditionally, even for a disabled source: a
+    diagnostic source that was previously enabled and wrote a log keeps its
+    size/modified-time here (and stays viewable in the Admin log viewer)
+    after being disabled, rather than having that history discarded.
     """
-    resolved_path = str(source.path)
+    probe = _probe_path(source.path)
     base = dict(
         id=source.id,
         display_name=source.display_name,
         description=source.description,
-        resolved_path=resolved_path,
+        resolved_path=str(source.path),
+    )
+    rotation = (
+        {"max_bytes": ROTATION_MAX_BYTES, "backup_count": ROTATION_BACKUP_COUNT}
+        if probe.size_bytes is not None else None
     )
 
     if not source.is_enabled():
+        reason = source.disabled_reason or "This log source is not enabled in the current configuration."
+        if probe.size_bytes is not None:
+            reason = f"{reason} A previously captured log is still available below."
         return LogSourceStatus(
-            **base,
-            enabled=False,
-            status=STATUS_DISABLED,
-            reason=source.disabled_reason or "This log source is not enabled in the current configuration.",
-            exists=False,
-            size_bytes=None,
-            modified_at=None,
-            rotation=None,
+            **base, enabled=False, status=STATUS_DISABLED, reason=reason,
+            exists=probe.exists, size_bytes=probe.size_bytes, modified_at=probe.modified_at, rotation=rotation,
         )
 
-    try:
-        parent_ok = source.path.parent.is_dir()
-    except OSError:
-        parent_ok = False
-
-    if not parent_ok:
+    if probe.unavailable_reason is not None:
         return LogSourceStatus(
-            **base,
-            enabled=True,
-            status=STATUS_UNAVAILABLE,
-            reason=f"Expected log directory '{source.path.parent}' is not accessible.",
-            exists=False,
-            size_bytes=None,
-            modified_at=None,
-            rotation=None,
+            **base, enabled=True, status=STATUS_UNAVAILABLE, reason=probe.unavailable_reason,
+            exists=probe.exists, size_bytes=probe.size_bytes, modified_at=probe.modified_at, rotation=rotation,
         )
 
-    try:
-        exists = source.path.exists()
-    except OSError:
+    if not probe.exists:
         return LogSourceStatus(
-            **base,
-            enabled=True,
-            status=STATUS_UNAVAILABLE,
-            reason="Expected log path could not be accessed.",
-            exists=False,
-            size_bytes=None,
-            modified_at=None,
-            rotation=None,
-        )
-
-    if not exists:
-        return LogSourceStatus(
-            **base,
-            enabled=True,
-            status=STATUS_NOT_CREATED,
+            **base, enabled=True, status=STATUS_NOT_CREATED,
             reason="Configured correctly; no log has been written yet.",
-            exists=False,
-            size_bytes=None,
-            modified_at=None,
-            rotation=None,
-        )
-
-    try:
-        stat_result = source.path.stat()
-    except OSError:
-        return LogSourceStatus(
-            **base,
-            enabled=True,
-            status=STATUS_UNAVAILABLE,
-            reason="Log file exists but its metadata could not be read.",
-            exists=True,
-            size_bytes=None,
-            modified_at=None,
-            rotation=None,
+            exists=False, size_bytes=None, modified_at=None, rotation=None,
         )
 
     return LogSourceStatus(
-        **base,
-        enabled=True,
-        status=STATUS_AVAILABLE,
-        reason="",
-        exists=True,
-        size_bytes=stat_result.st_size,
-        modified_at=datetime.fromtimestamp(stat_result.st_mtime, tz=timezone.utc),
-        rotation={"max_bytes": ROTATION_MAX_BYTES, "backup_count": ROTATION_BACKUP_COUNT},
+        **base, enabled=True, status=STATUS_AVAILABLE, reason="",
+        exists=True, size_bytes=probe.size_bytes, modified_at=probe.modified_at, rotation=rotation,
     )
 
 

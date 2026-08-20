@@ -38,6 +38,7 @@
   {% if expected_file %}<p class="text-muted mb-1">Expected log: <strong>{{ selected_log }}</strong></p><p class="technical text-muted mb-0">{{ expected_file }}</p><p class="small text-muted mt-3 mb-0">This reflects the configured source's current status. It does not indicate that the admin interface has failed.</p>{% else %}<p class="text-muted mb-0">Choose one of the available log sources above.</p>{% endif %}
 </div>
 {% elif logs %}
+{% if viewing_disabled_source %}<div class="alert alert-secondary py-2" role="status">This source is currently disabled; showing a previously captured log.</div>{% endif %}
 <p class="small text-muted">Showing up to {{ lines }} most recent matching lines from <span class="technical">{{ expected_file }}</span>.</p>
 <pre class="bg-dark text-light p-3 rounded overflow-auto" style="max-height: 70vh; white-space: pre-wrap;">{{ logs | join('\n') }}</pre>
 {% else %}

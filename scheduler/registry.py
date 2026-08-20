@@ -27,8 +27,10 @@ from db.connection import get_db_connection
 from db.scrape_runs import scheduler_job_context
 from scheduler.write_lane import write_lane
 from utils.log import setup_logger
+from logging_sources import LOG_SOURCES
 
-log = setup_logger("scheduler_registry", "scheduler_registry.log")
+_source = LOG_SOURCES["scheduler_registry"]
+log = setup_logger(_source.logger_name, _source.filename)
 
 PENDING = "pending"
 RUNNING = "running"

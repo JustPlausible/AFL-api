@@ -65,7 +65,9 @@ def test_present_log_is_reported_available_with_size_and_age(tmp_path, monkeypat
 def test_disabled_source_is_distinguishable_from_missing_log(tmp_path, monkeypatch):
     admin, client = _client(tmp_path, monkeypatch)
     disabled = dataclasses.replace(
-        admin.LOG_SOURCES["player_stats"], enabled=False, disabled_reason="Disabled for this test.",
+        admin.LOG_SOURCES["player_stats"],
+        filename=str(tmp_path / "never-written-and-disabled.log"),
+        enabled=False, disabled_reason="Disabled for this test.",
     )
     monkeypatch.setitem(admin.LOG_SOURCES, "player_stats", disabled)
 
@@ -78,6 +80,25 @@ def test_disabled_source_is_distinguishable_from_missing_log(tmp_path, monkeypat
     # for the *selected* source (other unrelated sources may legitimately
     # show "no log created yet" in the overview table above it).
     assert "Disabled. Disabled for this test." in response.text
+
+
+def test_disabled_source_still_shows_a_previously_captured_log(tmp_path, monkeypatch):
+    # Disabling a source stops new writes; it must not hide a log that was
+    # already captured while the source was still enabled.
+    admin, client = _client(tmp_path, monkeypatch)
+    log_file = tmp_path / "captured-before-disabling.log"
+    log_file.write_text("[2026-01-01 00:00:00 UTC] INFO: captured while enabled\n")
+    disabled_with_history = dataclasses.replace(
+        admin.LOG_SOURCES["player_stats"], filename=str(log_file),
+        enabled=False, disabled_reason="Disabled for this test.",
+    )
+    monkeypatch.setitem(admin.LOG_SOURCES, "player_stats", disabled_with_history)
+
+    response = client.get("/logs?log=Player%20Stats", headers=_auth())
+
+    assert response.status_code == 200
+    assert "captured while enabled" in response.text
+    assert "currently disabled" in response.text
 
 
 def test_logs_overview_lists_every_known_source(tmp_path, monkeypatch):

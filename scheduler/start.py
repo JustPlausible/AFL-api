@@ -59,7 +59,8 @@ from logging_sources import LOG_SOURCES
 
 SUPPORTED_UVICORN_COMMAND = "python -m uvicorn scheduler.start:app --host 0.0.0.0 --port 8000"
 
-log = setup_logger("scheduler_start", "scheduler_start.log")
+_scheduler_start_source = LOG_SOURCES["scheduler_start"]
+log = setup_logger(_scheduler_start_source.logger_name, _scheduler_start_source.filename)
 _scheduler_jobs_source = LOG_SOURCES["scheduler_jobs"]
 scheduler_log = setup_logger(_scheduler_jobs_source.logger_name, _scheduler_jobs_source.filename)
 

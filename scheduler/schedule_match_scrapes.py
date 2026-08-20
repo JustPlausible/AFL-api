@@ -9,8 +9,10 @@ from scheduler.time_policy import MetadataTimestampError, match_day_bounds, pars
 from datetime import datetime
 import random
 import time
+from logging_sources import LOG_SOURCES
 
-log = setup_logger("refresh_live_matches", "refresh_live_matches.log")
+_source = LOG_SOURCES["refresh_live_matches"]
+log = setup_logger(_source.logger_name, _source.filename)
 
 def refresh_live_matches():
     log.info("⏰ Running refresh_live_matches job...")
