@@ -31,7 +31,9 @@ from .collectors import (
     PublicAflCollector,
     PlayerCollectionResult,
     RawResponseWriter,
+    is_current_season,
     resolve_competition,
+    resolve_current_season,
     select_season,
 )
 from .rosters import (
@@ -93,7 +95,9 @@ __all__ = [
     "PublicAflCollector",
     "PlayerCollectionResult",
     "RawResponseWriter",
+    "is_current_season",
     "resolve_competition",
+    "resolve_current_season",
     "select_season",
     "MatchRosterCollector",
     "RosterChanges",

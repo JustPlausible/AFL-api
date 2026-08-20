@@ -24,6 +24,19 @@ Recommended new-installation settings are `AFL_COMPETITION_CODE=AFL`,
 `--afl-competition-provider-id` takes precedence over its environment default.
 Legacy numeric settings remain available to legacy scrapers.
 
+For `--bootstrap-afl-season`/`--sync-afl-season` specifically, `AFL_SEASON_YEAR`
+plays a second, independent role: it declares which season is canonically
+current (`afl_seasons.is_current`), separately from which season a given run
+persists. Bootstrapping or syncing an explicit, e.g. historical, season (say
+`--bootstrap-afl-season 2025` with `AFL_SEASON_YEAR=2026`) persists that
+season's data without disturbing the already-established 2026 current-season
+marker. When `AFL_SEASON_YEAR` is unset, or does not resolve to exactly one
+season in the fetched competition-season list, current-season determination
+falls back to an unambiguous upstream `current` flag, then to the date range
+spanned by the collected season's own rounds; if none of those resolves
+unambiguously, no season is marked current for that run rather than guessing
+one.
+
 Add `--afl-raw-directory PATH` to retain deterministic raw API responses for
 diagnostics. The bootstrap does not start the scheduler or persist match
 selections, lineups, injuries, or player stats. CFS authentication is required

@@ -38,6 +38,11 @@ class CollectionResult:
     rounds: list[dict[str, Any]]
     teams: list[dict[str, Any]]
     matches: list[dict[str, Any]]
+    # The competition's independently determined current season (by the same
+    # current-flag/date semantics as automatic selection), or None when it
+    # cannot be determined unambiguously. This may differ from ``season`` when
+    # a specific (e.g. historical) season was explicitly requested.
+    current_season_afl_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -325,14 +330,13 @@ class PublicAflCollector:
         return PlayerCollectionResult(identities, associations, diagnostics, status)
 
     def collect(self, *, competition_code: str = "AFL", competition_provider_id: str = "CD_C014",
-                season: str | int | None = None, relevant_date: date | None = None) -> CollectionResult:
+                season: str | int | None = None, relevant_date: date | None = None,
+                current_season_year: str | int | None = None) -> CollectionResult:
         competition = resolve_competition(
             self.competitions(), code=competition_code, provider_id=competition_provider_id
         )
-        selected = select_season(
-            self.competition_seasons(competition["afl_id"]), selector=season,
-            relevant_date=relevant_date,
-        )
+        all_seasons = self.competition_seasons(competition["afl_id"])
+        selected = select_season(all_seasons, selector=season, relevant_date=relevant_date)
         rounds = self.rounds(selected["afl_id"])
         teams = self.teams(selected["afl_id"])
         matches: list[dict[str, Any]] = []
@@ -353,7 +357,11 @@ class PublicAflCollector:
                         "roundNumber": round_record.get("round_number"),
                     }
             matches.extend(round_matches)
-        return CollectionResult(competition, selected, rounds, teams, matches)
+        current = resolve_current_season(all_seasons, selected, rounds,
+                                         configured_year=current_season_year,
+                                         relevant_date=relevant_date)
+        return CollectionResult(competition, selected, rounds, teams, matches,
+                                current_season_afl_id=current["afl_id"] if current is not None else None)
 
 
 def resolve_competition(competitions: Iterable[dict[str, Any]], *, code: str | None,
@@ -385,21 +393,40 @@ def resolve_competition(competitions: Iterable[dict[str, Any]], *, code: str | N
     raise CollectionError(f"Premiership competition selection is ambiguous using {requested}; matched {len(matches)} records")
 
 
+def _auto_current_candidates(values: list[Mapping[str, Any]],
+                             relevant_date: date | None) -> list[Mapping[str, Any]]:
+    """Season(s) matching the upstream current flag, else the relevant date's range.
+
+    Used by :func:`select_season`'s automatic (no selector) branch to choose
+    which season to collect when none is explicitly requested. This is a
+    distinct concern from :func:`is_current_season`, which independently
+    marks whichever season *was* collected as canonically current.
+    """
+    candidates = [item for item in values if item.get("current") is True]
+    if not candidates:
+        target = relevant_date or datetime.now(timezone.utc).date()
+        candidates = [item for item in values if _contains_date(item, target)]
+    return candidates
+
+
+def _selector_matches(item: Mapping[str, Any], selector: str | int) -> bool:
+    """Flexible identity match shared by explicit season selection and any
+    other configured season identifier (year, AFL ID, provider ID, or name)."""
+    text = str(selector).casefold()
+    return text in {
+        str(item.get("afl_id", "")).casefold(), str(item.get("provider_id", "")).casefold(),
+        str(item.get("year", "")).casefold(), str(item.get("name", "")).casefold(),
+        str(item.get("short_name", "")).casefold(),
+    }
+
+
 def select_season(seasons: Iterable[dict[str, Any]], *, selector: str | int | None = None,
                   relevant_date: date | None = None) -> dict[str, Any]:
     values = list(seasons)
     if selector is not None:
-        text = str(selector).casefold()
-        candidates = [item for item in values if text in {
-            str(item.get("afl_id", "")).casefold(), str(item.get("provider_id", "")).casefold(),
-            str(item.get("year", "")).casefold(), str(item.get("name", "")).casefold(),
-            str(item.get("short_name", "")).casefold(),
-        }]
+        candidates = [item for item in values if _selector_matches(item, selector)]
     else:
-        candidates = [item for item in values if item.get("current") is True]
-        if not candidates:
-            target = relevant_date or datetime.now(timezone.utc).date()
-            candidates = [item for item in values if _contains_date(item, target)]
+        candidates = _auto_current_candidates(values, relevant_date)
     if len(candidates) == 1:
         return candidates[0]
     if not candidates:
@@ -408,6 +435,77 @@ def select_season(seasons: Iterable[dict[str, Any]], *, selector: str | int | No
     raise CollectionError(
         f"Competition season selection is ambiguous ({len(candidates)} matches); specify --afl-season YEAR or provider ID"
     )
+
+
+def _season_date_window(season: Mapping[str, Any],
+                        rounds: Iterable[Mapping[str, Any]]) -> tuple[date | None, date | None]:
+    """The season's start/end, preferring its own fields, else its rounds' span.
+
+    The live competition-season endpoint's payload carries neither a current
+    flag nor season-level start/end dates (only id/providerId/name/shortName/
+    currentRoundNumber -- see docs/investigation/afl-json/ENDPOINT_CATALOG.md
+    E02). Its rounds, however, do carry real ``utcStartTime``/``utcEndTime``
+    values, so the season's fixture window is derived from them when the
+    season itself has none.
+    """
+    start = _as_date(season.get("start_time"))
+    end = _as_date(season.get("end_time"))
+    if start is not None and end is not None:
+        return start, end
+    round_starts = [value for value in (_as_date(item.get("start_time")) for item in rounds)
+                    if value is not None]
+    round_ends = [value for value in (_as_date(item.get("end_time")) for item in rounds)
+                 if value is not None]
+    return (min(round_starts) if round_starts else start,
+           max(round_ends) if round_ends else end)
+
+
+def is_current_season(season: Mapping[str, Any], rounds: Iterable[Mapping[str, Any]] = (), *,
+                      relevant_date: date | None = None) -> bool | None:
+    """Whether ``season`` is the AFL competition's current season, or None.
+
+    Trusts an explicit upstream ``current``/``isCurrent`` boolean when
+    present; otherwise falls back to whether ``relevant_date`` falls within
+    the season's fixture window (see :func:`_season_date_window`). Returns
+    None -- never guessed from the highest persisted ID/year -- when neither
+    signal is available, so callers must not invent a current season.
+    """
+    flag = season.get("current")
+    if isinstance(flag, bool):
+        return flag
+    start, end = _season_date_window(season, rounds)
+    if start is None or end is None:
+        return None
+    target = relevant_date or datetime.now(timezone.utc).date()
+    return start <= target <= end
+
+
+def resolve_current_season(all_seasons: Iterable[Mapping[str, Any]], selected: Mapping[str, Any],
+                           rounds: Iterable[Mapping[str, Any]] = (), *,
+                           configured_year: str | int | None = None,
+                           relevant_date: date | None = None) -> Mapping[str, Any] | None:
+    """Resolve the AFL competition's canonical current season for persistence.
+
+    An operator can bootstrap/sync an explicit (e.g. historical) season
+    without changing which season is canonically current, so this is
+    independent of ``selected`` -- the season actually collected this run.
+    Precedence:
+
+    1. An explicitly configured season identifier (e.g. the ``AFL_SEASON_YEAR``
+       deployment setting), validated by resolving it uniquely against
+       ``all_seasons`` -- never blindly trusted, and never assumed current
+       when unset, unresolvable, or ambiguous.
+    2. ``selected``'s own explicit upstream current flag or fixture date
+       window (see :func:`is_current_season`).
+
+    Returns None -- never guessed from the highest persisted ID/year --
+    when neither resolves unambiguously.
+    """
+    if configured_year not in (None, ""):
+        matches = [item for item in all_seasons if _selector_matches(item, configured_year)]
+        if len(matches) == 1:
+            return matches[0]
+    return selected if is_current_season(selected, rounds, relevant_date=relevant_date) else None
 
 
 def _contains_date(item: Mapping[str, Any], target: date) -> bool:

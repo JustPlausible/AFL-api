@@ -92,16 +92,31 @@ def persist_afl_metadata(conn: sqlite3.Connection, result: CollectionResult) -> 
             "metadata_json": _json(competition.get("metadata")),
             "source_json": _json(competition.get("source")), "updated_at": now,
         })
+        # The canonical current-season marker is decided once, independently of
+        # any single upstream season["current"] field (which may be absent),
+        # by CollectionResult.current_season_afl_id -- see collectors.is_current_season.
+        is_current = 1 if (result.current_season_afl_id is not None
+                           and result.current_season_afl_id == season["afl_id"]) else 0
         save("afl_seasons", "afl_id", {
             "afl_id": season["afl_id"], "provider_id": season.get("provider_id"),
             "competition_id": competition["afl_id"], "name": season.get("name"),
             "short_name": season.get("short_name"), "year": season.get("year"),
-            "is_current": season.get("current"),
+            "is_current": is_current,
             "current_round_number": season.get("current_round_number"),
             "start_time": season.get("start_time"), "end_time": season.get("end_time"),
             "metadata_json": _json(season.get("metadata")), "source_json": _json(season.get("source")),
             "updated_at": now,
         })
+        if result.current_season_afl_id is not None:
+            # Enforce the competition-wide invariant: at most one persisted
+            # season is current. This also clears a previous current season
+            # when the current season advances, and repairs any pre-existing
+            # NULL/stale markers left by earlier persistence.
+            conn.execute(
+                "UPDATE afl_seasons SET is_current=0, updated_at=? "
+                "WHERE competition_id=? AND afl_id!=? AND is_current IS NOT 0",
+                (now, competition["afl_id"], result.current_season_afl_id),
+            )
         for team in result.teams:
             save("afl_teams", "afl_id", {
                 "afl_id": team["afl_id"], "provider_id": team.get("provider_id"),

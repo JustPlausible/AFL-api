@@ -9,7 +9,9 @@ from afl_json.collectors import (
     CollectionError,
     PaginationError,
     PublicAflCollector,
+    is_current_season,
     resolve_competition,
+    resolve_current_season,
     select_season,
 )
 
@@ -131,6 +133,115 @@ def test_absent_ambiguous_or_embedded_season_year_fails_clearly(names):
 
     with pytest.raises(CollectionError, match="No competition season matched.*--afl-season"):
         select_season(seasons, selector=2026)
+
+
+def test_is_current_season_trusts_an_explicit_upstream_flag():
+    assert is_current_season({"afl_id": 85, "current": True}) is True
+    assert is_current_season({"afl_id": 84, "current": False}) is False
+
+
+def test_is_current_season_falls_back_to_season_level_dates_when_no_flag():
+    season = {"afl_id": 85, "start_time": "2026-02-01T00:00:00Z", "end_time": "2026-09-30T00:00:00Z"}
+    assert is_current_season(season, relevant_date=date(2026, 7, 1)) is True
+    assert is_current_season(season, relevant_date=date(2027, 1, 1)) is False
+
+
+def test_is_current_season_falls_back_to_round_dates_matching_the_live_payload_shape():
+    # The live competition-season endpoint provides neither a current flag
+    # nor season-level dates (docs/investigation/afl-json/ENDPOINT_CATALOG.md
+    # E02); only its rounds carry real utcStartTime/utcEndTime values.
+    season = {"afl_id": 85, "year": 2026}  # no "current", no start/end -- as seasons.json fixture
+    rounds = PublicAflCollector(hierarchy_client()).rounds(85)
+
+    assert is_current_season(season, rounds, relevant_date=date(2026, 3, 10)) is True
+    assert is_current_season(season, rounds, relevant_date=date(2026, 6, 1)) is False
+
+
+def test_is_current_season_is_none_rather_than_guessing_when_no_signal_exists():
+    # No flag, no season dates, and no rounds at all: never guessed True.
+    assert is_current_season({"afl_id": 85, "year": 2026}) is None
+    assert is_current_season({"afl_id": 85, "year": 2026}, []) is None
+
+
+def test_collect_marks_the_live_shaped_current_season_using_only_round_dates():
+    # End-to-end: the collected season (via the real hierarchy_client fixture,
+    # matching the live payload's lack of a current flag/season dates) is
+    # still correctly identified as current from its own rounds' dates.
+    result = PublicAflCollector(hierarchy_client()).collect(
+        season=2026, relevant_date=date(2026, 3, 10))
+    assert result.season.get("current") is None
+    assert result.season.get("start_time") is None
+    assert result.current_season_afl_id == result.season["afl_id"] == 85
+
+    later = PublicAflCollector(hierarchy_client()).collect(
+        season=2026, relevant_date=date(2026, 6, 1))
+    assert later.current_season_afl_id is None
+
+
+# --- resolve_current_season / AFL_SEASON_YEAR-style configured override ----------
+
+
+def test_resolve_current_season_prefers_a_uniquely_resolved_configured_override():
+    all_seasons = [{"afl_id": 84, "year": 2025}, {"afl_id": 85, "year": 2026}]
+    historical = all_seasons[0]  # the operator is explicitly bootstrapping 2025...
+
+    # ...but AFL_SEASON_YEAR=2026 still marks 2026 canonically current, even
+    # though 2025 (not 2026) is the season actually being collected/persisted
+    # this run, and neither season has a flag or dates.
+    current = resolve_current_season(all_seasons, historical, configured_year=2026)
+
+    assert current["afl_id"] == 85
+
+
+def test_resolve_current_season_falls_back_when_configured_year_is_unresolvable():
+    all_seasons = [{"afl_id": 84, "year": 2025, "current": True}, {"afl_id": 85, "year": 2026}]
+    selected = all_seasons[0]
+
+    # A misconfigured/nonexistent year is never blindly trusted; it falls
+    # through to the collected season's own upstream flag.
+    assert resolve_current_season(all_seasons, selected, configured_year=2099)["afl_id"] == 84
+
+    # An ambiguous configured value (matches more than one season) is
+    # likewise never silently trusted -- also falls through.
+    ambiguous = [{"afl_id": 84, "year": 2025, "current": True}, {"afl_id": 86, "year": 2025}]
+    assert resolve_current_season(ambiguous, ambiguous[0], configured_year=2025)["afl_id"] == 84
+
+
+def test_resolve_current_season_is_none_when_nothing_resolves():
+    all_seasons = [{"afl_id": 84, "year": 2025}]
+    selected = all_seasons[0]
+    # Unresolvable override, no flag, no dates: explicit None, never guessed.
+    assert resolve_current_season(all_seasons, selected, configured_year=2099) is None
+    assert resolve_current_season(all_seasons, selected) is None
+
+
+def test_resolve_current_season_uses_existing_upstream_and_date_semantics_when_unconfigured():
+    current = {"afl_id": 85, "current": True}
+    assert resolve_current_season([current], current)["afl_id"] == 85
+    not_current = {"afl_id": 84, "current": False}
+    assert resolve_current_season([not_current], not_current) is None
+
+
+def test_collect_configured_current_season_year_overrides_the_bootstrapped_season():
+    # Mirrors the deployment scenario: AFL_SEASON_YEAR=2026 is configured,
+    # but an operator explicitly runs `--bootstrap-afl-season 2025`. 2025 is
+    # collected and persisted, while 2026 (already established elsewhere)
+    # stays canonically current.
+    result = PublicAflCollector(hierarchy_client()).collect(
+        season=2025, current_season_year=2026)
+
+    assert result.season["year"] == 2025
+    assert result.current_season_afl_id == 85
+
+
+def test_collect_configured_current_season_year_falls_back_when_unresolvable():
+    result = PublicAflCollector(hierarchy_client()).collect(
+        season=2026, current_season_year=2099, relevant_date=date(2026, 3, 10))
+
+    # The misconfigured override cannot be resolved, so persistence falls
+    # back to the bootstrapped season's own (round-derived) date signal
+    # rather than leaving current-season state undefined.
+    assert result.current_season_afl_id == 85
 
 
 def test_missing_and_ambiguous_season_selection_are_actionable():
