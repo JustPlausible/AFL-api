@@ -9,7 +9,7 @@ from afl_json.collectors import (
     CollectionError,
     PaginationError,
     PublicAflCollector,
-    determine_current_season,
+    is_current_season,
     resolve_competition,
     select_season,
 )
@@ -134,29 +134,47 @@ def test_absent_ambiguous_or_embedded_season_year_fails_clearly(names):
         select_season(seasons, selector=2026)
 
 
-def test_determine_current_season_prefers_the_explicit_current_flag():
-    seasons = [{"afl_id": 84, "year": 2025, "current": False},
-               {"afl_id": 85, "year": 2026, "current": True}]
-    assert determine_current_season(seasons)["afl_id"] == 85
+def test_is_current_season_trusts_an_explicit_upstream_flag():
+    assert is_current_season({"afl_id": 85, "current": True}) is True
+    assert is_current_season({"afl_id": 84, "current": False}) is False
 
 
-def test_determine_current_season_falls_back_to_date_containment_like_selection():
-    seasons = [
-        {"afl_id": 84, "year": 2025, "start_time": "2025-02-01T00:00:00Z", "end_time": "2025-09-30T00:00:00Z"},
-        {"afl_id": 85, "year": 2026, "start_time": "2026-02-01T00:00:00Z", "end_time": "2026-09-30T00:00:00Z"},
-    ]
-    assert determine_current_season(seasons, relevant_date=date(2026, 7, 1))["afl_id"] == 85
-    # Never the highest year/ID by default when no flag or date matches.
-    assert determine_current_season(seasons, relevant_date=date(2030, 1, 1)) is None
+def test_is_current_season_falls_back_to_season_level_dates_when_no_flag():
+    season = {"afl_id": 85, "start_time": "2026-02-01T00:00:00Z", "end_time": "2026-09-30T00:00:00Z"}
+    assert is_current_season(season, relevant_date=date(2026, 7, 1)) is True
+    assert is_current_season(season, relevant_date=date(2027, 1, 1)) is False
 
 
-def test_determine_current_season_is_none_rather_than_guessing():
-    # No usable current flag or date on either season.
-    assert determine_current_season([{"afl_id": 84, "year": 2025}, {"afl_id": 85, "year": 2026}]) is None
-    # Contradictory upstream data: two seasons both flagged current.
-    ambiguous = [{"afl_id": 84, "year": 2025, "current": True},
-                 {"afl_id": 85, "year": 2026, "current": True}]
-    assert determine_current_season(ambiguous) is None
+def test_is_current_season_falls_back_to_round_dates_matching_the_live_payload_shape():
+    # The live competition-season endpoint provides neither a current flag
+    # nor season-level dates (docs/investigation/afl-json/ENDPOINT_CATALOG.md
+    # E02); only its rounds carry real utcStartTime/utcEndTime values.
+    season = {"afl_id": 85, "year": 2026}  # no "current", no start/end -- as seasons.json fixture
+    rounds = PublicAflCollector(hierarchy_client()).rounds(85)
+
+    assert is_current_season(season, rounds, relevant_date=date(2026, 3, 10)) is True
+    assert is_current_season(season, rounds, relevant_date=date(2026, 6, 1)) is False
+
+
+def test_is_current_season_is_none_rather_than_guessing_when_no_signal_exists():
+    # No flag, no season dates, and no rounds at all: never guessed True.
+    assert is_current_season({"afl_id": 85, "year": 2026}) is None
+    assert is_current_season({"afl_id": 85, "year": 2026}, []) is None
+
+
+def test_collect_marks_the_live_shaped_current_season_using_only_round_dates():
+    # End-to-end: the collected season (via the real hierarchy_client fixture,
+    # matching the live payload's lack of a current flag/season dates) is
+    # still correctly identified as current from its own rounds' dates.
+    result = PublicAflCollector(hierarchy_client()).collect(
+        season=2026, relevant_date=date(2026, 3, 10))
+    assert result.season.get("current") is None
+    assert result.season.get("start_time") is None
+    assert result.current_season_afl_id == result.season["afl_id"] == 85
+
+    later = PublicAflCollector(hierarchy_client()).collect(
+        season=2026, relevant_date=date(2026, 6, 1))
+    assert later.current_season_afl_id is None
 
 
 def test_missing_and_ambiguous_season_selection_are_actionable():

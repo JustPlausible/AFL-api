@@ -94,7 +94,7 @@ def persist_afl_metadata(conn: sqlite3.Connection, result: CollectionResult) -> 
         })
         # The canonical current-season marker is decided once, independently of
         # any single upstream season["current"] field (which may be absent),
-        # by CollectionResult.current_season_afl_id -- see collectors.determine_current_season.
+        # by CollectionResult.current_season_afl_id -- see collectors.is_current_season.
         is_current = 1 if (result.current_season_afl_id is not None
                            and result.current_season_afl_id == season["afl_id"]) else 0
         save("afl_seasons", "afl_id", {
