@@ -660,6 +660,26 @@ class PlayerResponse(BaseModel):
     player: CanonicalPlayer
 
 
+def _identifiers(conn, canonical_player_id: int) -> PlayerIdentifiers:
+    """Resolve known provider-ID crosswalks for one canonical player.
+
+    Unresolved mappings stay ``null`` rather than being guessed or inferred
+    from the other identifier.
+    """
+    providers = {
+        provider_row["provider"]: provider_row["provider_player_id"]
+        for provider_row in conn.execute(
+            "SELECT provider, provider_player_id FROM player_provider_ids WHERE player_id = ?",
+            (canonical_player_id,),
+        ).fetchall()
+    }
+    afl_player_id = providers.get("afl")
+    return PlayerIdentifiers(
+        afl_player_id=int(afl_player_id) if afl_player_id is not None else None,
+        champion_data_player_id=providers.get("champion_data"),
+    )
+
+
 def _current_team(conn, canonical_player_id: int) -> MatchTeam | None:
     """Resolve a player's team for the current season, if cleanly resolvable.
 
@@ -709,14 +729,7 @@ def get_player(
         if row is None:
             return application_error(404, "player_not_found", "Player not found.")
 
-        providers = {
-            provider_row["provider"]: provider_row["provider_player_id"]
-            for provider_row in conn.execute(
-                "SELECT provider, provider_player_id FROM player_provider_ids WHERE player_id = ?",
-                (canonical_player_id,),
-            ).fetchall()
-        }
-        afl_player_id = providers.get("afl")
+        identifiers = _identifiers(conn, canonical_player_id)
         current_team = _current_team(conn, canonical_player_id)
     finally:
         conn.close()
@@ -726,9 +739,87 @@ def get_player(
             canonical_player_id=row["id"],
             display_name=_display_name(row),
             current_team=current_team,
-            identifiers=PlayerIdentifiers(
-                afl_player_id=int(afl_player_id) if afl_player_id is not None else None,
-                champion_data_player_id=providers.get("champion_data"),
-            ),
+            identifiers=identifiers,
         )
     )
+
+
+class PlayersResponse(BaseModel):
+    players: list[CanonicalPlayer]
+
+
+MAX_PLAYER_SEARCH_RESULTS = 100
+
+
+@router.get(
+    "/api/v1/players",
+    response_model=PlayersResponse,
+    responses={
+        422: {
+            "model": ApplicationErrorResponse,
+            "description": "Missing or blank search parameter",
+        }
+    },
+    summary="Search canonical players by name",
+    description=(
+        "Resolves canonical player identities by human-readable name, so a consumer "
+        "can discover a canonical_player_id without already knowing it. Matching is "
+        "case-insensitive and partial against each player's resolved display name "
+        "(canonical_players.display_name, falling back to given_name/family_name — "
+        "the same fallback used by the single-player resource), with no fuzzy, "
+        "phonetic, or provider-ID inference. Results are ordered by display name "
+        "then canonical_player_id for determinism, and capped at "
+        f"{MAX_PLAYER_SEARCH_RESULTS} rows. The `search` query parameter is required "
+        "and must be non-blank; an unfiltered player collection is out of scope for "
+        "this resource, so a missing or blank value returns a structured 422 rather "
+        "than every canonical player. A valid search with no matches returns 200 "
+        "with an empty players collection."
+    ),
+)
+def search_players(
+    search: str = Query(
+        ...,
+        min_length=1,
+        description=(
+            "Case-insensitive, partial-match name search. Required; a missing or "
+            "blank value is rejected rather than returning the full player collection."
+        ),
+    ),
+    credential: AuthenticatedCredential = Depends(authenticate_api_key),
+) -> PlayersResponse | JSONResponse:
+    log(f"🔍 {credential.label} searched v1 players for {search!r}", "INFO")
+    query = search.strip().lower()
+    if not query:
+        return application_error(
+            422,
+            "search_required",
+            "A non-blank search query parameter is required.",
+        )
+
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            "SELECT id, display_name, given_name, family_name FROM canonical_players"
+        ).fetchall()
+
+        matches = []
+        for row in rows:
+            name = _display_name(row)
+            if name is not None and query in name.lower():
+                matches.append((name, row))
+        matches.sort(key=lambda item: (item[0].lower(), item[1]["id"]))
+        matches = matches[:MAX_PLAYER_SEARCH_RESULTS]
+
+        players = [
+            CanonicalPlayer(
+                canonical_player_id=row["id"],
+                display_name=name,
+                current_team=_current_team(conn, row["id"]),
+                identifiers=_identifiers(conn, row["id"]),
+            )
+            for name, row in matches
+        ]
+    finally:
+        conn.close()
+
+    return PlayersResponse(players=players)
