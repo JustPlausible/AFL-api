@@ -483,14 +483,28 @@ def test_missing_search_parameter_returns_422(tmp_path, monkeypatch):
 
 
 def test_blank_search_parameter_returns_422(tmp_path, monkeypatch):
+    """Both an empty and a whitespace-only search must reach the application's
+    own search_required branch, not just get FastAPI's default validation
+    error — a bare min_length constraint would only catch the empty case and
+    reject it during framework validation before the handler ever runs."""
+
     db_path = _make_db(tmp_path, seed=lambda conn: _seed_seasons(conn))
     client = _client(db_path, monkeypatch)
+
+    expected_body = {
+        "error": {
+            "code": "search_required",
+            "message": "A non-blank search query parameter is required.",
+        }
+    }
 
     empty_response = _search(client, params={"search": ""})
     whitespace_response = _search(client, params={"search": "   "})
 
     assert empty_response.status_code == 422
+    assert empty_response.json() == expected_body
     assert whitespace_response.status_code == 422
+    assert whitespace_response.json() == expected_body
 
 
 def test_search_missing_api_key_returns_401(tmp_path, monkeypatch):

@@ -779,7 +779,6 @@ MAX_PLAYER_SEARCH_RESULTS = 100
 def search_players(
     search: str = Query(
         ...,
-        min_length=1,
         description=(
             "Case-insensitive, partial-match name search. Required; a missing or "
             "blank value is rejected rather than returning the full player collection."
