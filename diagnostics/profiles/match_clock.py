@@ -35,6 +35,13 @@ class MatchClockProfile(DiagnosticProfile):
 
     def status(self) -> dict[str, Any]:
         result = super().status()
+        if "error" in result:
+            # super().status() already tried to load settings (via
+            # interval_seconds()) and caught the failure; don't call
+            # from_config() again here and let the same exception escape
+            # unguarded -- that would 500 GET /scheduler/diagnostics right
+            # when an operator needs it to explain the bad configuration.
+            return result
         settings = MatchStateCaptureSettings.from_config()
         result.update({
             "kickoff_tolerance_seconds": settings.kickoff_tolerance_seconds,

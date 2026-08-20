@@ -281,6 +281,24 @@ def test_checked_in_profiles_include_match_clock():
     assert "match_clock" in framework.registered_profiles()
 
 
+def test_match_clock_profile_status_reports_error_instead_of_raising_for_bad_settings(monkeypatch):
+    """Regression test: MatchClockProfile.status() used to call
+    MatchStateCaptureSettings.from_config() a second time, unguarded, after
+    the base status() had already caught the same ValueError -- so a bad
+    setting (e.g. a negative grace window) 500'd GET /scheduler/diagnostics
+    instead of reporting the error, exactly when an operator needs it."""
+    import config
+    from diagnostics.profiles.match_clock import MatchClockProfile
+    monkeypatch.setattr(config, "AFL_DIAGNOSTIC_MATCH_CLOCK_POST_LIVE_GRACE_SECONDS", -1, raising=False)
+
+    status = MatchClockProfile().status()
+    assert status["name"] == "match_clock"
+    assert status["interval_seconds"] is None
+    assert "error" in status
+    assert "kickoff_tolerance_seconds" not in status
+    assert "post_live_grace_seconds" not in status
+
+
 # --- Status reporting never crashes on bad profile config -------------------
 
 def test_status_reports_error_instead_of_raising_for_bad_profile_settings(db, monkeypatch):
