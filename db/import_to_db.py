@@ -5,6 +5,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from utils.log import log
 from utils.club_lookup import load_clubs
+from utils.time_format import normalize_utc_iso
 from db.club_seed import load_club_seed
 from db.connection import get_db_connection
 import config
@@ -412,7 +413,7 @@ def save_matches_to_db(matches: list[dict], conn: sqlite3.Connection):
             match["away_team"],
             match["venue"],
             match["status"],
-            match.get("start_time_utc"),
+            normalize_utc_iso(match.get("start_time_utc")),
             match.get("score_home"),
             match.get("score_away"),
             match.get("match_time_label"),

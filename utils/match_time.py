@@ -3,6 +3,7 @@ from datetime import datetime
 import re
 import pytz
 from utils.log import log
+from utils.time_format import normalize_utc_iso
 
 def parse_match_time(date_str: str, time_str: str) -> str | None:
     """
@@ -35,7 +36,7 @@ def parse_match_time(date_str: str, time_str: str) -> str | None:
 
         naive_dt = datetime.strptime(f"{date_str} {time_clean}", "%B %d %Y %I:%M%p")
         local_dt = tz.localize(naive_dt)
-        iso_utc = local_dt.astimezone(pytz.utc).isoformat()
+        iso_utc = normalize_utc_iso(local_dt.astimezone(pytz.utc).isoformat())
         log(f"🕒 Parsed datetime: {iso_utc}", "DEBUG")
         return iso_utc
     except Exception as e:
