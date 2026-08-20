@@ -25,8 +25,17 @@ scheduling state. This module is intentionally simple and separate from the
 durable match_stat_windows lease/finality machinery used for production CFS
 player-stat polling: it does not claim leases, does not participate in
 scrape_runs auditing or interrupted-attempt recovery, and its output is never
-read by scheduler decision-making. It is inert unless
-AFL_CAPTURE_MATCH_STATE_EVIDENCE is explicitly enabled.
+read by scheduler decision-making. It is inert unless explicitly enabled --
+diagnostics globally via ``AFL_DIAGNOSTICS_ENABLED=true`` and this
+investigation specifically via ``AFL_DIAGNOSTIC_PROFILES=match_clock`` (see
+``diagnostics/framework.py``; the legacy ``AFL_CAPTURE_MATCH_STATE_EVIDENCE``
+name is still honoured -- see ``config.py``).
+
+APScheduler registration, restart-safe re-registration and shutdown are
+handled generically by the diagnostics framework via
+``diagnostics/profiles/match_clock.py``, which adapts the functions in this
+module to the framework's ``DiagnosticProfile`` contract -- this module
+itself contains no scheduler-registration code.
 """
 from __future__ import annotations
 
@@ -42,11 +51,17 @@ from collection.match_state_evidence import (
     parse_match_item, persist_observation, recently_live_match_provider_ids,
 )
 from db.connection import get_db_connection
+from diagnostics.framework import is_profile_selected
 from scheduler.time_policy import MetadataTimestampError, parse_metadata_timestamp
 from scheduler.write_lane import write_lane
 from utils.log import setup_logger
 
 log = setup_logger("match_state_capture", "match_state_capture.log")
+
+# This investigation's stable identifier in the diagnostics framework (see
+# diagnostics/framework.py and diagnostics/profiles/match_clock.py). Defined
+# here, next to the settings it gates, so there is one source of truth.
+MATCH_CLOCK_PROFILE_NAME = "match_clock"
 
 
 @dataclass(frozen=True)
@@ -62,17 +77,17 @@ class MatchStateCaptureSettings:
     @classmethod
     def from_config(cls) -> "MatchStateCaptureSettings":
         settings = cls(
-            enabled=config.AFL_CAPTURE_MATCH_STATE_EVIDENCE,
-            interval_seconds=config.AFL_MATCH_STATE_CAPTURE_INTERVAL_SECONDS,
-            kickoff_tolerance_seconds=config.AFL_MATCH_STATE_CAPTURE_KICKOFF_TOLERANCE_SECONDS,
-            post_live_grace_seconds=config.AFL_MATCH_STATE_CAPTURE_POST_LIVE_GRACE_SECONDS,
+            enabled=is_profile_selected(MATCH_CLOCK_PROFILE_NAME),
+            interval_seconds=config.AFL_DIAGNOSTIC_MATCH_CLOCK_INTERVAL_SECONDS,
+            kickoff_tolerance_seconds=config.AFL_DIAGNOSTIC_MATCH_CLOCK_KICKOFF_TOLERANCE_SECONDS,
+            post_live_grace_seconds=config.AFL_DIAGNOSTIC_MATCH_CLOCK_POST_LIVE_GRACE_SECONDS,
         )
         if settings.interval_seconds <= 0:
-            raise ValueError("AFL_MATCH_STATE_CAPTURE_INTERVAL_SECONDS must be positive")
+            raise ValueError("AFL_DIAGNOSTIC_MATCH_CLOCK_INTERVAL_SECONDS must be positive")
         if settings.kickoff_tolerance_seconds < 0:
-            raise ValueError("AFL_MATCH_STATE_CAPTURE_KICKOFF_TOLERANCE_SECONDS must not be negative")
+            raise ValueError("AFL_DIAGNOSTIC_MATCH_CLOCK_KICKOFF_TOLERANCE_SECONDS must not be negative")
         if settings.post_live_grace_seconds < 0:
-            raise ValueError("AFL_MATCH_STATE_CAPTURE_POST_LIVE_GRACE_SECONDS must not be negative")
+            raise ValueError("AFL_DIAGNOSTIC_MATCH_CLOCK_POST_LIVE_GRACE_SECONDS must not be negative")
         return settings
 
 
@@ -204,28 +219,3 @@ def capture_live_match_state(*, client: AflJsonClient | None = None,
                 match_id, match_provider_id,
             )
     return results
-
-
-def register_match_state_capture_job(scheduler) -> bool:
-    """Register the opt-in diagnostic capture job; a no-op unless explicitly enabled."""
-    settings = MatchStateCaptureSettings.from_config()
-    if not settings.enabled:
-        log.info(
-            "Match-state evidence capture disabled (AFL_CAPTURE_MATCH_STATE_EVIDENCE=false); skipping registration."
-        )
-        return False
-    from apscheduler.triggers.interval import IntervalTrigger
-
-    from scheduler.registry import add_registered_job, match_state_capture_job_id
-    add_registered_job(
-        scheduler, capture_live_match_state,
-        trigger=IntervalTrigger(seconds=settings.interval_seconds), args=[],
-        job_id=match_state_capture_job_id(), job_type="match_state_evidence_capture",
-        name="Diagnostic-only live matchItem evidence capture (Issue #148)",
-        replace_existing=True, trigger_type="interval",
-    )
-    log.info(
-        "✅ Match-state evidence capture enabled at %ss interval (kickoff_tolerance=%ss, post_live_grace=%ss).",
-        settings.interval_seconds, settings.kickoff_tolerance_seconds, settings.post_live_grace_seconds,
-    )
-    return True

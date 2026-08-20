@@ -49,7 +49,7 @@ def injury_job_id() -> str: return "injuries_daily"
 def refresh_job_id(name: str = "players") -> str: return f"refresh_{_slug(name)}"
 def live_match_refresh_job_id() -> str: return "match_refresh_live"
 def live_match_day_job_id() -> str: return "match_refresh_match_day"
-def match_state_capture_job_id() -> str: return "match_state_evidence_capture"
+def diagnostic_profile_job_id(name: str) -> str: return f"diagnostic_{_slug(name)}"
 
 def _slug(value: Any) -> str:
     return re.sub(r"[^a-z0-9]+", "_", str(value).lower()).strip("_") or "general"

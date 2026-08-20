@@ -14,10 +14,11 @@ import pytest
 
 from afl_json.client import AflJsonHttpError
 from db.migration_runner import migrate_database
+from diagnostics.framework import register_diagnostic_profile_job
+from diagnostics.profiles.match_clock import MatchClockProfile
 from scheduler.match_state_capture import (
     MatchStateCaptureSettings,
     capture_live_match_state,
-    register_match_state_capture_job,
 )
 
 NOW = datetime(2026, 8, 15, 3, 0, tzinfo=timezone.utc)
@@ -53,17 +54,18 @@ def add_match(conn, match_id, provider, status="LIVE", start=None):
 
 def _enable(monkeypatch, *, interval=15, kickoff_tolerance=None, post_live_grace=None):
     import config
-    monkeypatch.setattr(config, "AFL_CAPTURE_MATCH_STATE_EVIDENCE", True, raising=False)
-    monkeypatch.setattr(config, "AFL_MATCH_STATE_CAPTURE_INTERVAL_SECONDS", interval, raising=False)
+    monkeypatch.setattr(config, "AFL_DIAGNOSTICS_ENABLED", True, raising=False)
+    monkeypatch.setattr(config, "AFL_DIAGNOSTIC_PROFILES", ("match_clock",), raising=False)
+    monkeypatch.setattr(config, "AFL_DIAGNOSTIC_MATCH_CLOCK_INTERVAL_SECONDS", interval, raising=False)
     if kickoff_tolerance is not None:
-        monkeypatch.setattr(config, "AFL_MATCH_STATE_CAPTURE_KICKOFF_TOLERANCE_SECONDS", kickoff_tolerance, raising=False)
+        monkeypatch.setattr(config, "AFL_DIAGNOSTIC_MATCH_CLOCK_KICKOFF_TOLERANCE_SECONDS", kickoff_tolerance, raising=False)
     if post_live_grace is not None:
-        monkeypatch.setattr(config, "AFL_MATCH_STATE_CAPTURE_POST_LIVE_GRACE_SECONDS", post_live_grace, raising=False)
+        monkeypatch.setattr(config, "AFL_DIAGNOSTIC_MATCH_CLOCK_POST_LIVE_GRACE_SECONDS", post_live_grace, raising=False)
 
 
 def _disable(monkeypatch):
     import config
-    monkeypatch.setattr(config, "AFL_CAPTURE_MATCH_STATE_EVIDENCE", False, raising=False)
+    monkeypatch.setattr(config, "AFL_DIAGNOSTICS_ENABLED", False, raising=False)
 
 
 def match_item_payload(periods, *, match_status="LIVE", score_status="LIVE"):
@@ -307,23 +309,29 @@ def test_capture_state_is_fully_durable_across_independent_process_style_calls(d
 
 def test_settings_reject_non_positive_interval(monkeypatch):
     import config
-    monkeypatch.setattr(config, "AFL_CAPTURE_MATCH_STATE_EVIDENCE", True, raising=False)
-    monkeypatch.setattr(config, "AFL_MATCH_STATE_CAPTURE_INTERVAL_SECONDS", 0, raising=False)
+    monkeypatch.setattr(config, "AFL_DIAGNOSTICS_ENABLED", True, raising=False)
+    monkeypatch.setattr(config, "AFL_DIAGNOSTIC_PROFILES", ("match_clock",), raising=False)
+    monkeypatch.setattr(config, "AFL_DIAGNOSTIC_MATCH_CLOCK_INTERVAL_SECONDS", 0, raising=False)
     with pytest.raises(ValueError):
         MatchStateCaptureSettings.from_config()
 
 
 @pytest.mark.parametrize("field", [
-    "AFL_MATCH_STATE_CAPTURE_KICKOFF_TOLERANCE_SECONDS",
-    "AFL_MATCH_STATE_CAPTURE_POST_LIVE_GRACE_SECONDS",
+    "AFL_DIAGNOSTIC_MATCH_CLOCK_KICKOFF_TOLERANCE_SECONDS",
+    "AFL_DIAGNOSTIC_MATCH_CLOCK_POST_LIVE_GRACE_SECONDS",
 ])
 def test_settings_reject_negative_boundary_windows(monkeypatch, field):
     import config
-    monkeypatch.setattr(config, "AFL_CAPTURE_MATCH_STATE_EVIDENCE", True, raising=False)
+    monkeypatch.setattr(config, "AFL_DIAGNOSTICS_ENABLED", True, raising=False)
+    monkeypatch.setattr(config, "AFL_DIAGNOSTIC_PROFILES", ("match_clock",), raising=False)
     monkeypatch.setattr(config, field, -1, raising=False)
     with pytest.raises(ValueError):
         MatchStateCaptureSettings.from_config()
 
+
+# --- Registration through the diagnostics framework (see
+# tests/test_diagnostics_framework.py for the framework's own generic
+# registration/enablement coverage) --------------------------------------
 
 class FakeScheduler:
     def __init__(self):
@@ -337,15 +345,15 @@ class FakeScheduler:
 def test_register_job_is_noop_when_capture_disabled(db, monkeypatch):
     _disable(monkeypatch)
     scheduler = FakeScheduler()
-    assert register_match_state_capture_job(scheduler) is False
+    assert register_diagnostic_profile_job(scheduler, MatchClockProfile()) is False
     assert scheduler.jobs == []
 
 
 def test_register_job_adds_interval_job_when_enabled(db, monkeypatch):
     _enable(monkeypatch, interval=20)
     scheduler = FakeScheduler()
-    assert register_match_state_capture_job(scheduler) is True
+    assert register_diagnostic_profile_job(scheduler, MatchClockProfile()) is True
     assert len(scheduler.jobs) == 1
     job = scheduler.jobs[0]
-    assert job["id"] == "match_state_evidence_capture"
+    assert job["id"] == "diagnostic_match_clock"
     assert job["trigger"].interval.total_seconds() == 20
