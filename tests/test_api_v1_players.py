@@ -1,4 +1,5 @@
-"""Offline API tests for GET /api/v1/players/{canonical_player_id}.
+"""Offline API tests for GET /api/v1/players/{canonical_player_id} and
+GET /api/v1/players?search=.
 
 Fixture shape mirrors the DB-building conventions already used by
 ``tests/test_api_v1_player_stats.py`` (raw inserts against a fully migrated
@@ -101,6 +102,11 @@ def _client(db_path, monkeypatch):
 def _get(client, canonical_player_id=PLAYER_ID, headers=None):
     headers = headers or {"x-api-key": API_KEY}
     return client.get(f"/api/v1/players/{canonical_player_id}", headers=headers)
+
+
+def _search(client, params=None, headers=None):
+    headers = headers or {"x-api-key": API_KEY}
+    return client.get("/api/v1/players", params=params, headers=headers)
 
 
 def test_successful_lookup_returns_full_identity(tmp_path, monkeypatch):
@@ -331,3 +337,239 @@ def test_existing_match_player_stats_and_legacy_players_route_are_unchanged(tmp_
     legacy_response = client.get("/api/players/1", headers={"x-api-key": API_KEY})
     assert legacy_response.status_code == 200
     assert legacy_response.json()["afl_id"] == 1
+
+
+# --- GET /api/v1/players?search= ------------------------------------------
+
+JOSH_DAICOS_ID = 396
+NICK_DAICOS_ID = PLAYER_ID  # 584, matches the issue's worked example
+
+
+def test_search_matches_a_player_name(tmp_path, monkeypatch):
+    def seed(conn):
+        _seed_seasons(conn)
+        _seed_player(conn, NICK_DAICOS_ID, display_name="Nick Daicos")
+
+    db_path = _make_db(tmp_path, seed=seed)
+    client = _client(db_path, monkeypatch)
+
+    response = _search(client, params={"search": "Nick Daicos"})
+
+    assert response.status_code == 200
+    assert [p["display_name"] for p in response.json()["players"]] == ["Nick Daicos"]
+
+
+def test_search_matches_partial_name(tmp_path, monkeypatch):
+    def seed(conn):
+        _seed_seasons(conn)
+        _seed_player(conn, NICK_DAICOS_ID, display_name="Nick Daicos")
+
+    db_path = _make_db(tmp_path, seed=seed)
+    client = _client(db_path, monkeypatch)
+
+    response = _search(client, params={"search": "daic"})
+
+    assert response.status_code == 200
+    assert [p["display_name"] for p in response.json()["players"]] == ["Nick Daicos"]
+
+
+def test_search_is_case_insensitive(tmp_path, monkeypatch):
+    def seed(conn):
+        _seed_seasons(conn)
+        _seed_player(conn, NICK_DAICOS_ID, display_name="Nick Daicos")
+
+    db_path = _make_db(tmp_path, seed=seed)
+    client = _client(db_path, monkeypatch)
+
+    for term in ("DAICOS", "DaIcOs", "daicos"):
+        response = _search(client, params={"search": term})
+        assert response.status_code == 200
+        assert [p["display_name"] for p in response.json()["players"]] == ["Nick Daicos"]
+
+
+def test_search_returns_multiple_players_sharing_a_surname(tmp_path, monkeypatch):
+    def seed(conn):
+        _seed_seasons(conn)
+        _seed_player(conn, JOSH_DAICOS_ID, display_name="Josh Daicos")
+        _seed_player(conn, NICK_DAICOS_ID, display_name="Nick Daicos")
+        _seed_provider_id(conn, JOSH_DAICOS_ID, "afl", "1321")
+        _seed_provider_id(conn, NICK_DAICOS_ID, "afl", "5501")
+
+    db_path = _make_db(tmp_path, seed=seed)
+    client = _client(db_path, monkeypatch)
+
+    response = _search(client, params={"search": "daicos"})
+
+    assert response.status_code == 200
+    players = response.json()["players"]
+    assert {p["display_name"] for p in players} == {"Josh Daicos", "Nick Daicos"}
+    assert {p["canonical_player_id"] for p in players} == {JOSH_DAICOS_ID, NICK_DAICOS_ID}
+
+
+def test_search_result_ordering_is_deterministic(tmp_path, monkeypatch):
+    def seed(conn):
+        _seed_seasons(conn)
+        # Seed in reverse insertion order relative to expected (name, then id) output.
+        _seed_player(conn, NICK_DAICOS_ID, display_name="Nick Daicos")
+        _seed_player(conn, JOSH_DAICOS_ID, display_name="Josh Daicos")
+
+    db_path = _make_db(tmp_path, seed=seed)
+    client = _client(db_path, monkeypatch)
+
+    first = _search(client, params={"search": "daicos"}).json()["players"]
+    second = _search(client, params={"search": "daicos"}).json()["players"]
+
+    expected_order = [JOSH_DAICOS_ID, NICK_DAICOS_ID]  # "Josh" sorts before "Nick"
+    assert [p["canonical_player_id"] for p in first] == expected_order
+    assert [p["canonical_player_id"] for p in second] == expected_order
+
+
+def test_search_with_no_matches_returns_200_with_empty_collection(tmp_path, monkeypatch):
+    def seed(conn):
+        _seed_seasons(conn)
+        _seed_player(conn, NICK_DAICOS_ID, display_name="Nick Daicos")
+
+    db_path = _make_db(tmp_path, seed=seed)
+    client = _client(db_path, monkeypatch)
+
+    response = _search(client, params={"search": "zzznotaplayer"})
+
+    assert response.status_code == 200
+    assert response.json() == {"players": []}
+
+
+def test_search_result_reflects_missing_provider_mappings(tmp_path, monkeypatch):
+    def seed(conn):
+        _seed_seasons(conn)
+        _seed_player(conn, PLAYER_ID, display_name="Daic Nomap")
+        # No provider IDs and no current-season membership row at all.
+
+    db_path = _make_db(tmp_path, seed=seed)
+    client = _client(db_path, monkeypatch)
+
+    response = _search(client, params={"search": "daic"})
+
+    assert response.status_code == 200
+    player = response.json()["players"][0]
+    assert player["current_team"] is None
+    assert player["identifiers"] == {"afl_player_id": None, "champion_data_player_id": None}
+
+
+def test_search_result_includes_current_team_and_partial_provider_mapping(tmp_path, monkeypatch):
+    def seed(conn):
+        _seed_seasons(conn)
+        _seed_player(conn, PLAYER_ID, display_name="Nick Daicos")
+        _seed_provider_id(conn, PLAYER_ID, "champion_data", "CD_I1023261")
+        _seed_membership(conn, PLAYER_ID, CURRENT_SEASON_ID, TEAM_ID)
+
+    db_path = _make_db(tmp_path, seed=seed)
+    client = _client(db_path, monkeypatch)
+
+    response = _search(client, params={"search": "daicos"})
+
+    assert response.status_code == 200
+    player = response.json()["players"][0]
+    assert player["current_team"] == {"team_id": TEAM_ID, "name": "Collingwood"}
+    assert player["identifiers"] == {"afl_player_id": None, "champion_data_player_id": "CD_I1023261"}
+
+
+def test_missing_search_parameter_returns_422(tmp_path, monkeypatch):
+    db_path = _make_db(tmp_path, seed=lambda conn: _seed_seasons(conn))
+    client = _client(db_path, monkeypatch)
+
+    response = _search(client, params=None)
+
+    assert response.status_code == 422
+
+
+def test_blank_search_parameter_returns_422(tmp_path, monkeypatch):
+    """Both an empty and a whitespace-only search must reach the application's
+    own search_required branch, not just get FastAPI's default validation
+    error — a bare min_length constraint would only catch the empty case and
+    reject it during framework validation before the handler ever runs."""
+
+    db_path = _make_db(tmp_path, seed=lambda conn: _seed_seasons(conn))
+    client = _client(db_path, monkeypatch)
+
+    expected_body = {
+        "error": {
+            "code": "search_required",
+            "message": "A non-blank search query parameter is required.",
+        }
+    }
+
+    empty_response = _search(client, params={"search": ""})
+    whitespace_response = _search(client, params={"search": "   "})
+
+    assert empty_response.status_code == 422
+    assert empty_response.json() == expected_body
+    assert whitespace_response.status_code == 422
+    assert whitespace_response.json() == expected_body
+
+
+def test_search_missing_api_key_returns_401(tmp_path, monkeypatch):
+    db_path = _make_db(tmp_path, seed=lambda conn: _seed_seasons(conn))
+    client = _client(db_path, monkeypatch)
+
+    response = client.get("/api/v1/players", params={"search": "daicos"})
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Invalid or missing API Key"}
+
+
+def test_search_invalid_api_key_returns_401(tmp_path, monkeypatch):
+    db_path = _make_db(tmp_path, seed=lambda conn: _seed_seasons(conn))
+    client = _client(db_path, monkeypatch)
+
+    response = _search(client, params={"search": "daicos"}, headers={"x-api-key": "wrong-key"})
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Invalid or missing API Key"}
+
+
+def test_search_does_not_affect_legacy_players_route(tmp_path, monkeypatch):
+    """Regression guard: search discovery must not alter the legacy
+    unversioned /api/players contract, which keeps reading the players table."""
+
+    def seed(conn):
+        _seed_seasons(conn)
+        _seed_player(conn, PLAYER_ID, display_name="Nick Daicos")
+        conn.execute(
+            "INSERT INTO players(afl_id, first_name, last_name, club) VALUES(1,'J','Smith','COLL')"
+        )
+
+    db_path = _make_db(tmp_path, seed=seed)
+    client = _client(db_path, monkeypatch)
+
+    search_response = _search(client, params={"search": "daicos"})
+    assert search_response.status_code == 200
+    assert [p["display_name"] for p in search_response.json()["players"]] == ["Nick Daicos"]
+
+    legacy_response = client.get("/api/players", headers={"x-api-key": API_KEY})
+    assert legacy_response.status_code == 200
+    legacy_names = [(row["first_name"], row["last_name"]) for row in legacy_response.json()]
+    assert legacy_names == [("J", "Smith")]
+
+
+def test_search_response_shape_and_openapi_documentation(tmp_path, monkeypatch):
+    def seed(conn):
+        _seed_seasons(conn)
+        _seed_player(conn, PLAYER_ID, display_name="Nick Daicos")
+        _seed_provider_id(conn, PLAYER_ID, "afl", "5501")
+        _seed_membership(conn, PLAYER_ID, CURRENT_SEASON_ID, TEAM_ID)
+
+    db_path = _make_db(tmp_path, seed=seed)
+    client = _client(db_path, monkeypatch)
+
+    response = _search(client, params={"search": "daicos"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body.keys()) == {"players"}
+    player = body["players"][0]
+    assert set(player.keys()) == {
+        "canonical_player_id", "display_name", "current_team", "identifiers",
+    }
+
+    operation = client.get("/openapi.json").json()["paths"]["/api/v1/players"]["get"]
+    assert {"200", "422"} <= set(operation["responses"])
