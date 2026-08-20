@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Mapping
 
+from utils.time_format import normalize_utc_iso
+
 from .collectors import CollectionResult
 
 
@@ -155,7 +157,8 @@ def persist_afl_metadata(conn: sqlite3.Connection, result: CollectionResult) -> 
                 "match_id": match["afl_id"], "match_provider_id": match.get("provider_id"),
                 "round_id": round_id, "home_team": _display(match.get("home")),
                 "away_team": _display(match.get("away")), "venue": venue_name,
-                "status": match.get("status"), "start_time_utc": match.get("utc_start_time"),
+                "status": match.get("status"),
+                "start_time_utc": normalize_utc_iso(match.get("utc_start_time")),
                 "score_home": _score(match.get("home_score")), "score_away": _score(match.get("away_score")),
                 "scraped_at": now, "season_id": season["afl_id"],
                 "home_team_id": _team_id(match.get("home")), "away_team_id": _team_id(match.get("away")),
