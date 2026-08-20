@@ -9,6 +9,7 @@ from afl_json.collectors import (
     CollectionError,
     PaginationError,
     PublicAflCollector,
+    determine_current_season,
     resolve_competition,
     select_season,
 )
@@ -131,6 +132,31 @@ def test_absent_ambiguous_or_embedded_season_year_fails_clearly(names):
 
     with pytest.raises(CollectionError, match="No competition season matched.*--afl-season"):
         select_season(seasons, selector=2026)
+
+
+def test_determine_current_season_prefers_the_explicit_current_flag():
+    seasons = [{"afl_id": 84, "year": 2025, "current": False},
+               {"afl_id": 85, "year": 2026, "current": True}]
+    assert determine_current_season(seasons)["afl_id"] == 85
+
+
+def test_determine_current_season_falls_back_to_date_containment_like_selection():
+    seasons = [
+        {"afl_id": 84, "year": 2025, "start_time": "2025-02-01T00:00:00Z", "end_time": "2025-09-30T00:00:00Z"},
+        {"afl_id": 85, "year": 2026, "start_time": "2026-02-01T00:00:00Z", "end_time": "2026-09-30T00:00:00Z"},
+    ]
+    assert determine_current_season(seasons, relevant_date=date(2026, 7, 1))["afl_id"] == 85
+    # Never the highest year/ID by default when no flag or date matches.
+    assert determine_current_season(seasons, relevant_date=date(2030, 1, 1)) is None
+
+
+def test_determine_current_season_is_none_rather_than_guessing():
+    # No usable current flag or date on either season.
+    assert determine_current_season([{"afl_id": 84, "year": 2025}, {"afl_id": 85, "year": 2026}]) is None
+    # Contradictory upstream data: two seasons both flagged current.
+    ambiguous = [{"afl_id": 84, "year": 2025, "current": True},
+                 {"afl_id": 85, "year": 2026, "current": True}]
+    assert determine_current_season(ambiguous) is None
 
 
 def test_missing_and_ambiguous_season_selection_are_actionable():

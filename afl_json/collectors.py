@@ -38,6 +38,11 @@ class CollectionResult:
     rounds: list[dict[str, Any]]
     teams: list[dict[str, Any]]
     matches: list[dict[str, Any]]
+    # The competition's independently determined current season (by the same
+    # current-flag/date semantics as automatic selection), or None when it
+    # cannot be determined unambiguously. This may differ from ``season`` when
+    # a specific (e.g. historical) season was explicitly requested.
+    current_season_afl_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -329,10 +334,9 @@ class PublicAflCollector:
         competition = resolve_competition(
             self.competitions(), code=competition_code, provider_id=competition_provider_id
         )
-        selected = select_season(
-            self.competition_seasons(competition["afl_id"]), selector=season,
-            relevant_date=relevant_date,
-        )
+        all_seasons = self.competition_seasons(competition["afl_id"])
+        selected = select_season(all_seasons, selector=season, relevant_date=relevant_date)
+        current = determine_current_season(all_seasons, relevant_date=relevant_date)
         rounds = self.rounds(selected["afl_id"])
         teams = self.teams(selected["afl_id"])
         matches: list[dict[str, Any]] = []
@@ -353,7 +357,8 @@ class PublicAflCollector:
                         "roundNumber": round_record.get("round_number"),
                     }
             matches.extend(round_matches)
-        return CollectionResult(competition, selected, rounds, teams, matches)
+        return CollectionResult(competition, selected, rounds, teams, matches,
+                                current_season_afl_id=current["afl_id"] if current is not None else None)
 
 
 def resolve_competition(competitions: Iterable[dict[str, Any]], *, code: str | None,
@@ -385,6 +390,21 @@ def resolve_competition(competitions: Iterable[dict[str, Any]], *, code: str | N
     raise CollectionError(f"Premiership competition selection is ambiguous using {requested}; matched {len(matches)} records")
 
 
+def _auto_current_candidates(values: list[Mapping[str, Any]],
+                             relevant_date: date | None) -> list[Mapping[str, Any]]:
+    """Season(s) matching the upstream current flag, else the relevant date's range.
+
+    Shared by :func:`select_season`'s automatic (no selector) branch and
+    :func:`determine_current_season`, so both apply identical current-season
+    semantics rather than two independently maintained rules.
+    """
+    candidates = [item for item in values if item.get("current") is True]
+    if not candidates:
+        target = relevant_date or datetime.now(timezone.utc).date()
+        candidates = [item for item in values if _contains_date(item, target)]
+    return candidates
+
+
 def select_season(seasons: Iterable[dict[str, Any]], *, selector: str | int | None = None,
                   relevant_date: date | None = None) -> dict[str, Any]:
     values = list(seasons)
@@ -396,10 +416,7 @@ def select_season(seasons: Iterable[dict[str, Any]], *, selector: str | int | No
             str(item.get("short_name", "")).casefold(),
         }]
     else:
-        candidates = [item for item in values if item.get("current") is True]
-        if not candidates:
-            target = relevant_date or datetime.now(timezone.utc).date()
-            candidates = [item for item in values if _contains_date(item, target)]
+        candidates = _auto_current_candidates(values, relevant_date)
     if len(candidates) == 1:
         return candidates[0]
     if not candidates:
@@ -408,6 +425,19 @@ def select_season(seasons: Iterable[dict[str, Any]], *, selector: str | int | No
     raise CollectionError(
         f"Competition season selection is ambiguous ({len(candidates)} matches); specify --afl-season YEAR or provider ID"
     )
+
+
+def determine_current_season(seasons: Iterable[Mapping[str, Any]], *,
+                             relevant_date: date | None = None) -> Mapping[str, Any] | None:
+    """Independently identify the competition's current season, or None.
+
+    Applies the same current-flag/date semantics as :func:`select_season`'s
+    automatic selection, but never raises: an absent or ambiguous result
+    (rather than the highest ID/year) means the current season cannot be
+    safely determined, and callers must not guess one.
+    """
+    candidates = _auto_current_candidates(list(seasons), relevant_date)
+    return candidates[0] if len(candidates) == 1 else None
 
 
 def _contains_date(item: Mapping[str, Any], target: date) -> bool:
