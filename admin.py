@@ -9,7 +9,6 @@ from starlette.middleware.sessions import SessionMiddleware
 from html import escape
 from datetime import datetime, timedelta, timezone
 import sqlite3
-from pathlib import Path
 from utils.log import log
 import traceback
 import json
@@ -20,6 +19,10 @@ from api_key_security import api_key_prefix, generate_api_key, hash_api_key
 from db.init_db import create_api_keys_table
 from db.connection import get_db_path
 from admin_csrf import csrf_input, require_csrf
+from logging_sources import (
+    STATUS_AVAILABLE, STATUS_DISABLED, STATUS_NOT_CREATED, STATUS_UNAVAILABLE,
+    LOG_SOURCES, LogSourceStatus, get_log_source_statuses,
+)
 
 security = HTTPBasic()
 
@@ -589,13 +592,57 @@ def delete_api_key(request: Request, key_id: int, _: None = Depends(require_csrf
     conn.close()
     return RedirectResponse("/setup/api-keys", status_code=303)
 
-LOG_FILES = {
-    "Player Stats": "scrape_afl_player_stats.log",
-    "Injuries": "scrape_afl_injuries.log",
-    "Lineups": "scrape_afl_lineups.log",
-    "Matches": "scrape_afl_matches.log",
-    "Scheduler Jobs": "scheduler_jobs.log",
-}
+def _format_log_size(size_bytes: int | None) -> str | None:
+    if size_bytes is None:
+        return None
+    size = float(size_bytes)
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024 or unit == "GB":
+            return f"{size:.0f} {unit}"
+        size /= 1024
+    return None  # pragma: no cover - unreachable, satisfies static analysis
+
+
+def _format_log_age(modified_at: datetime | None) -> str | None:
+    if modified_at is None:
+        return None
+    seconds = max(0, int((datetime.now(timezone.utc) - modified_at).total_seconds()))
+    if seconds < 60:
+        return "less than a minute ago"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes} min ago"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours} hr{'s' if hours != 1 else ''} ago"
+    days = hours // 24
+    return f"{days} day{'s' if days != 1 else ''} ago"
+
+
+def _log_source_display(status: LogSourceStatus) -> dict:
+    """Map a LogSourceStatus to an admin-facing display state.
+
+    Keeps the template free of status-contract detail: it only ever sees a
+    label, a bootstrap-alert/badge style, and a short human-readable detail,
+    mirroring how `_scheduler_health_display` presents scheduler health.
+    """
+    size_label = _format_log_size(status.size_bytes)
+    age_label = _format_log_age(status.modified_at)
+
+    if status.status == STATUS_AVAILABLE:
+        summary = f"updated {age_label}" if age_label else "updated recently"
+        if size_label:
+            summary = f"{summary} — {size_label}"
+        return {"label": "Available", "style": "success", "detail": summary}
+
+    if status.status == STATUS_NOT_CREATED:
+        return {"label": "Configured, no log created yet", "style": "secondary", "detail": status.reason}
+
+    if status.status == STATUS_DISABLED:
+        return {"label": "Disabled", "style": "secondary", "detail": status.reason}
+
+    assert status.status == STATUS_UNAVAILABLE, f"Unhandled log source status: {status.status!r}"
+    return {"label": "Configured, expected log path unavailable", "style": "warning", "detail": status.reason}
 
 @app.get("/logs", response_class=HTMLResponse)
 def view_logs_raw(
@@ -605,35 +652,44 @@ def view_logs_raw(
     lines: int = Query(200, ge=10, le=1000),
 ):
     try:
-        file_name = LOG_FILES.get(log, None)
-        if not file_name:
+        statuses = get_log_source_statuses()
+        sources = [{"status": s, "display": _log_source_display(s)} for s in statuses]
+        by_display_name = {s.display_name: s for s in statuses}
+        log_options = list(by_display_name.keys())
+
+        base_context = {
+            "log_options": log_options, "q": q, "lines": lines,
+            "sources": sources, "selected_log": log,
+        }
+
+        selected = by_display_name.get(log)
+        if selected is None:
             return templates.TemplateResponse(
                 request=request,
                 name="logs.html",
-                context={
-                    "logs": [], "selected_log": log, "log_options": LOG_FILES.keys(),
-                    "q": q, "lines": lines, "log_error": "Unknown log selection.",
-                    "expected_file": None,
-                },
+                context={**base_context, "logs": [], "log_error": "Unknown log selection.", "expected_file": None},
                 status_code=400,
             )
 
-        log_path = Path("logs") / file_name
-        LOCAL_TZ = timezone(timedelta(hours=8))  # AWST
-
-        if not log_path.exists():
+        # A readable file (`size_bytes is not None`) is shown even for a
+        # currently-disabled source: disabling a source stops new writes, it
+        # must not hide a log that was already captured while it was enabled.
+        if selected.size_bytes is None:
+            display = _log_source_display(selected)
             return templates.TemplateResponse(
                 request=request,
                 name="logs.html",
                 context={
-                    "logs": [], "selected_log": log, "log_options": LOG_FILES.keys(),
-                    "q": q, "lines": lines,
-                    "log_error": "No log entries are available yet.",
-                    "expected_file": str(log_path),
+                    **base_context, "logs": [],
+                    "log_error": f"{display['label']}. {selected.reason}".strip(),
+                    "expected_file": selected.resolved_path,
                 },
             )
 
-        with open(log_path, "r", encoding="utf-8") as f:
+        log_path = LOG_SOURCES[selected.id].path
+        LOCAL_TZ = timezone(timedelta(hours=8))  # AWST
+
+        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
             raw_lines = f.readlines()
 
         filtered = [line for line in raw_lines if q.lower() in line.lower()]
@@ -655,13 +711,11 @@ def view_logs_raw(
             request=request,
             name="logs.html",
             context={
+                **base_context,
                 "logs": formatted_lines,
-                "selected_log": log,
-                "log_options": LOG_FILES.keys(),
-                "q": q,
-                "lines": lines,
                 "log_error": None,
-                "expected_file": str(log_path),
+                "expected_file": selected.resolved_path,
+                "viewing_disabled_source": not selected.enabled,
             },
         )
 

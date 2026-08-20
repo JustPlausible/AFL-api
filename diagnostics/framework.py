@@ -27,8 +27,10 @@ from typing import Any
 import config
 from scheduler.registry import add_registered_job, diagnostic_profile_job_id
 from utils.log import setup_logger
+from logging_sources import LOG_SOURCES
 
-log = setup_logger("diagnostics_framework", "diagnostics_framework.log")
+_source = LOG_SOURCES["diagnostics_framework"]
+log = setup_logger(_source.logger_name, _source.filename)
 
 
 class DiagnosticProfile(ABC):

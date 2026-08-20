@@ -11,9 +11,11 @@ from utils.log import setup_logger
 import pytz
 import config
 from scheduler.registry import execute_registered_job, fixture_job_id, injury_job_id, refresh_job_id
+from logging_sources import LOG_SOURCES
 
 local_tz = pytz.timezone("Australia/Perth")
-log = setup_logger("scheduled_tasks", "scheduled_tasks.log")
+_source = LOG_SOURCES["scheduled_tasks"]
+log = setup_logger(_source.logger_name, _source.filename)
 log.info("✅ scheduled_tasks.py loaded and logger active")
 
 scheduler = BlockingScheduler(

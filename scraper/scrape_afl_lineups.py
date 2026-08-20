@@ -12,8 +12,10 @@ from db.connection import get_db_connection
 from db.scrape_runs import audited_scrape_run
 from utils.log import setup_logger
 from scraper.afl_selectors import TEAM_LINEUP_SELECTORS
+from logging_sources import LOG_SOURCES
 
-log = setup_logger("lineup_scraper", "scrape_afl_lineups.log")
+_source = LOG_SOURCES["lineups"]
+log = setup_logger(_source.logger_name, _source.filename)
 
 
 class MatchRoundResolutionError(RuntimeError):

@@ -55,11 +55,14 @@ from scheduler.match_windows import MatchWindowSettings, reconcile as reconcile_
 from scheduler.recovery import reconcile_interrupted_attempts
 from scheduler.runtime import establish_instance, mark_graceful_shutdown
 from utils.log import setup_logger
+from logging_sources import LOG_SOURCES
 
 SUPPORTED_UVICORN_COMMAND = "python -m uvicorn scheduler.start:app --host 0.0.0.0 --port 8000"
 
-log = setup_logger("scheduler_start", "scheduler_start.log")
-scheduler_log = setup_logger("scheduler_jobs", "scheduler_jobs.log")
+_scheduler_start_source = LOG_SOURCES["scheduler_start"]
+log = setup_logger(_scheduler_start_source.logger_name, _scheduler_start_source.filename)
+_scheduler_jobs_source = LOG_SOURCES["scheduler_jobs"]
+scheduler_log = setup_logger(_scheduler_jobs_source.logger_name, _scheduler_jobs_source.filename)
 
 log.debug("🟢 scheduler/start.py loaded!")
 

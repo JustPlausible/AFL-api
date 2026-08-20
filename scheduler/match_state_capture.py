@@ -55,8 +55,10 @@ from diagnostics.framework import is_profile_selected
 from scheduler.time_policy import MetadataTimestampError, parse_metadata_timestamp
 from scheduler.write_lane import write_lane
 from utils.log import setup_logger
+from logging_sources import LOG_SOURCES
 
-log = setup_logger("match_state_capture", "match_state_capture.log")
+_source = LOG_SOURCES["match_state_capture"]
+log = setup_logger(_source.logger_name, _source.filename)
 
 # This investigation's stable identifier in the diagnostics framework (see
 # diagnostics/framework.py and diagnostics/profiles/match_clock.py). Defined

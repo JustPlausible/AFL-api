@@ -5,8 +5,10 @@ from utils.log import setup_logger
 from db.connection import get_db_connection
 from scheduler.registry import add_registered_job, lineup_match_job_id, lineup_round_job_id, record_planning_failure
 from scheduler.time_policy import MetadataTimestampError, match_day_timezone, parse_metadata_timestamp
+from logging_sources import LOG_SOURCES
 
-log = setup_logger("refresh_afl_lineups", "refresh_afl_lineups.log")
+_source = LOG_SOURCES["refresh_afl_lineups"]
+log = setup_logger(_source.logger_name, _source.filename)
 
 def run_lineup_round_scraper(round_id: int):
     from collection.source_policy import OperationalDomain

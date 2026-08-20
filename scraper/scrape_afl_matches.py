@@ -12,8 +12,10 @@ from db.scrape_runs import audited_scrape_run
 from db.connection import get_db_connection
 from utils.match_time import parse_match_time
 from scraper.afl_selectors import MATCH_CARD_SELECTORS
+from logging_sources import LOG_SOURCES
 
-log = setup_logger("match_scraper", "scrape_afl_matches.log")
+_source = LOG_SOURCES["matches"]
+log = setup_logger(_source.logger_name, _source.filename)
 def load_existing_matches(conn: sqlite3.Connection) -> dict[int, dict]:
     cursor = conn.cursor()
     cursor.execute("SELECT match_id, start_time_utc, status FROM matches")
