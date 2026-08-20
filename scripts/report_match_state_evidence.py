@@ -107,8 +107,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if not rows:
         print(
-            "No match-state evidence has been captured yet. Set "
-            "AFL_CAPTURE_MATCH_STATE_EVIDENCE=true and restart the scheduler during a live match."
+            "No match-state evidence has been captured yet. Set AFL_DIAGNOSTICS_ENABLED=true "
+            "and AFL_DIAGNOSTIC_PROFILES=match_clock, then restart the scheduler during a live match."
         )
         return 0
 

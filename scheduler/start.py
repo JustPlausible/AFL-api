@@ -49,10 +49,8 @@ from scheduler.schedule_stat_scrapes import (
 from scheduler.scheduled_tasks import scheduler
 from scheduler.write_lane import write_lane
 from scheduler.player_stat_polling import shutdown_player_stat_polling_worker
-from scheduler.match_state_capture import (
-    register_match_state_capture_job,
-    shutdown_match_state_capture_client,
-)
+import diagnostics.profiles  # noqa: F401 - import registers checked-in diagnostic profiles
+from diagnostics.framework import register_diagnostic_profiles, shutdown_diagnostic_profiles
 from scheduler.match_windows import MatchWindowSettings, reconcile as reconcile_match_windows
 from scheduler.recovery import reconcile_interrupted_attempts
 from scheduler.runtime import establish_instance, mark_graceful_shutdown
@@ -98,7 +96,7 @@ def register_all_jobs():
     register_live_stat_scrapers(scheduler)
     register_match_scrape_jobs(scheduler)
     register_live_match_day_scraper(scheduler)
-    register_match_state_capture_job(scheduler)
+    register_diagnostic_profiles(scheduler)
     upsert_job(injury_job_id(), "injury", None, trigger_type="cron", func_ref="scheduler.scheduled_tasks:daily_injury_scrape")
     upsert_job(fixture_job_id(), "fixture", None, trigger_type="cron", func_ref="scheduler.scheduled_tasks:daily_fixture_scrape")
     upsert_job(refresh_job_id("matches_daily"), "general_refresh", None, trigger_type="cron", func_ref="scheduler.scheduled_tasks:daily_match_scrape")
@@ -174,7 +172,7 @@ def start_scheduler_for_app() -> None:
 def shutdown_scheduler(wait: bool = True) -> None:
     """Stop APScheduler and wait for executors so interpreter shutdown is clean."""
     shutdown_player_stat_polling_worker()
-    shutdown_match_state_capture_client()
+    shutdown_diagnostic_profiles()
     if scheduler.state != STATE_STOPPED:
         log.info("🛑 Shutting down APScheduler...")
         scheduler.shutdown(wait=wait)
