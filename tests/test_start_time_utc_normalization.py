@@ -7,6 +7,7 @@ from __future__ import annotations
 import sqlite3
 
 from afl_json import CollectionResult, persist_afl_metadata
+from db.import_to_db import save_matches_to_db
 from db.migration_runner import migrate_database
 from utils.match_time import parse_match_time
 from utils.time_format import normalize_utc_iso
@@ -94,3 +95,39 @@ def test_bootstrap_and_legacy_scraper_persist_identical_string_for_the_same_inst
 
     assert bootstrap_stored == "2026-03-12T08:00:00Z"
     assert bootstrap_stored == legacy_value
+
+
+def test_legacy_scraper_db_write_normalizes_stale_fallback_copied_values(tmp_path):
+    """`extract_match_data` falls back to copying an existing DB row's
+    `start_time_utc` verbatim when a match card has no freshly parsable
+    scheduled time (e.g. a LIVE match update touching only status/scores).
+    A pre-fix row stored in `+00:00` form must still come out of
+    `save_matches_to_db` in the canonical `Z` form, not be written back
+    unchanged.
+    """
+    path = tmp_path / "legacy.db"
+    migrate_database(path)
+    conn = sqlite3.connect(path)
+
+    stale_offset_value = "2026-03-12T08:00:00+00:00"
+    save_matches_to_db([{
+        "match_id": 9000, "match_provider_id": "CD_M9000", "round_id": 100,
+        "home_team": "HOM", "away_team": "AWY", "venue": "MCG", "status": "LIVE",
+        "start_time_utc": stale_offset_value, "score_home": 10, "score_away": 5,
+        "match_time_label": "Q3",
+    }], conn)
+
+    # Simulate extract_match_data's fallback: no fresh time parsed this scrape,
+    # so the (still non-canonical) existing value is copied through unchanged
+    # into the next save, alongside an updated status/score.
+    save_matches_to_db([{
+        "match_id": 9000, "match_provider_id": "CD_M9000", "round_id": 100,
+        "home_team": "HOM", "away_team": "AWY", "venue": "MCG", "status": "COMPLETED",
+        "start_time_utc": stale_offset_value, "score_home": 88, "score_away": 65,
+        "match_time_label": "FULL TIME",
+    }], conn)
+
+    stored = conn.execute("SELECT start_time_utc, status FROM matches WHERE match_id=9000").fetchone()
+    conn.close()
+
+    assert stored == ("2026-03-12T08:00:00Z", "COMPLETED")
