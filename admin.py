@@ -24,6 +24,7 @@ from admin_csrf import csrf_input, require_csrf
 security = HTTPBasic()
 
 SCHEDULER_BASE_URL = "http://afl-scheduler:8000"
+SCHEDULER_HEALTH_URL = f"{SCHEDULER_BASE_URL}/scheduler/health"
 MANUAL_TRIGGER_ENDPOINTS = {
     "injuries": "/scheduler/manual/injuries",
     "fixtures_round": "/scheduler/manual/fixtures/round",
@@ -158,6 +159,117 @@ def _schedule_group_label(job: dict) -> str:
     return "General"
 
 
+_SCHEDULER_HEALTH_STATES = {"healthy", "starting", "unhealthy"}
+
+
+def _is_valid_scheduler_health(data) -> bool:
+    """Validate the full scheduler health contract, not just the presence of `state`.
+
+    A response that names a recognised state but carries a missing/wrong-typed
+    field, or contradicts the state it reports (for example `state: healthy`
+    while a required dependency is unreachable), is treated the same as an
+    unparseable one: this must never let a malformed body render as healthy.
+    """
+    if not isinstance(data, dict):
+        return False
+    if data.get("state") not in _SCHEDULER_HEALTH_STATES:
+        return False
+    for field in ("scheduler_running", "database_accessible", "registry_accessible"):
+        if not isinstance(data.get(field), bool):
+            return False
+    job_count = data.get("job_count")
+    if not isinstance(job_count, int) or isinstance(job_count, bool) or job_count < 0:
+        return False
+    diagnostics = data.get("diagnostics")
+    if not isinstance(diagnostics, list) or not all(isinstance(d, str) for d in diagnostics):
+        return False
+    if not isinstance(data.get("version"), str):
+        return False
+
+    if data["state"] == "unhealthy":
+        if data["database_accessible"] and data["registry_accessible"]:
+            return False
+    elif data["state"] == "healthy":
+        if not (data["database_accessible"] and data["registry_accessible"] and data["scheduler_running"]):
+            return False
+    return True
+
+
+def _fetch_scheduler_health() -> dict:
+    """Fetch the stable scheduler health contract (Issue #178), independent of the jobs list.
+
+    Any transport failure (connection error, timeout, unexpected HTTP status,
+    unparseable body, or a body that fails the contract's field/invariant
+    checks) is normalised to the same "unavailable" result, so the admin UI
+    never has to distinguish a network failure from a malformed response.
+    """
+    try:
+        response = httpx.get(SCHEDULER_HEALTH_URL, timeout=5)
+    except Exception as e:
+        log(f"❌ Failed to contact scheduler health endpoint: {e}", "ERROR")
+        return {"available": False}
+    if response.status_code not in (200, 503):
+        log(f"❌ Unexpected scheduler health status code: {response.status_code}", "ERROR")
+        return {"available": False}
+    try:
+        data = response.json()
+    except ValueError:
+        return {"available": False}
+    if not _is_valid_scheduler_health(data):
+        return {"available": False}
+    return {"available": True, **data}
+
+
+def _scheduler_health_display(health: dict) -> dict:
+    """Map the stable scheduler health contract to an admin-facing display state.
+
+    Keeps the template free of scheduler implementation detail: it only ever
+    sees a label, a bootstrap-alert style, and a short human-readable detail.
+    """
+    if not health.get("available"):
+        return {
+            "label": "Unavailable",
+            "style": "danger",
+            "detail": "The admin interface could not reach the scheduler health endpoint.",
+        }
+
+    state = health.get("state")
+    job_count = health.get("job_count")
+
+    if state == "healthy":
+        if job_count == 0:
+            return {
+                "label": "Healthy — no jobs registered",
+                "style": "success",
+                "detail": "The scheduler is running and reachable; its job registry is currently empty.",
+            }
+        return {
+            "label": "Healthy",
+            "style": "success",
+            "detail": f"The scheduler is running with {job_count} registered job(s).",
+        }
+
+    if state == "starting":
+        return {
+            "label": "Starting / Not ready",
+            "style": "warning",
+            "detail": "The scheduler process is starting and is not yet accepting scheduled work.",
+        }
+
+    if state == "unhealthy":
+        diagnostics = health.get("diagnostics") or []
+        detail = "The scheduler reports a required dependency or runtime failure."
+        if diagnostics:
+            detail += " (" + ", ".join(str(code) for code in diagnostics) + ")"
+        return {"label": "Unhealthy", "style": "danger", "detail": detail}
+
+    return {
+        "label": "Unavailable",
+        "style": "danger",
+        "detail": "The scheduler health response was not understood.",
+    }
+
+
 @app.get("/schedule", response_class=HTMLResponse)
 def show_schedule(request: Request):
     scheduler_error = None
@@ -170,6 +282,10 @@ def show_schedule(request: Request):
         raw_jobs = []
         scheduler_error = "The scheduler service could not be reached. Job data may be temporarily unavailable."
 
+    # Health is fetched and rendered independently of the jobs list above: a
+    # jobs-request failure and scheduler health are different questions.
+    scheduler_health_display = _scheduler_health_display(_fetch_scheduler_health())
+
     # Group persisted-only and in-memory jobs alike; nothing is filtered out.
     grouped = defaultdict(list)
     for job in raw_jobs:
@@ -178,7 +294,11 @@ def show_schedule(request: Request):
     return templates.TemplateResponse(
         request=request,
         name="schedule_grouped.html",
-        context={"grouped_jobs": dict(grouped), "scheduler_error": scheduler_error},
+        context={
+            "grouped_jobs": dict(grouped),
+            "scheduler_error": scheduler_error,
+            "scheduler_health": scheduler_health_display,
+        },
     )
 
 @app.post("/scheduler/refresh", response_class=HTMLResponse)

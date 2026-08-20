@@ -13,6 +13,8 @@ These recommendations were identified during the admin interface review but are 
 
 ## Expose scheduler service diagnostics
 
+**Resolved by Issue #178.** `GET /scheduler/health` now reports readiness, APScheduler running state, and database/registry accessibility as a stable, sanitized contract, and the admin Schedule page renders it independently of the jobs list. See [scheduler health and diagnostics](scheduler_health.md).
+
 1. **Current admin limitation:** When the scheduler jobs request fails, the admin can only report that the service was unreachable; it cannot show whether the cause is startup, health, configuration, or network connectivity.
 2. **Underlying change:** Provide a stable scheduler health/status contract with service state and a safe diagnostic summary.
 3. **Why useful:** Operators could distinguish an empty schedule from an unavailable or unhealthy scheduler and choose the correct recovery action.

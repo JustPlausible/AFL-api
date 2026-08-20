@@ -120,6 +120,8 @@ and establish venue-timezone authority before interpreting
 
 Use `/scheduler/jobs` or the admin Schedule page to compare `apscheduler_state` with `persisted_status`. `apscheduler_state` describes the current in-memory APScheduler view (`scheduled`, `paused`, or `absent`). `persisted_status` describes the durable application registry.
 
+Before inspecting individual jobs, check overall scheduler health with `GET /scheduler/health` (or the "Scheduler health" card on the admin Schedule page). It reports readiness, database/registry accessibility, and sanitized diagnostics independently of job count — see [scheduler health and diagnostics](scheduler_health.md).
+
 For a missed or failed match-window job, search for the stable job ID (for example `stats_match_8216` or `lineups_match_8216`), compare its scheduled run time with APScheduler state, review `attempt_count`, `last_attempt_time`, `last_success_time`, and the concise `last_error_summary`, then decide whether a manual rerun is safe. Do not infer detailed scrape/import outcomes from this registry; those belong to Issue #26.
 
 

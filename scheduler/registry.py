@@ -193,6 +193,19 @@ def registry_rows() -> list[dict[str, Any]]:
         return [dict(zip(cols, r)) for r in cur.fetchall()]
     finally: conn.close()
 
+def registry_readable() -> None:
+    """Bounded readability probe for health checks.
+
+    Deliberately narrower than :func:`registry_rows`: reads at most one row
+    instead of the whole table, so a readiness-style check stays cheap as the
+    registry grows. Raises the same exceptions ``registry_rows`` would on an
+    unreadable database or missing table; callers decide what that means.
+    """
+    conn = get_db_connection()
+    try:
+        conn.execute("SELECT 1 FROM scheduler_job_registry LIMIT 1").fetchone()
+    finally: conn.close()
+
 def _load_func(ref: str) -> Callable[..., Any]:
     mod, name = ref.split(":", 1)
     return getattr(importlib.import_module(mod), name)
