@@ -1,0 +1,60 @@
+{
+  "match": {
+    "name": "Sample Home Vs Sample Away",
+    "date": "2026-08-16T05:10:00.000+0000",
+    "status": "LIVE",
+    "matchId": "CD_M20260149999",
+    "venue": "CD_V6",
+    "utcStartTime": "2026-08-16T05:10:00",
+    "homeTeamId": "CD_T10",
+    "awayTeamId": "CD_T40",
+    "round": "CD_R202601422",
+    "venueLocalStartTime": "2026-08-16T15:10:00",
+    "abbr": "HOME V AWAY"
+  },
+  "round": {
+    "name": "Round 22",
+    "year": "2026",
+    "roundId": "CD_R202601422",
+    "abbreviation": "Rd 22",
+    "competitionId": "CD_S2026014",
+    "roundNumber": 22
+  },
+  "venue": {
+    "address": "Sample",
+    "name": "Sample Oval",
+    "state": "SA",
+    "timeZone": "Australia/Adelaide",
+    "venueId": "CD_V6",
+    "abbreviation": "SO"
+  },
+  "score": {
+    "status": "LIVE",
+    "matchId": "CD_M20260149999",
+    "homeTeamScore": {
+      "matchScore": {"totalScore": 21, "goals": 3, "behinds": 3, "superGoals": null}
+    },
+    "awayTeamScore": {
+      "matchScore": {"totalScore": 14, "goals": 2, "behinds": 2, "superGoals": null}
+    },
+    "lastUpdated": "2026-08-16T05:34:12.000+0000",
+    "matchClock": {
+      "periods": [
+        {
+          "periodNumber": 1,
+          "periodSeconds": 1789,
+          "periodCompleted": true,
+          "nextPeriodStart": "2026-08-16T05:30:00.000+0000"
+        },
+        {
+          "periodNumber": 2,
+          "periodSeconds": 240,
+          "periodCompleted": false,
+          "nextPeriodStart": null
+        }
+      ]
+    }
+  },
+  "liveVideos": [],
+  "k2kSponsored": null
+}

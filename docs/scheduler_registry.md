@@ -15,6 +15,7 @@ Job IDs are deterministic and never include random values or timestamps:
 * `fixtures_daily` for fixture refresh jobs.
 * `injuries_daily` for injury refresh jobs.
 * `refresh_<name>` for general refresh jobs, for example `refresh_players` and `refresh_matches_daily`.
+* `match_state_evidence_capture` for the opt-in diagnostic live matchItem evidence-capture interval job (Issue #148); only registered when `AFL_CAPTURE_MATCH_STATE_EVIDENCE=true`. See `collection/match_state_evidence.py` and `scripts/report_match_state_evidence.py`.
 
 ## Persisted statuses
 
