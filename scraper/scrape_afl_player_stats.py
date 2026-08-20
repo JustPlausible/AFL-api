@@ -19,8 +19,10 @@ from db.connection import get_db_connection
 from db.scrape_runs import audited_scrape_run
 from scraper.afl_selectors import PLAYER_STATS_SELECTORS
 from db.club_seed import load_club_seed
+from logging_sources import LOG_SOURCES
 
-log = setup_logger("player_stats_scraper", "scrape_afl_player_stats.log")
+_source = LOG_SOURCES["player_stats"]
+log = setup_logger(_source.logger_name, _source.filename)
 
 log.debug("🔍 Environment check:")
 log.debug(f"  CWD: {os.getcwd()}")

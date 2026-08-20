@@ -15,8 +15,10 @@ from utils.club_lookup import get_canonical_club, load_clubs, resolve_club_code
 from utils.dictionary import CLUB_SLUG_ALIASES
 from scraper.afl_selectors import INJURY_SELECTORS
 from scraper.injuries.acquisition import InjuryAcquirer
+from logging_sources import LOG_SOURCES
 
-log = setup_logger("injury_scraper", "scrape_afl_injuries.log")
+_source = LOG_SOURCES["injuries"]
+log = setup_logger(_source.logger_name, _source.filename)
 
 def extract_and_match_club(img_src: str, alt_text: str = "") -> dict | None:
     """Extract a club match using alt text, then fallback to slug matching."""

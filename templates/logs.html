@@ -5,6 +5,27 @@
   <h1 class="h2">Logs &amp; diagnostics</h1>
   <p class="text-muted mb-0">Inspect recent output from operational collectors and scheduler jobs. Timestamps are displayed in AWST when the source line uses the expected UTC format.</p>
 </div>
+
+<section class="card mb-4">
+  <div class="card-header fw-bold">Known log sources</div>
+  <div class="table-responsive">
+    <table class="table table-sm mb-0">
+      <thead>
+        <tr><th>Source</th><th>Status</th><th>Detail</th></tr>
+      </thead>
+      <tbody>
+        {% for source in sources %}
+        <tr>
+          <td>{{ source.status.display_name }}</td>
+          <td><span class="badge bg-{{ source.display.style }}">{{ source.display.label }}</span></td>
+          <td class="text-muted small">{{ source.display.detail }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
 <form class="card card-body row g-3 align-items-end mb-4" method="get">
   <div class="col-md-3"><label class="form-label" for="log">Log source</label><select id="log" class="form-select" name="log">{% for option in log_options %}<option value="{{ option }}" {% if option == selected_log %}selected{% endif %}>{{ option }}</option>{% endfor %}</select></div>
   <div class="col-md-4"><label class="form-label" for="q">Filter entries</label><input id="q" class="form-control" type="search" name="q" value="{{ q }}" placeholder="Text to find"></div>
@@ -14,7 +35,7 @@
 {% if log_error %}
 <div class="empty-state" role="status">
   <h2 class="h5">{{ log_error }}</h2>
-  {% if expected_file %}<p class="text-muted mb-1">Expected log: <strong>{{ selected_log }}</strong></p><p class="technical text-muted mb-0">{{ expected_file }}</p><p class="small text-muted mt-3 mb-0">The file may not be created until this operation has run. This does not indicate that the admin interface has failed.</p>{% else %}<p class="text-muted mb-0">Choose one of the available log sources above.</p>{% endif %}
+  {% if expected_file %}<p class="text-muted mb-1">Expected log: <strong>{{ selected_log }}</strong></p><p class="technical text-muted mb-0">{{ expected_file }}</p><p class="small text-muted mt-3 mb-0">This reflects the configured source's current status. It does not indicate that the admin interface has failed.</p>{% else %}<p class="text-muted mb-0">Choose one of the available log sources above.</p>{% endif %}
 </div>
 {% elif logs %}
 <p class="small text-muted">Showing up to {{ lines }} most recent matching lines from <span class="technical">{{ expected_file }}</span>.</p>

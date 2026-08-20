@@ -6,9 +6,11 @@ from utils.log import setup_logger
 from db.connection import get_db_connection
 from scheduler.registry import add_registered_job, record_planning_failure, stats_match_job_id
 from scheduler.time_policy import MetadataTimestampError, match_day_timezone, parse_metadata_timestamp
+from logging_sources import LOG_SOURCES
 
 # Dedicated logger for scheduler processes (not scraper internals)
-scheduler_log = setup_logger("scheduler_jobs", "scheduler_jobs.log")
+_source = LOG_SOURCES["scheduler_jobs"]
+scheduler_log = setup_logger(_source.logger_name, _source.filename)
 
 def run_stats_scraper(match_id: int):
     """Run the policy-selected canonical CFS collector for an internal match ID."""
