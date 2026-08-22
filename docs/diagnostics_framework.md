@@ -37,6 +37,23 @@ whole point: adding it required one new profile module, one new small
 migration, and one registration line, with **zero** changes to `match_clock`
 or to any shared scheduler/APScheduler code.
 
+Issue #196's `commentary` investigation is the framework's **third** checked-in
+profile, added ahead of the remaining Round 24 matches to observe CFS
+`commentaryFeed/{matchProviderId}` behaviour: whether the accumulated
+`commentaryEvent[]` feed's `periodNumber`/`periodSeconds`/`playerId`/`teamId`/
+`scoreEvent` fields line up with `match_clock`'s independently captured
+`matchItem` evidence and `interchange`'s roster evidence, when the feed first
+becomes available, and whether previously published entries are ever edited,
+removed or reordered. It is evidence capture only -- see
+`collection/match_commentary_evidence.py` and
+`scheduler/match_commentary_capture.py` -- and, like `interchange` before it,
+required only one new profile module, one new migration, and one
+registration line, with **zero** changes to `match_clock`, `interchange`, or
+any shared scheduler/APScheduler code. It is deliberately independent from
+the production design work tracked in Issue #187: commentary text, score
+events and injury/interchange context captured here are evidence for that
+future decision, never a production signal in their own right.
+
 ## Diagnostics vs. production collectors
 
 This is the one rule the whole framework exists to enforce:
@@ -74,6 +91,7 @@ diagnostics/
         __init__.py          imports + registers every checked-in profile
         match_clock.py        Issue #148 profile (thin adapter)
         interchange.py         Issue #193 profile (thin adapter)
+        commentary.py           Issue #196 profile (thin adapter)
 
 collection/match_state_evidence.py   match_clock: endpoint def, parsing, transition
                                       detection, persistence (unchanged from PR #175)
@@ -89,6 +107,15 @@ scheduler/match_interchange_capture.py     interchange: candidate selection
                                             _live_matches/_kickoff_tolerance_matches
                                             helpers -- see that module's docstring),
                                             settings, poll-cycle orchestration
+
+collection/match_commentary_evidence.py    commentary: endpoint def, parsing,
+                                            accumulated-feed deduplication by
+                                            fingerprint, conservative categorisation,
+                                            persistence (two tables: polls + events)
+scheduler/match_commentary_capture.py      commentary: candidate selection (also
+                                            reuses match_state_capture's generic
+                                            helpers), settings, poll-cycle
+                                            orchestration
 ```
 
 The framework owns everything that is common to *any* diagnostic
@@ -159,7 +186,7 @@ never discovered from configuration, a directory scan, or a URL.
 
 ```env
 AFL_DIAGNOSTICS_ENABLED=true
-AFL_DIAGNOSTIC_PROFILES=match_clock,interchange
+AFL_DIAGNOSTIC_PROFILES=match_clock,interchange,commentary
 ```
 
 `AFL_DIAGNOSTIC_PROFILES` is a comma-separated list of *already checked-in*
@@ -167,9 +194,13 @@ profile names -- it selects among code that exists in the repository, it is
 never a mechanism for supplying arbitrary URLs, JSON paths, or code through
 `.env`. Enabling a profile requires both the global switch and the profile
 being named; either alone is a no-op. Each named profile is registered as its
-own independent APScheduler job (see Architecture above), so `match_clock`
-and `interchange` can be enabled together, individually, or not at all, in
-any combination, and one being disabled never affects the other.
+own independent APScheduler job (see Architecture above), so `match_clock`,
+`interchange` and `commentary` can be enabled together, individually, or not
+at all, in any combination, and one being disabled never affects the others.
+This is the currently supported live diagnostic configuration -- all three
+profiles running together for the remaining Round 24 matches, producing
+three independently captured but time-alignable evidence streams (see
+"Cross-profile correlation" below).
 
 Profile-specific *safe* settings (an interval, a tolerance window) remain
 individually configurable, following the profile's own name:
@@ -182,7 +213,35 @@ AFL_DIAGNOSTIC_MATCH_CLOCK_POST_LIVE_GRACE_SECONDS=600
 AFL_DIAGNOSTIC_INTERCHANGE_INTERVAL_SECONDS=15
 AFL_DIAGNOSTIC_INTERCHANGE_KICKOFF_TOLERANCE_SECONDS=600
 AFL_DIAGNOSTIC_INTERCHANGE_POST_LIVE_GRACE_SECONDS=600
+
+AFL_DIAGNOSTIC_COMMENTARY_INTERVAL_SECONDS=15
+AFL_DIAGNOSTIC_COMMENTARY_KICKOFF_TOLERANCE_SECONDS=600
+AFL_DIAGNOSTIC_COMMENTARY_POST_LIVE_GRACE_SECONDS=600
 ```
+
+### Cross-profile correlation (Issue #196)
+
+`match_clock`, `interchange` and `commentary` are captured completely
+independently -- none of them reads another's evidence, and none of them is
+authoritative for the others -- but they share a common alignment model so a
+human reviewing the evidence afterwards can line them up:
+
+* `match_provider_id` (the CFS `CD_M...` identifier, common to all three);
+* `observed_at_utc` (each profile's own per-poll UTC timestamp);
+* `period_number` / `period_seconds`, where the *source itself* supplies
+  them -- `match_clock` and `commentary` both do; `interchange` does not, and
+  its evidence is never backfilled with invented clock coordinates just to
+  make the datasets line up (Issue #196 is explicit about this).
+
+For example, `commentary`'s `"The siren has sounded to end Q2."` event and
+`match_clock`'s `periodCompleted=true` observation for the same
+`match_provider_id` at `period_number=2, period_seconds=1978` are two
+independent pieces of corroborating evidence for the same real-world moment
+-- never merged into one row, always inspectable side by side via
+`scripts/report_match_state_evidence.py` and
+`scripts/report_commentary_evidence.py` (or the corresponding
+`/scheduler/match-state-evidence` and `/scheduler/match-commentary-evidence`
+endpoints) using the same `match_provider_id`.
 
 ### Backward compatibility with PR #175's configuration names
 
@@ -232,9 +291,17 @@ names -- nothing here changes what a fresh deployment does out of the box.
 * `GET /scheduler/match-interchange-evidence` -- `interchange`-specific
   evidence and settings; see also `scripts/report_interchange_evidence.py`,
   which suppresses noisy per-poll `timeOnGround`/`timeOnBench` transitions
-  by default (`--verbose` to see them). Each profile added this way -- its
-  own endpoint and/or report script -- the same pattern `match_clock`
-  established.
+  by default (`--verbose` to see them).
+* `GET /scheduler/match-commentary-evidence` -- `commentary`-specific
+  evidence and settings, returning both `polls` (one row per poll attempt,
+  success or failure) and `events` (one row per deduplicated commentary
+  event); see also `scripts/report_commentary_evidence.py`, which shows
+  quarter markers, score events, player/team-linked commentary, detected
+  possible edits and endpoint outcome transitions by default, suppressing
+  uncategorised narrative commentary (`--all-events` to see it) -- and never
+  repeats the same deduplicated event across multiple polls. Each profile
+  added this way -- its own endpoint and/or report script -- the same
+  pattern `match_clock` established.
 
 ## Persistence: why `match_state_evidence_observations` stays as-is
 
@@ -273,24 +340,42 @@ this decision: migration `0017` adds its own
 appear to carry an equivalent field) rather than being forced into
 match_clock's column shape or a premature generic one.
 
-**When to revisit this:** with two profiles now shipped, still keep watching
-for a third before generalising. A reasonable trigger for a shared schema is
-three or more profiles with materially the same shape (poll sequence,
-observed-at, per-poll fields, transition flags, selective raw retention) --
-at that point extracting a shared `diagnostic_observations`-style table (with
-each profile owning its own typed "extra fields" column, or a
-profile-specific companion table for anything that needs real columns)
-becomes a genuine simplification rather than premature architecture. Any such
-migration should be additive (new table, backfill by copying/mapping
-existing rows, dual-read period, then retire the old table) so an
-in-progress investigation is never interrupted.
+`commentary` (Issue #196) is now a **third** profile with its own tables
+(migration `0018`: `commentary_evidence_polls` + `commentary_evidence_events`),
+and it makes the "materially the same shape" trigger below explicitly *not*
+fire: commentary's evidence is an accumulated, deduplicated event stream, not
+a per-poll snapshot -- the unit of evidence is a unique commentary event
+(keyed by a computed fingerprint, since the endpoint supplies no id), not one
+row per poll. Forcing that into match_clock's or interchange's per-poll
+snapshot shape would have been a worse fit than two small, purpose-built
+tables. Its poll-outcome table also deliberately persists failure outcomes
+(not only successes), unlike the other two profiles -- see
+`collection/match_commentary_evidence.py` for why.
+
+**When to revisit the "one generic schema" question:** a reasonable trigger
+is three or more profiles with materially the same shape (poll sequence,
+observed-at, per-poll fields, transition flags, selective raw retention).
+With three profiles now shipped but only two (`match_clock`, `interchange`)
+sharing that per-poll-snapshot shape, that trigger has not fired -- keep
+watching for a *fourth* profile matching either shape before generalising
+either one. At that point extracting a shared schema (with each profile
+owning its own typed "extra fields" column, or a profile-specific companion
+table for anything that needs real columns) becomes a genuine simplification
+rather than premature architecture. Any such migration should be additive
+(new table, backfill by copying/mapping existing rows, dual-read period,
+then retire the old table) so an in-progress investigation is never
+interrupted.
 
 ## Adding a new diagnostic profile
 
-`interchange` (Issue #193) is a second real, checked-in example of this
-workflow alongside `match_clock` -- see `diagnostics/profiles/interchange.py`,
-`collection/match_interchange_evidence.py`, and
-`scheduler/match_interchange_capture.py`. Using a hypothetical
+`interchange` (Issue #193) and `commentary` (Issue #196) are a second and
+third real, checked-in example of this workflow alongside `match_clock` --
+see `diagnostics/profiles/interchange.py` /
+`collection/match_interchange_evidence.py` /
+`scheduler/match_interchange_capture.py`, and
+`diagnostics/profiles/commentary.py` /
+`collection/match_commentary_evidence.py` /
+`scheduler/match_commentary_capture.py`. Using a hypothetical
 `match_roster_contract` investigation as a further illustration:
 
 1. **Write the investigation-specific logic**, following `match_clock`'s

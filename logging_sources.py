@@ -59,6 +59,13 @@ def _match_interchange_capture_enabled() -> bool:
     return bool(config.AFL_DIAGNOSTICS_ENABLED) and "interchange" in config.AFL_DIAGNOSTIC_PROFILES
 
 
+def _match_commentary_capture_enabled() -> bool:
+    """Mirrors diagnostics.framework.is_profile_selected("commentary"). See
+    _match_state_capture_enabled() above for why this is reimplemented
+    directly against config rather than importing diagnostics.framework."""
+    return bool(config.AFL_DIAGNOSTICS_ENABLED) and "commentary" in config.AFL_DIAGNOSTIC_PROFILES
+
+
 @dataclass(frozen=True)
 class LogSource:
     """One known operational log source.
@@ -198,6 +205,18 @@ _SOURCES: tuple[LogSource, ...] = (
         enabled=_match_interchange_capture_enabled,
         disabled_reason=(
             "The 'interchange' diagnostic profile is not enabled "
+            "(AFL_DIAGNOSTICS_ENABLED / AFL_DIAGNOSTIC_PROFILES)."
+        ),
+    ),
+    LogSource(
+        id="match_commentary_capture",
+        display_name="Match Commentary Capture",
+        description="Diagnostic-only live commentaryFeed evidence capture (Issue #196).",
+        logger_name="match_commentary_capture",
+        filename="match_commentary_capture.log",
+        enabled=_match_commentary_capture_enabled,
+        disabled_reason=(
+            "The 'commentary' diagnostic profile is not enabled "
             "(AFL_DIAGNOSTICS_ENABLED / AFL_DIAGNOSTIC_PROFILES)."
         ),
     ),

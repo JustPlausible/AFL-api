@@ -324,6 +324,67 @@ def test_match_clock_and_interchange_both_register_when_both_selected(db, monkey
     assert {job["id"] for job in scheduler.jobs} == {"diagnostic_match_clock", "diagnostic_interchange"}
 
 
+# --- commentary registers generically through the framework, independently
+# of match_clock and interchange (Issue #196) --------------------------------
+
+def test_checked_in_profiles_include_commentary():
+    import diagnostics.profiles  # noqa: F401 - registers checked-in profiles
+    assert "commentary" in framework.registered_profiles()
+
+
+def test_commentary_profile_registers_via_generic_framework(db, monkeypatch):
+    import config
+    _enable(monkeypatch, "commentary")
+    monkeypatch.setattr(config, "AFL_DIAGNOSTIC_COMMENTARY_INTERVAL_SECONDS", 25, raising=False)
+    from diagnostics.profiles.commentary import CommentaryProfile
+
+    scheduler = FakeScheduler()
+    assert register_diagnostic_profile_job(scheduler, CommentaryProfile()) is True
+    job = scheduler.jobs[0]
+    assert job["id"] == "diagnostic_commentary"
+    assert job["trigger"].interval.total_seconds() == 25
+
+
+def test_commentary_profile_not_registered_when_diagnostics_disabled(db, monkeypatch):
+    _disable(monkeypatch)
+    from diagnostics.profiles.commentary import CommentaryProfile
+
+    scheduler = FakeScheduler()
+    assert register_diagnostic_profile_job(scheduler, CommentaryProfile()) is False
+    assert scheduler.jobs == []
+
+
+def test_all_three_checked_in_profiles_register_together(db, monkeypatch):
+    """match_clock, interchange and commentary are independently selectable
+    and independently schedulable, all together -- the configuration shown
+    in docs/diagnostics_framework.md and Issue #196."""
+    _enable(monkeypatch, "match_clock", "interchange", "commentary")
+    from diagnostics.profiles.commentary import CommentaryProfile
+    from diagnostics.profiles.interchange import InterchangeProfile
+    from diagnostics.profiles.match_clock import MatchClockProfile
+
+    scheduler = FakeScheduler()
+    assert register_diagnostic_profile_job(scheduler, MatchClockProfile()) is True
+    assert register_diagnostic_profile_job(scheduler, InterchangeProfile()) is True
+    assert register_diagnostic_profile_job(scheduler, CommentaryProfile()) is True
+    assert {job["id"] for job in scheduler.jobs} == {
+        "diagnostic_match_clock", "diagnostic_interchange", "diagnostic_commentary",
+    }
+
+
+def test_commentary_profile_status_reports_error_instead_of_raising_for_bad_settings(monkeypatch):
+    import config
+    from diagnostics.profiles.commentary import CommentaryProfile
+    monkeypatch.setattr(config, "AFL_DIAGNOSTIC_COMMENTARY_POST_LIVE_GRACE_SECONDS", -1, raising=False)
+
+    status = CommentaryProfile().status()
+    assert status["name"] == "commentary"
+    assert status["interval_seconds"] is None
+    assert "error" in status
+    assert "kickoff_tolerance_seconds" not in status
+    assert "post_live_grace_seconds" not in status
+
+
 def test_interchange_profile_status_reports_error_instead_of_raising_for_bad_settings(monkeypatch):
     import config
     from diagnostics.profiles.interchange import InterchangeProfile

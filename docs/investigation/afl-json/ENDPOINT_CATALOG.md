@@ -316,6 +316,31 @@ and `awayInterchangeCounts`; live-match behaviour (in particular whether
 currently off the ground) is exactly what the `interchange` profile is
 gathering evidence to answer.
 
+**Update (Issue #196):** `commentaryFeed/{matchProviderId}` is now under
+active diagnostic verification via the checked-in `commentary` diagnostic
+profile (see `docs/diagnostics_framework.md`,
+`collection/match_commentary_evidence.py`,
+`scheduler/match_commentary_capture.py`). Like `matchInterchange` above, this
+is opt-in, evidence-capture-only polling -- it is **not** a production
+endpoint contract, is not wired into the consumer API, does not make match
+state or match finality depend on commentary text, and remains entirely
+independent of the production design work tracked in Issue #187. A
+concluded-match response has been observed
+(`tests/fixtures/afl/commentary/match_8216_commentary_concluded.json`, plus a
+reduced fixture at `tests/fixtures/afl/commentary/commentary_feed_reduced.json`
+used by the profile's own tests) with top-level `matchId`, `lastUpdated` and
+an accumulated, newest-first `commentaryEvent[]` array whose entries carry
+`comment`, `periodNumber`, `periodSeconds`, `playerId`, `teamId` and
+`scoreEvent` -- but **no event identifier of any kind**, which is why the
+diagnostic layer computes its own conservative fingerprint for deduplication
+rather than assuming one exists. Live-match behaviour -- when the feed first
+becomes available relative to the scheduled bounce, whether quarter-start/
+quarter-end markers and score events are consistently well-formed, and
+whether previously published entries are ever edited, removed or reordered
+-- is exactly what the `commentary` profile is gathering evidence to answer
+across the remaining Round 24 matches, alongside `match_clock` and
+`interchange`.
+
 ## 6. Canonical field mapping for match player statistics
 
 The original Codex table was based on HTML scraping and contained placeholder JSON paths. For the JSON collector, most HTML fallback rules are no longer primary. Keep the HTML scraper only as a fallback adapter.

@@ -321,11 +321,24 @@ Observed authenticated JSON contains match commentary linked to player/team even
 
 | Collector | DB | Scheduler | Consumer API |
 |---|---|---|---|
-| **No** | **No** | **No** | **No** |
+| **Diagnostic-only** | **Diagnostic-only** | **Diagnostic-only** | **No** |
 
-Some collection tooling recognises commentary as a known family but does not claim support where no maintained collector exists.
+**Update (Issue #196):** as of this writing the endpoint is under active
+diagnostic verification through the checked-in `commentary` diagnostic
+profile (see `docs/diagnostics_framework.md`). It is explicitly opt-in
+(`AFL_DIAGNOSTICS_ENABLED=true`, `AFL_DIAGNOSTIC_PROFILES` including
+`commentary`), writes only to its own diagnostic evidence tables
+(`commentary_evidence_polls` + `commentary_evidence_events`, migration
+`0018`), and is never consumed by scheduler planning or `/api/v1`. This is
+**not** a production collector and `commentaryFeed` is **not** a
+production-supported endpoint contract -- the diagnostic profile exists to
+gather live evidence (endpoint availability timing, whether quarter-start/
+quarter-end markers and score events are consistently well-formed, whether
+previously published entries are ever edited/removed/reordered) that a
+future, separate implementation decision (tracked in Issue #187) would need.
 
-**Recommendation:** optional extension only; no current canonical-stat dependency.
+**Recommendation:** optional extension only; no current canonical-stat
+dependency, pending the outcome of the live diagnostic investigation above.
 
 ## 5. HTML/rendered source implementation matrix
 
