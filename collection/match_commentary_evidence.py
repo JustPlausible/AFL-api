@@ -100,9 +100,11 @@ facts -- this module never resolves or replaces them with player/team names.
 Only the *new* event's own (small) raw JSON object is retained -- never the
 full accumulated feed array -- and only once, at first observation. The poll
 row additionally retains the full raw feed payload only on the very first
-poll for a match, or on a poll where at least one new event was discovered,
-or where the ``commentaryEvent`` field was missing/malformed (to aid
-debugging); an ordinary "nothing new" poll retains no raw payload at all.
+poll for a match, on a poll where at least one new event was discovered, on
+a poll where the ``commentaryEvent`` field was missing/malformed (to aid
+debugging), or on a poll that recovers from a preceding non-success outcome
+(to aid investigating an availability gap); an ordinary "nothing new" poll
+retains no raw payload at all.
 
 ## Conservative categorisation
 
@@ -169,6 +171,7 @@ TRANSITION_FIRST_POLL = "first_poll"
 TRANSITION_NEW_EVENTS = "new_events"
 TRANSITION_POSSIBLE_EVENT_EDIT = "possible_event_edit"
 TRANSITION_COMMENTARY_MISSING_OR_MALFORMED = "commentary_field_missing_or_malformed"
+TRANSITION_OUTCOME_SUCCESS = "outcome_success"
 
 OUTCOME_SUCCESS = "success"
 OUTCOME_MALFORMED_PAYLOAD = "malformed_payload"
@@ -387,11 +390,26 @@ def persist_observation(conn: sqlite3.Connection, observation: MatchCommentaryOb
     row -- in that player-attributed case it is additionally linked via
     ``possible_edit_of_event_id`` for report visibility. See module docstring
     for the full fingerprint/slot-key/raw-retention policy.
+
+    A success immediately following a non-success poll (``not_published``,
+    ``http_error``, etc. -- see ``persist_poll_outcome``) is itself recorded
+    as a transition (``TRANSITION_OUTCOME_SUCCESS``), even when the feed
+    content is otherwise unchanged from before the outage -- otherwise the
+    endpoint's recovery would be invisible to the report, which is exactly
+    the availability-timeline evidence this profile exists to capture.
     """
     next_sequence = _next_poll_sequence(conn, observation.match_provider_id)
+    previous_outcome_row = conn.execute(
+        "SELECT outcome FROM commentary_evidence_polls WHERE match_provider_id=? ORDER BY poll_sequence DESC LIMIT 1",
+        (observation.match_provider_id,),
+    ).fetchone()
+    recovered_from_failure = previous_outcome_row is not None and previous_outcome_row[0] != OUTCOME_SUCCESS
+
     flags: list[str] = []
     if next_sequence == 1:
         flags.append(TRANSITION_FIRST_POLL)
+    if recovered_from_failure:
+        flags.append(TRANSITION_OUTCOME_SUCCESS)
 
     new_events: list[dict[str, Any]] = []
     possible_edits: list[dict[str, Any]] = []
@@ -452,11 +470,12 @@ def persist_observation(conn: sqlite3.Connection, observation: MatchCommentaryOb
         flags.append(TRANSITION_POSSIBLE_EVENT_EDIT)
 
     is_transition = bool(flags)
-    # Raw feed retention: only the first poll, a poll with at least one new
-    # event, or a malformed/missing-array poll retains the full raw payload
-    # -- never an ordinary "nothing new" poll. Each new event's own raw
-    # object is separately retained above, once, regardless of this flag.
-    retain_raw = next_sequence == 1 or bool(new_events) or observation.events is None
+    # Raw feed retention: the first poll, a poll with at least one new event,
+    # a malformed/missing-array poll, or a recovery-from-failure poll retains
+    # the full raw payload -- never an ordinary "nothing new" poll. Each new
+    # event's own raw object is separately retained above, once, regardless
+    # of this flag.
+    retain_raw = next_sequence == 1 or bool(new_events) or observation.events is None or recovered_from_failure
     cur = conn.execute(
         """INSERT INTO commentary_evidence_polls(
                match_id, match_provider_id, poll_sequence, observed_at, match_status_at_poll, outcome,

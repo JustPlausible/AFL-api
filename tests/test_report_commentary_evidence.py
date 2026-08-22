@@ -160,6 +160,10 @@ def test_report_shows_endpoint_outcome_transitions(db, capsys):
     out = capsys.readouterr().out
     assert "endpoint availability/outcome transitions" in out
     assert "outcome=not_published" in out
+    # The recovery poll (not_published -> success) must also be visible,
+    # not just the initial failure -- see collection/match_commentary_evidence.py's
+    # TRANSITION_OUTCOME_SUCCESS handling.
+    assert "outcome=success" in out
 
 
 def test_report_handles_no_evidence_gracefully(db, capsys):

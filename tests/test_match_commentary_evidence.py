@@ -25,6 +25,7 @@ from collection.match_commentary_evidence import (
     TRANSITION_COMMENTARY_MISSING_OR_MALFORMED,
     TRANSITION_FIRST_POLL,
     TRANSITION_NEW_EVENTS,
+    TRANSITION_OUTCOME_SUCCESS,
     TRANSITION_POSSIBLE_EVENT_EDIT,
     MatchCommentaryEvidenceError,
     categorise_event,
@@ -450,6 +451,61 @@ def test_persist_poll_outcome_records_failure_and_flags_transition_on_change(db)
         {"poll_sequence": 2, "outcome": "not_published", "is_transition": 0},
         {"poll_sequence": 3, "outcome": "http_error", "is_transition": 1},
     ]
+
+
+def test_persist_observation_recovering_from_failure_is_flagged_as_transition(db):
+    """A success poll immediately following a non-success one must itself be
+    a visible transition -- even when the feed content is otherwise
+    unchanged -- so the endpoint's recovery/availability timeline is not
+    silently lost. Regression test for a Codex review finding on PR #197."""
+    conn, _ = db
+    persist_poll_outcome(
+        conn, match_id=9001, match_provider_id="CD_M20260142402", observed_at=_iso(),
+        match_status_at_poll="SCHEDULED", outcome="not_published",
+    )
+    conn.commit()
+
+    payload = commentary_payload(events=[])
+    observation = parse_match_commentary(payload, match_id=9001, match_provider_id="CD_M20260142402",
+                                          observed_at=_iso(15), match_status_at_poll="LIVE")
+    outcome = persist_observation(conn, observation)
+    conn.commit()
+
+    assert outcome["poll_sequence"] == 2
+    assert outcome["outcome"] == "success"
+    assert outcome["new_event_count"] == 0
+    assert outcome["is_transition"] is True
+    assert TRANSITION_OUTCOME_SUCCESS in outcome["transitions"]
+
+    row = conn.execute(
+        "SELECT is_transition, raw_commentary_json FROM commentary_evidence_polls WHERE poll_sequence=2"
+    ).fetchone()
+    assert row["is_transition"] == 1
+    assert row["raw_commentary_json"] is not None  # recovery poll retains raw for investigation
+
+
+def test_persist_observation_back_to_back_success_after_recovery_is_not_a_transition(db):
+    """Once recovered, a further unchanged success poll goes back to being
+    a non-transition -- the recovery flag is not sticky."""
+    conn, _ = db
+    persist_poll_outcome(
+        conn, match_id=9001, match_provider_id="CD_M20260142402", observed_at=_iso(),
+        match_status_at_poll="SCHEDULED", outcome="not_published",
+    )
+    conn.commit()
+    payload = commentary_payload(events=[])
+    persist_observation(conn, parse_match_commentary(
+        payload, match_id=9001, match_provider_id="CD_M20260142402", observed_at=_iso(15),
+        match_status_at_poll="LIVE",
+    ))
+    conn.commit()
+    third = persist_observation(conn, parse_match_commentary(
+        payload, match_id=9001, match_provider_id="CD_M20260142402", observed_at=_iso(30),
+        match_status_at_poll="LIVE",
+    ))
+    conn.commit()
+    assert third["is_transition"] is False
+    assert third["transitions"] == []
 
 
 def test_poll_sequence_shared_across_success_and_failure_persistence(db):

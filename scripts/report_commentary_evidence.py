@@ -54,7 +54,7 @@ def _print_match_report(match_provider_id: str, polls: list[dict], events: list[
         latest_feed_updated = next((p["feed_last_updated"] for p in reversed(polls) if p["feed_last_updated"]), None)
         print(f"latest feed lastUpdated={latest_feed_updated}")
 
-    outcome_transitions = [p for p in polls if p["is_transition"] and "outcome_success" not in p["transition_flags"] and
+    outcome_transitions = [p for p in polls if p["is_transition"] and
                             any(flag.startswith("outcome_") for flag in p["transition_flags"])]
     if outcome_transitions:
         print("  -- endpoint availability/outcome transitions --")
