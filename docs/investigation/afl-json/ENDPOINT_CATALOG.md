@@ -300,6 +300,22 @@ Candidate families:
 
 Track these as research items rather than guessing their production contracts.
 
+**Update (Issue #193):** `matchInterchange/{matchProviderId}` is now under
+active diagnostic verification via the checked-in `interchange` diagnostic
+profile (see `docs/diagnostics_framework.md`,
+`collection/match_interchange_evidence.py`,
+`scheduler/match_interchange_capture.py`). This is opt-in, evidence-capture-only
+polling to observe live behaviour ahead of a real match -- it is **not** a
+production collector, is not wired into the consumer API, and this endpoint
+remains an unverified, uncatalogued CFS endpoint with no production contract
+until a separate, deliberate decision promotes it. A concluded-match response
+has been observed (`tests/fixtures/afl/interchange/`) with top-level
+`matchId`, `homeInterchange[]`, `awayInterchange[]`, `homeInterchangeCounts`
+and `awayInterchangeCounts`; live-match behaviour (in particular whether
+`homeInterchange[]`/`awayInterchange[]` membership means a player is
+currently off the ground) is exactly what the `interchange` profile is
+gathering evidence to answer.
+
 ## 6. Canonical field mapping for match player statistics
 
 The original Codex table was based on HTML scraping and contained placeholder JSON paths. For the JSON collector, most HTML fallback rules are no longer primary. Keep the HTML scraper only as a fallback adapter.

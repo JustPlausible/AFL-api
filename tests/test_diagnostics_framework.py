@@ -281,6 +281,62 @@ def test_checked_in_profiles_include_match_clock():
     assert "match_clock" in framework.registered_profiles()
 
 
+# --- interchange registers generically through the framework, independently
+# of match_clock (Issue #193) -------------------------------------------
+
+def test_checked_in_profiles_include_interchange():
+    import diagnostics.profiles  # noqa: F401 - registers checked-in profiles
+    assert "interchange" in framework.registered_profiles()
+
+
+def test_interchange_profile_registers_via_generic_framework(db, monkeypatch):
+    import config
+    _enable(monkeypatch, "interchange")
+    monkeypatch.setattr(config, "AFL_DIAGNOSTIC_INTERCHANGE_INTERVAL_SECONDS", 25, raising=False)
+    from diagnostics.profiles.interchange import InterchangeProfile
+
+    scheduler = FakeScheduler()
+    assert register_diagnostic_profile_job(scheduler, InterchangeProfile()) is True
+    job = scheduler.jobs[0]
+    assert job["id"] == "diagnostic_interchange"
+    assert job["trigger"].interval.total_seconds() == 25
+
+
+def test_interchange_profile_not_registered_when_diagnostics_disabled(db, monkeypatch):
+    _disable(monkeypatch)
+    from diagnostics.profiles.interchange import InterchangeProfile
+
+    scheduler = FakeScheduler()
+    assert register_diagnostic_profile_job(scheduler, InterchangeProfile()) is False
+    assert scheduler.jobs == []
+
+
+def test_match_clock_and_interchange_both_register_when_both_selected(db, monkeypatch):
+    """Both checked-in profiles are independently selectable/schedulable
+    together -- neither one's registration depends on the other."""
+    _enable(monkeypatch, "match_clock", "interchange")
+    from diagnostics.profiles.interchange import InterchangeProfile
+    from diagnostics.profiles.match_clock import MatchClockProfile
+
+    scheduler = FakeScheduler()
+    assert register_diagnostic_profile_job(scheduler, MatchClockProfile()) is True
+    assert register_diagnostic_profile_job(scheduler, InterchangeProfile()) is True
+    assert {job["id"] for job in scheduler.jobs} == {"diagnostic_match_clock", "diagnostic_interchange"}
+
+
+def test_interchange_profile_status_reports_error_instead_of_raising_for_bad_settings(monkeypatch):
+    import config
+    from diagnostics.profiles.interchange import InterchangeProfile
+    monkeypatch.setattr(config, "AFL_DIAGNOSTIC_INTERCHANGE_POST_LIVE_GRACE_SECONDS", -1, raising=False)
+
+    status = InterchangeProfile().status()
+    assert status["name"] == "interchange"
+    assert status["interval_seconds"] is None
+    assert "error" in status
+    assert "kickoff_tolerance_seconds" not in status
+    assert "post_live_grace_seconds" not in status
+
+
 def test_match_clock_profile_status_reports_error_instead_of_raising_for_bad_settings(monkeypatch):
     """Regression test: MatchClockProfile.status() used to call
     MatchStateCaptureSettings.from_config() a second time, unguarded, after

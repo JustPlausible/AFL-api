@@ -224,6 +224,30 @@ def match_state_evidence(match_id: int | None = None, match_provider_id: str | N
     }
 
 
+@app.get("/scheduler/match-interchange-evidence")
+def match_interchange_evidence(match_id: int | None = None, match_provider_id: str | None = None,
+                                transitions_only: bool = False, limit: int = 500):
+    """Read-only diagnostic evidence for Issue #193 (opt-in capture only)."""
+    from scheduler.match_interchange_capture import MatchInterchangeCaptureSettings
+    from collection.match_interchange_evidence import evidence_rows
+    settings = MatchInterchangeCaptureSettings.from_config()
+    conn = get_read_only_db_connection()
+    try:
+        rows = evidence_rows(
+            conn, match_id=match_id, match_provider_id=match_provider_id,
+            transitions_only=transitions_only, limit=limit,
+        )
+    finally:
+        conn.close()
+    return {
+        "enabled": settings.enabled,
+        "interval_seconds": settings.interval_seconds,
+        "kickoff_tolerance_seconds": settings.kickoff_tolerance_seconds,
+        "post_live_grace_seconds": settings.post_live_grace_seconds,
+        "observations": rows,
+    }
+
+
 @app.get("/scheduler/player-stat-polling")
 def polling_status():
     from scheduler.player_stat_polling import get_player_stat_polling_worker
