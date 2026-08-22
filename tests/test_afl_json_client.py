@@ -189,10 +189,12 @@ def test_endpoint_without_override_still_uses_the_standard_cfs_root():
 def test_invalid_json_response_carries_safe_diagnostics_for_an_html_error_page():
     """Reproduces the live failure shape: a wrong URL returns a 404 HTML
     error page, and response.json() raises. The resulting
-    AflJsonInvalidResponse must carry enough safe metadata to diagnose this
-    without a live repro -- status, content-type, body shape, and a bounded
-    preview -- and must never carry request headers (the CFS token) or an
-    unbounded body."""
+    AflJsonInvalidResponse must carry enough safe *structural* metadata to
+    diagnose this without a live repro -- status, content-type, body shape
+    -- and must never carry request headers (the CFS token) or any response
+    body content at all, per docs/architecture/workflows/
+    scheduler_workflow_design.md's "never store tokens, response bodies, or
+    unsafe exception details merely for scheduler diagnosis"."""
     html_body = "<html><head><title>404 Not Found</title></head><body>Not Found</body></html>"
     subject = client(
         FakeResponse(payload={"token": "token"}),
@@ -210,19 +212,20 @@ def test_invalid_json_response_carries_safe_diagnostics_for_an_html_error_page()
     assert diagnostics is not None
     assert diagnostics["content_type"] == "text/html; charset=utf-8"
     assert diagnostics["body_shape"] == "html-looking"
-    assert "404 Not Found" in diagnostics["body_preview"]
     assert diagnostics["redirect_count"] == 0
     assert diagnostics["content_length_actual"] == len(html_body.encode())
-    # Whitelisted keys only -- no request headers (which carry the CFS auth
-    # token "token" set up by client()) ever end up in this dict.
+    # Whitelisted keys only -- structural metadata alone, never any body
+    # content, and no request headers (which carry the CFS auth token
+    # "token" set up by client()).
     assert set(diagnostics) == {
         "content_type", "content_encoding", "content_length_header", "content_length_actual",
-        "declared_encoding", "redirect_count", "body_shape", "body_preview",
+        "declared_encoding", "redirect_count", "body_shape",
     }
     assert "token" not in diagnostics.values()
+    assert not any("404 Not Found" in str(value) for value in diagnostics.values())
 
 
-def test_invalid_json_response_body_preview_is_bounded_and_sanitised():
+def test_invalid_json_response_classifies_large_body_without_storing_any_content():
     huge_body = "{" + ("a" * 5000)
     subject = client(
         FakeResponse(
@@ -234,10 +237,33 @@ def test_invalid_json_response_body_preview_is_bounded_and_sanitised():
     with pytest.raises(AflJsonInvalidResponse) as caught:
         subject.get("competitions")
 
-    preview = caught.value.response_diagnostics["body_preview"]
-    assert len(preview) < 300
-    assert preview.endswith("...(truncated)")
-    assert caught.value.response_diagnostics["body_shape"] == "json-looking"
+    diagnostics = caught.value.response_diagnostics
+    assert diagnostics["body_shape"] == "json-looking"
+    assert not any("aaaa" in str(value) for value in diagnostics.values())
+
+
+def test_invalid_json_response_never_leaks_body_content_even_with_injected_control_characters():
+    """Security regression: a malicious/garbled upstream body containing
+    embedded newlines (log-injection payload) or secrets-shaped text must
+    never reach response_diagnostics -- not bounded, not sanitised, not at
+    all -- since diagnostics is logged verbatim by capture code."""
+    hostile_body = "not json\r\nfake_log_line=ADMIN_TOKEN_LEAKED forged_status=200\nsecret=abc123"
+    subject = client(
+        FakeResponse(
+            status_code=200, text=hostile_body, content=hostile_body.encode(),
+            headers={"Content-Type": "text/plain"}, encoding="utf-8",
+            json_error=ValueError("Expecting value: line 1 column 1 (char 0)"),
+        ),
+    )
+    with pytest.raises(AflJsonInvalidResponse) as caught:
+        subject.get("competitions")
+
+    diagnostics = caught.value.response_diagnostics
+    serialised = str(diagnostics)
+    assert "\r" not in serialised and "\n" not in serialised
+    assert "ADMIN_TOKEN_LEAKED" not in serialised
+    assert "secret=abc123" not in serialised
+    assert diagnostics["body_shape"] == "unknown"
 
 
 def test_invalid_json_response_empty_body_is_classified_empty():

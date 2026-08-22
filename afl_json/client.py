@@ -271,11 +271,15 @@ def _error_code(payload: Any) -> str | None:
     return None
 
 
-# Bounded so a body preview can never make a log line unbounded/unreadable,
-# and small enough that it is evidence about the response's *shape* (JSON vs
-# HTML vs empty vs something else), never a meaningful fraction of any real
-# payload.
-_BODY_PREVIEW_MAX_CHARS = 200
+# Used only to classify the response's *shape* in-process (JSON vs HTML vs
+# empty vs something else) -- this prefix is never itself returned, logged,
+# or otherwise stored. docs/architecture/workflows/scheduler_workflow_design.md
+# ("never store tokens, response bodies, or unsafe exception details merely
+# for scheduler diagnosis") is explicit that no response body content --
+# bounded or not -- belongs in diagnostics, and a raw body slice risks log
+# injection (embedded CR/LF forging fake log lines) on top of that. Only the
+# classification label below is safe to expose.
+_BODY_CLASSIFICATION_PREVIEW_CHARS = 200
 
 
 def _classify_body(prefix: str) -> str:
@@ -290,19 +294,14 @@ def _classify_body(prefix: str) -> str:
     return "unknown"
 
 
-def _sanitised_body_preview(raw_prefix: str, *, truncated: bool) -> str:
-    """Strip non-printable characters so a binary/garbled body can never
-    corrupt log output; this is a bounded diagnostic preview, not the body."""
-    sanitised = "".join(ch if ch.isprintable() or ch in "\n\r\t" else "?" for ch in raw_prefix)
-    return sanitised + "...(truncated)" if truncated else sanitised
-
-
 def _response_diagnostics(response: requests.Response) -> dict[str, Any]:
     """Safe, structured metadata about a response that failed JSON decoding.
 
     Deliberately whitelisted to a small set of non-sensitive response
-    headers plus a bounded, sanitised body preview -- never the full body,
-    never request headers (which carry the CFS auth token), never response
+    headers plus a structural body classification -- never any response
+    body content (not even bounded/sanitised -- see
+    docs/architecture/workflows/scheduler_workflow_design.md), never
+    request headers (which carry the CFS auth token), never response
     headers wholesale (e.g. Set-Cookie). Used to make a live
     AflJsonInvalidResponse failure diagnosable (HTTP status, Content-Type,
     Content-Encoding, content length, declared/apparent encoding, redirect
@@ -313,8 +312,6 @@ def _response_diagnostics(response: requests.Response) -> dict[str, Any]:
         raw_text = response.text
     except Exception:  # pragma: no cover - defensive: diagnostics must never mask the real error
         raw_text = ""
-    truncated = len(raw_text) > _BODY_PREVIEW_MAX_CHARS
-    raw_prefix = raw_text[:_BODY_PREVIEW_MAX_CHARS]
     try:
         content_length_actual = len(response.content)
     except Exception:  # pragma: no cover - defensive
@@ -326,6 +323,5 @@ def _response_diagnostics(response: requests.Response) -> dict[str, Any]:
         "content_length_actual": content_length_actual,
         "declared_encoding": response.encoding,
         "redirect_count": len(response.history),
-        "body_shape": _classify_body(raw_prefix),
-        "body_preview": _sanitised_body_preview(raw_prefix, truncated=truncated),
+        "body_shape": _classify_body(raw_text[:_BODY_CLASSIFICATION_PREVIEW_CHARS]),
     }
