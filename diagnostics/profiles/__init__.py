@@ -9,8 +9,10 @@ one module here and one import/`register_profile` call below, never a
 config-driven or dynamically loaded profile.
 """
 from diagnostics.framework import register_profile
+from diagnostics.profiles.interchange import InterchangeProfile
 from diagnostics.profiles.match_clock import MatchClockProfile
 
 register_profile(MatchClockProfile())
+register_profile(InterchangeProfile())
 
-__all__ = ["MatchClockProfile"]
+__all__ = ["MatchClockProfile", "InterchangeProfile"]

@@ -298,9 +298,22 @@ Observed as authenticated match interchange history. Concluded and live response
 
 | Collector | DB | Scheduler | Consumer API |
 |---|---|---|---|
-| **No** | **No** | **No** | **No** |
+| **Diagnostic-only** | **Diagnostic-only** | **Diagnostic-only** | **No** |
 
-**Recommendation:** lower priority for the core consumer API; potentially useful later for player-availability or time-on-ground related features.
+**Update (Issue #193):** as of this writing the endpoint is under active
+diagnostic verification through the checked-in `interchange` diagnostic
+profile (see `docs/diagnostics_framework.md`). It is explicitly opt-in
+(`AFL_DIAGNOSTICS_ENABLED=true`, `AFL_DIAGNOSTIC_PROFILES` including
+`interchange`), writes only to its own diagnostic evidence table
+(`match_interchange_evidence_observations`, migration `0017`), and is never
+consumed by scheduler planning or `/api/v1`. This is **not** a production
+collector and `matchInterchange` is **not** a production-supported endpoint
+contract -- the diagnostic profile exists to gather live evidence (endpoint
+availability timing, array-membership semantics, count/bench-reason update
+cadence, quarter-break and POSTGAME/CONCLUDED behaviour) that a future,
+separate implementation decision would need.
+
+**Recommendation:** lower priority for the core consumer API; potentially useful later for player-availability or time-on-ground related features, pending the outcome of the live diagnostic investigation above.
 
 ### CFS `commentaryFeed/{matchProviderId}`
 
@@ -409,7 +422,7 @@ These pages are no longer the preferred source for canonical player membership b
 | CFS round rosters | CFS `matchRosters/round` | **No** | **No** | Read-only |
 | `matchRoster/full` | None | No | No | Investigation only |
 | `matchItem` periods/events | None | No | No | Investigation only |
-| Interchange history | None | No | No | Investigation only |
+| Interchange history | Diagnostic evidence table only (`match_interchange_evidence_observations`) | No | No | Active diagnostic investigation (Issue #193), not production-supported |
 | Commentary | None | No | No | Investigation only |
 | Stats Centre players | None | No | No | Investigation only |
 | Leader totals/averages | CSV artifact | No | No | Manual export |

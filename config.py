@@ -194,3 +194,14 @@ AFL_CAPTURE_MATCH_STATE_EVIDENCE = _parse_bool_env("AFL_CAPTURE_MATCH_STATE_EVID
 AFL_MATCH_STATE_CAPTURE_INTERVAL_SECONDS = _parse_int_env("AFL_MATCH_STATE_CAPTURE_INTERVAL_SECONDS", 15)
 AFL_MATCH_STATE_CAPTURE_KICKOFF_TOLERANCE_SECONDS = _parse_int_env("AFL_MATCH_STATE_CAPTURE_KICKOFF_TOLERANCE_SECONDS", 600)
 AFL_MATCH_STATE_CAPTURE_POST_LIVE_GRACE_SECONDS = _parse_int_env("AFL_MATCH_STATE_CAPTURE_POST_LIVE_GRACE_SECONDS", 600)
+
+# interchange profile (Issue #193): diagnostic-only live matchInterchange evidence
+# capture investigating homeInterchange[]/awayInterchange[] array-position semantics,
+# interchangeCount, benchReason, timeOnGround/timeOnBench and team-level interchange
+# count totals. A second, independently selectable/schedulable checked-in profile on
+# the same diagnostics framework as match_clock -- no legacy names, since this is a
+# new investigation. See diagnostics/profiles/interchange.py and
+# scheduler/match_interchange_capture.py.
+AFL_DIAGNOSTIC_INTERCHANGE_INTERVAL_SECONDS = _parse_int_env("AFL_DIAGNOSTIC_INTERCHANGE_INTERVAL_SECONDS", 15)
+AFL_DIAGNOSTIC_INTERCHANGE_KICKOFF_TOLERANCE_SECONDS = _parse_int_env("AFL_DIAGNOSTIC_INTERCHANGE_KICKOFF_TOLERANCE_SECONDS", 600)
+AFL_DIAGNOSTIC_INTERCHANGE_POST_LIVE_GRACE_SECONDS = _parse_int_env("AFL_DIAGNOSTIC_INTERCHANGE_POST_LIVE_GRACE_SECONDS", 600)

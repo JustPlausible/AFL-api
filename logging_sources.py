@@ -52,6 +52,13 @@ def _match_state_capture_enabled() -> bool:
     return bool(config.AFL_DIAGNOSTICS_ENABLED) and "match_clock" in config.AFL_DIAGNOSTIC_PROFILES
 
 
+def _match_interchange_capture_enabled() -> bool:
+    """Mirrors diagnostics.framework.is_profile_selected("interchange"). See
+    _match_state_capture_enabled() above for why this is reimplemented
+    directly against config rather than importing diagnostics.framework."""
+    return bool(config.AFL_DIAGNOSTICS_ENABLED) and "interchange" in config.AFL_DIAGNOSTIC_PROFILES
+
+
 @dataclass(frozen=True)
 class LogSource:
     """One known operational log source.
@@ -179,6 +186,18 @@ _SOURCES: tuple[LogSource, ...] = (
         enabled=_match_state_capture_enabled,
         disabled_reason=(
             "The 'match_clock' diagnostic profile is not enabled "
+            "(AFL_DIAGNOSTICS_ENABLED / AFL_DIAGNOSTIC_PROFILES)."
+        ),
+    ),
+    LogSource(
+        id="match_interchange_capture",
+        display_name="Match Interchange Capture",
+        description="Diagnostic-only live matchInterchange evidence capture (Issue #193).",
+        logger_name="match_interchange_capture",
+        filename="match_interchange_capture.log",
+        enabled=_match_interchange_capture_enabled,
+        disabled_reason=(
+            "The 'interchange' diagnostic profile is not enabled "
             "(AFL_DIAGNOSTICS_ENABLED / AFL_DIAGNOSTIC_PROFILES)."
         ),
     ),

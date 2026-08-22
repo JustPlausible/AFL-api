@@ -2,7 +2,7 @@
 import sqlite3
 from datetime import datetime
 
-from fastapi import FastAPI, HTTPException, Response, status
+from fastapi import FastAPI, HTTPException, Query, Response, status
 from apscheduler.jobstores.base import JobLookupError
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -207,6 +207,37 @@ def match_state_evidence(match_id: int | None = None, match_provider_id: str | N
     from scheduler.match_state_capture import MatchStateCaptureSettings
     from collection.match_state_evidence import evidence_rows
     settings = MatchStateCaptureSettings.from_config()
+    conn = get_read_only_db_connection()
+    try:
+        rows = evidence_rows(
+            conn, match_id=match_id, match_provider_id=match_provider_id,
+            transitions_only=transitions_only, limit=limit,
+        )
+    finally:
+        conn.close()
+    return {
+        "enabled": settings.enabled,
+        "interval_seconds": settings.interval_seconds,
+        "kickoff_tolerance_seconds": settings.kickoff_tolerance_seconds,
+        "post_live_grace_seconds": settings.post_live_grace_seconds,
+        "observations": rows,
+    }
+
+
+@app.get("/scheduler/match-interchange-evidence")
+def match_interchange_evidence(match_id: int | None = None, match_provider_id: str | None = None,
+                                transitions_only: bool = False,
+                                limit: int = Query(default=500, ge=1, le=5000)):
+    """Read-only diagnostic evidence for Issue #193 (opt-in capture only).
+
+    ``limit`` is bounded (1-5000): each row can carry a full per-side player
+    array, and SQLite treats a non-positive LIMIT as "no limit", so an
+    unbounded/negative value here could load and return the entire evidence
+    table for a long-running capture.
+    """
+    from scheduler.match_interchange_capture import MatchInterchangeCaptureSettings
+    from collection.match_interchange_evidence import evidence_rows
+    settings = MatchInterchangeCaptureSettings.from_config()
     conn = get_read_only_db_connection()
     try:
         rows = evidence_rows(
