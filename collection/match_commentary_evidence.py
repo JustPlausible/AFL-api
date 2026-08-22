@@ -135,9 +135,25 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from afl_json.contracts import EndpointDefinition, HttpMethod, SourceSystem
+from afl_json.contracts import CFS_API_BASE, EndpointDefinition, HttpMethod, SourceSystem
 
 COLLECTOR_VERSION = "match_commentary_evidence_v1"
+
+# commentaryFeed lives one directory above the standard CFS_API_BASE root
+# ("https://api.afl.com.au/cfs/afl") that every other CFS endpoint in this
+# project (matchItem, matchInterchange, playerStats, ...) genuinely lives
+# under -- at "https://api.afl.com.au/cfs/commentaryFeed/...", not
+# ".../cfs/afl/commentaryFeed/...". This was confirmed by comparing a direct
+# Bruno capture of {{CFS_API_BASE}}/commentaryFeed/{{matchId}} against
+# AFL-api's generated request during the live CD_M20260142403 match: every
+# poll against the wrong (nonexistent) ".../cfs/afl/commentaryFeed/..." path
+# returned a non-JSON error response, surfacing as "AFL endpoint returned
+# invalid JSON" on every single attempt (see
+# tests/fixtures/afl/commentary/commentary_feed_CD_M20260142403_live.json,
+# captured directly via Bruno against the real endpoint during that match,
+# and test_match_commentary_endpoint_resolves_to_the_cfs_commentary_root_not_cfs_afl
+# in tests/test_match_commentary_evidence.py, the regression test for this).
+_CFS_COMMENTARY_BASE_URL = CFS_API_BASE.removesuffix("/afl")
 
 # Unverified, diagnostic-only endpoint: intentionally not part of afl_json.contracts.ENDPOINTS.
 MATCH_COMMENTARY_ENDPOINT = EndpointDefinition(
@@ -150,6 +166,7 @@ MATCH_COMMENTARY_ENDPOINT = EndpointDefinition(
     collection_paths=(),
     identifier_type=None,
     required_path_parameters=("match_provider_id",),
+    base_url_override=_CFS_COMMENTARY_BASE_URL,
     verified=False,
     unverified_fields=(
         "whether commentaryEvent[] is a complete, stable accumulated history, or can be "
