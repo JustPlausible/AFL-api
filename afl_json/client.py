@@ -55,12 +55,19 @@ class AflJsonError(RuntimeError):
     """Base error containing safe, structured request context."""
 
     def __init__(self, message: str, *, endpoint: str, status_code: int | None = None,
-                 error_code: str | None = None, attempts: int = 1):
+                 error_code: str | None = None, attempts: int = 1,
+                 response_diagnostics: Mapping[str, Any] | None = None):
         super().__init__(message)
         self.endpoint = endpoint
         self.status_code = status_code
         self.error_code = error_code
         self.attempts = attempts
+        # Optional, whitelisted metadata about a response that failed to
+        # decode as JSON -- see _response_diagnostics() below. None for every
+        # error raised without it (the overwhelming majority of call sites);
+        # populated only by _decode_json() so a live "invalid JSON" failure
+        # carries enough safe evidence to diagnose without a repro.
+        self.response_diagnostics = response_diagnostics
 
 
 class AflJsonTransportError(AflJsonError):
@@ -228,6 +235,7 @@ class AflJsonClient:
             raise AflJsonInvalidResponse(
                 "AFL endpoint returned invalid JSON", endpoint=endpoint,
                 status_code=response.status_code, attempts=attempts,
+                response_diagnostics=_response_diagnostics(response),
             ) from exc
 
     @staticmethod
@@ -261,3 +269,59 @@ def _error_code(payload: Any) -> str | None:
         value = errors[0].get("code") or errors[0].get("errorCode")
         return value if isinstance(value, str) else None
     return None
+
+
+# Used only to classify the response's *shape* in-process (JSON vs HTML vs
+# empty vs something else) -- this prefix is never itself returned, logged,
+# or otherwise stored. docs/architecture/workflows/scheduler_workflow_design.md
+# ("never store tokens, response bodies, or unsafe exception details merely
+# for scheduler diagnosis") is explicit that no response body content --
+# bounded or not -- belongs in diagnostics, and a raw body slice risks log
+# injection (embedded CR/LF forging fake log lines) on top of that. Only the
+# classification label below is safe to expose.
+_BODY_CLASSIFICATION_PREVIEW_CHARS = 200
+
+
+def _classify_body(prefix: str) -> str:
+    """Cheap, structural classification of a response body -- never a full parse."""
+    stripped = prefix.strip()
+    if not stripped:
+        return "empty"
+    if stripped.startswith("<"):
+        return "html-looking"
+    if stripped[0] in "{[":
+        return "json-looking"
+    return "unknown"
+
+
+def _response_diagnostics(response: requests.Response) -> dict[str, Any]:
+    """Safe, structured metadata about a response that failed JSON decoding.
+
+    Deliberately whitelisted to a small set of non-sensitive response
+    headers plus a structural body classification -- never any response
+    body content (not even bounded/sanitised -- see
+    docs/architecture/workflows/scheduler_workflow_design.md), never
+    request headers (which carry the CFS auth token), never response
+    headers wholesale (e.g. Set-Cookie). Used to make a live
+    AflJsonInvalidResponse failure diagnosable (HTTP status, Content-Type,
+    Content-Encoding, content length, declared/apparent encoding, redirect
+    count, and whether the body looks like JSON/HTML/empty/other) without a
+    live repro -- see AflJsonError.response_diagnostics.
+    """
+    try:
+        raw_text = response.text
+    except Exception:  # pragma: no cover - defensive: diagnostics must never mask the real error
+        raw_text = ""
+    try:
+        content_length_actual = len(response.content)
+    except Exception:  # pragma: no cover - defensive
+        content_length_actual = None
+    return {
+        "content_type": response.headers.get("Content-Type"),
+        "content_encoding": response.headers.get("Content-Encoding"),
+        "content_length_header": response.headers.get("Content-Length"),
+        "content_length_actual": content_length_actual,
+        "declared_encoding": response.encoding,
+        "redirect_count": len(response.history),
+        "body_shape": _classify_body(raw_text[:_BODY_CLASSIFICATION_PREVIEW_CHARS]),
+    }

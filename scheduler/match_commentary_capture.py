@@ -169,9 +169,19 @@ def _capture_one(client: AflJsonClient, match_id: int, match_provider_id: str, *
         )
         response, outcome = None, "transport_error"
     except AflJsonInvalidResponse as exc:
+        # response_diagnostics is safe, whitelisted structural metadata only
+        # (HTTP status, Content-Type/-Encoding, content length, declared
+        # encoding, redirect count, and a JSON/HTML/empty/unknown shape
+        # classification) -- never tokens, never any response body content,
+        # per docs/architecture/workflows/scheduler_workflow_design.md's
+        # "never store tokens, response bodies, or unsafe exception details
+        # merely for scheduler diagnosis". See afl_json.client._response_diagnostics.
+        # This is what would have let a live "invalid JSON" failure be
+        # root-caused (a URL resolving to the wrong CFS base path, returning
+        # an HTML error page) without a manual Bruno comparison.
         log.warning(
-            "commentaryFeed malformed response match_id=%s match_provider_id=%s error=%s",
-            match_id, match_provider_id, exc,
+            "commentaryFeed malformed response match_id=%s match_provider_id=%s error=%s diagnostics=%s",
+            match_id, match_provider_id, exc, exc.response_diagnostics,
         )
         response, outcome = None, "invalid_response"
     except AflJsonHttpError as exc:

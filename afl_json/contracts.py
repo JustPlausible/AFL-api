@@ -57,9 +57,23 @@ class EndpointDefinition:
     verified: bool = True
     unverified_fields: tuple[str, ...] = ()
     required_record_fields: tuple[str, ...] = ()
+    # Every maintained CFS endpoint in this project genuinely lives under
+    # CFS_API_BASE ("https://api.afl.com.au/cfs/afl"), so this defaults to
+    # None and base_url below is unchanged for all of them. It exists because
+    # not every CFS endpoint family actually lives there -- commentaryFeed
+    # was confirmed (PR #197 live-match follow-up, comparing a direct Bruno
+    # capture against AFL-api's generated request for CD_M20260142403) to
+    # live one directory above, at "https://api.afl.com.au/cfs/commentaryFeed/...",
+    # not ".../cfs/afl/commentaryFeed/...". Rather than hardcode a special
+    # case into base_url's logic, a diagnostic-only endpoint definition (kept
+    # out of the maintained ENDPOINTS registry below, same as any other
+    # unverified diagnostic endpoint) can set this explicitly.
+    base_url_override: str | None = None
 
     @property
     def base_url(self) -> str:
+        if self.base_url_override is not None:
+            return self.base_url_override
         return CFS_API_BASE if self.source is SourceSystem.CFS else PUBLIC_API_BASE
 
     @property

@@ -99,6 +99,129 @@ def test_match_commentary_endpoint_is_unverified_and_not_in_shared_registry():
     assert MATCH_COMMENTARY_ENDPOINT.requires_auth is True
 
 
+def test_match_commentary_endpoint_resolves_to_the_cfs_commentary_root_not_cfs_afl():
+    """Regression test for the live CD_M20260142403 failure: every poll during
+    that match failed with "AFL endpoint returned invalid JSON" because
+    MATCH_COMMENTARY_ENDPOINT resolved to
+    https://api.afl.com.au/cfs/afl/commentaryFeed/CD_M20260142403 (via the
+    standard CFS_API_BASE root every *other* CFS endpoint in this project
+    genuinely lives under), which does not exist. A direct Bruno capture
+    against the same match during the same window confirmed the real
+    endpoint lives one directory above: .../cfs/commentaryFeed/{id}, not
+    .../cfs/afl/commentaryFeed/{id}. Nothing in the previous test suite ever
+    asserted the *resolved request URL* for this endpoint -- every existing
+    test fed already-parsed JSON straight into parse_match_commentary(), so
+    this specific class of bug (a correct parser wired to a wrong URL) was
+    invisible to it. See collection/match_commentary_evidence.py's
+    _CFS_COMMENTARY_BASE_URL and afl_json/contracts.py's base_url_override.
+    """
+    from afl_json.contracts import CFS_API_BASE
+    assert MATCH_COMMENTARY_ENDPOINT.base_url == "https://api.afl.com.au/cfs"
+    assert MATCH_COMMENTARY_ENDPOINT.base_url != CFS_API_BASE
+    assert not MATCH_COMMENTARY_ENDPOINT.base_url.endswith("/afl")
+    resolved = MATCH_COMMENTARY_ENDPOINT.url_template.format(match_provider_id="CD_M20260142403")
+    assert resolved == "https://api.afl.com.au/cfs/commentaryFeed/CD_M20260142403"
+
+
+# --- Live fixture: CD_M20260142403 (Round 24, Carlton v Fremantle) ----------
+# Captured directly via Bruno against the real endpoint mid-Q3, at the same
+# time the (then-broken) commentary diagnostic profile was failing every
+# poll for this exact match. Used verbatim, never edited -- see
+# tests/fixtures/afl/commentary/commentary_feed_CD_M20260142403_live.metadata.json.
+
+def test_parse_match_commentary_handles_the_live_CD_M20260142403_capture():
+    payload = commentary_fixture("commentary_feed_CD_M20260142403_live.json")
+    observation = parse_match_commentary(
+        payload, match_id=1, match_provider_id="CD_M20260142403", observed_at=_iso(),
+        match_status_at_poll="LIVE",
+    )
+    assert observation.match_provider_id == "CD_M20260142403"
+    assert observation.feed_last_updated == "2026-08-22T04:57:06.257+0000"
+    assert len(observation.events) == 69
+
+    def find(substr):
+        return [e for e in observation.events if substr in (e.comment or "")]
+
+    q1_start = find("Q1 is now underway")
+    assert [(e.period_number, e.period_seconds) for e in q1_start] == [(1, 0)]
+    assert q1_start[0].category == CATEGORY_QUARTER_START
+
+    q1_end = find("siren has sounded to end Q1")
+    assert [(e.period_number, e.period_seconds) for e in q1_end] == [(1, 1971)]
+    assert q1_end[0].category == CATEGORY_QUARTER_END
+
+    q2_start = find("Q2 is now underway")
+    assert [(e.period_number, e.period_seconds) for e in q2_start] == [(2, 0)]
+
+    q2_end = find("siren has sounded to end Q2")
+    assert [(e.period_number, e.period_seconds) for e in q2_end] == [(2, 1748)]
+
+    q3_start = find("Q3 is now underway")
+    assert [(e.period_number, e.period_seconds) for e in q3_start] == [(3, 0)]
+
+    # Cross-validated against match_clock's independently captured evidence
+    # for this same live match: Q1 completed at 1971s, Q2 completed at 1748s.
+    assert q1_end[0].period_seconds == 1971
+    assert q2_end[0].period_seconds == 1748
+
+    score_events = [e for e in observation.events if e.score_event]
+    assert len(score_events) == 32
+    assert all(e.category == CATEGORY_SCORE_EVENT for e in score_events)
+
+    player_team_linked_score_events = [e for e in score_events if e.player_id is not None and e.team_id is not None]
+    assert len(player_team_linked_score_events) > 0
+    assert any(e.comment == "GOAL - Dockers (Patrick Voss)" and e.player_id == "CD_I1017754"
+               and e.team_id == "CD_T60" for e in score_events)
+
+    narrative_events = [e for e in observation.events if not e.score_event and e.player_id is None and e.team_id is None]
+    assert len(narrative_events) > 0
+
+    interchange_events = find("Interchange")
+    assert len(interchange_events) == 2
+    assert all(e.category is None for e in interchange_events)  # conservative: no NLP-based injury/interchange category
+
+
+def test_persist_observation_live_CD_M20260142403_capture_produces_real_events_and_report_facts(db):
+    """End-to-end regression: the fixed transport + existing parser +
+    existing persistence must together turn this real capture into non-zero
+    commentary_evidence_events -- what actually failed live (distinct_events=0
+    for the whole match)."""
+    conn, _ = db
+    conn.execute(
+        "INSERT INTO matches(match_id, match_provider_id, round_id, home_team, away_team, venue, status, "
+        "start_time_utc, season_id, scraped_at) VALUES(9002,'CD_M20260142403',1,'Carlton','Fremantle','V','LIVE',?,73,?)",
+        (NOW.isoformat(), NOW.isoformat()),
+    )
+    conn.commit()
+    payload = commentary_fixture("commentary_feed_CD_M20260142403_live.json")
+    observation = parse_match_commentary(
+        payload, match_id=9002, match_provider_id="CD_M20260142403", observed_at=_iso(),
+        match_status_at_poll="LIVE",
+    )
+    outcome = persist_observation(conn, observation)
+    conn.commit()
+
+    assert outcome["outcome"] == "success"
+    assert outcome["new_event_count"] == 69
+    distinct_events = conn.execute(
+        "SELECT COUNT(*) FROM commentary_evidence_events WHERE match_provider_id='CD_M20260142403'"
+    ).fetchone()[0]
+    assert distinct_events == 69
+    assert distinct_events > 0  # the literal symptom reported live: distinct_events=0
+
+    quarter_markers = conn.execute(
+        "SELECT COUNT(*) FROM commentary_evidence_events WHERE match_provider_id='CD_M20260142403' "
+        "AND category IN (?, ?)", (CATEGORY_QUARTER_START, CATEGORY_QUARTER_END),
+    ).fetchone()[0]
+    assert quarter_markers == 5  # Q1/Q2/Q3 start + Q1/Q2 end
+
+    score_event_rows = conn.execute(
+        "SELECT COUNT(*) FROM commentary_evidence_events WHERE match_provider_id='CD_M20260142403' "
+        "AND category=?", (CATEGORY_SCORE_EVENT,),
+    ).fetchone()[0]
+    assert score_event_rows == 32
+
+
 # --- Parsing ------------------------------------------------------------
 
 def test_parse_match_commentary_extracts_events_from_reduced_fixture():

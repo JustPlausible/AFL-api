@@ -1,0 +1,28 @@
+{
+  "domain": "match_commentary",
+  "fixture_set": "CD_M20260142403_live_q3",
+  "season": 2026,
+  "round_number": 24,
+  "match": {
+    "match_provider_id": "CD_M20260142403",
+    "status": "LIVE (mid-Q3 at capture time)",
+    "home_team": {"name": "Carlton", "provider_id": "CD_T30"},
+    "away_team": {"name": "Fremantle", "provider_id": "CD_T60"}
+  },
+  "capture": {
+    "capture_tool": "Bruno",
+    "request": {
+      "method": "GET",
+      "url": "{{CFS_API_BASE}}/commentaryFeed/{{matchId}}",
+      "resolved_url": "https://api.afl.com.au/cfs/commentaryFeed/CD_M20260142403"
+    },
+    "response": {"http_status": 200, "content_type": "application/json"}
+  },
+  "notes": [
+    "Captured directly via Bruno against the real live commentaryFeed endpoint during the CD_M20260142403 (Carlton v Fremantle, Round 24) match, while the checked-in `commentary` diagnostic profile (Issue #196 / PR #197) was simultaneously polling the SAME match and failing every request with 'AFL endpoint returned invalid JSON'.",
+    "Root cause: AFL-api's MATCH_COMMENTARY_ENDPOINT resolved to https://api.afl.com.au/cfs/afl/commentaryFeed/CD_M20260142403 (via the standard CFS_API_BASE root used by every other CFS endpoint), which does not exist -- the real endpoint lives one directory above, at https://api.afl.com.au/cfs/commentaryFeed/CD_M20260142403, exactly as this capture's resolved_url shows and matching Bruno's successful request.",
+    "This file is used verbatim (never edited) as a regression fixture for parse_match_commentary() -- see tests/test_match_commentary_evidence.py's CD_M20260142403 live-match test block.",
+    "match_clock's independently captured Q1/Q2 completed periodSeconds for this same match (1971, 1748) match this feed's 'The siren has sounded to end Q1./Q2.' periodSeconds exactly, corroborating both diagnostic profiles independently.",
+    "commentaryEvent is reverse-chronological (newest first), same as every other observed commentaryFeed capture."
+  ]
+}
