@@ -1,0 +1,102 @@
+{
+  "matchId": "CD_M20260142001",
+  "lastUpdated": "2026-07-23T12:25:15.324+0000",
+  "commentaryEvent": [
+    {
+      "comment": "The siren has sounded to end Q4.",
+      "periodNumber": 4,
+      "periodSeconds": 1950,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "Adelaide were unable to create out of their defensive 50 tonight, achieving an inside 50 just three times from 34 defensive 50 chains and were unable to score from the zone. The last time they were scoreless from the zone was Round 18, 2024.",
+      "periodNumber": 4,
+      "periodSeconds": 1950,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "Collingwood's forward half pressure was fantastic in the second half, having a forward half pressure rating of 186 and forcing 16 forward half turnovers, scoring 5.2 (32) from them. In comparison, the Crows scored just 1.1 (7) from the source in the second half.",
+      "periodNumber": 4,
+      "periodSeconds": 1950,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "GOAL - Crows (Toby Murray)",
+      "periodNumber": 4,
+      "periodSeconds": 1943,
+      "playerId": "CD_I1020950",
+      "teamId": "CD_T10",
+      "scoreEvent": true
+    },
+    {
+      "comment": "GOAL - Magpies (Tim Membrey)",
+      "periodNumber": 4,
+      "periodSeconds": 1836,
+      "playerId": "CD_I294596",
+      "teamId": "CD_T40",
+      "scoreEvent": true
+    },
+    {
+      "comment": "Magpies Interchange - Brayden Maynard and is possibly out for the game.",
+      "periodNumber": 4,
+      "periodSeconds": 852,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "Q4 is now underway.",
+      "periodNumber": 4,
+      "periodSeconds": 0,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "The siren has sounded to end Q3.",
+      "periodNumber": 3,
+      "periodSeconds": 2021,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "BEHIND - Magpies (Rushed)",
+      "periodNumber": 3,
+      "periodSeconds": 181,
+      "playerId": null,
+      "teamId": "CD_T40",
+      "scoreEvent": true
+    },
+    {
+      "comment": "Q3 is now underway.",
+      "periodNumber": 3,
+      "periodSeconds": 0,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "Q1 is now underway.",
+      "periodNumber": 1,
+      "periodSeconds": 0,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    },
+    {
+      "comment": "Welcome to Adelaide Oval for the Adelaide Crows v Collingwood Round 20 clash.",
+      "periodNumber": 0,
+      "periodSeconds": 0,
+      "playerId": null,
+      "teamId": null,
+      "scoreEvent": false
+    }
+  ]
+}

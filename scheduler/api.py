@@ -255,6 +255,45 @@ def match_interchange_evidence(match_id: int | None = None, match_provider_id: s
     }
 
 
+@app.get("/scheduler/match-commentary-evidence")
+def match_commentary_evidence(match_id: int | None = None, match_provider_id: str | None = None,
+                               transitions_only: bool = False, category: str | None = None,
+                               limit: int = Query(default=500, ge=1, le=5000)):
+    """Read-only diagnostic evidence for Issue #196 (opt-in capture only).
+
+    Returns two independent lists: ``polls`` (one row per poll attempt,
+    success or failure -- see
+    ``collection.match_commentary_evidence.persist_poll_outcome``) and
+    ``events`` (one row per deduplicated commentary event -- see
+    ``collection.match_commentary_evidence.persist_observation``).
+    ``limit`` is bounded (1-5000) for the same reason as
+    ``/scheduler/match-interchange-evidence``.
+    """
+    from scheduler.match_commentary_capture import MatchCommentaryCaptureSettings
+    from collection.match_commentary_evidence import event_rows, poll_rows
+    settings = MatchCommentaryCaptureSettings.from_config()
+    conn = get_read_only_db_connection()
+    try:
+        polls = poll_rows(
+            conn, match_id=match_id, match_provider_id=match_provider_id,
+            transitions_only=transitions_only, limit=limit,
+        )
+        events = event_rows(
+            conn, match_id=match_id, match_provider_id=match_provider_id,
+            category=category, limit=limit,
+        )
+    finally:
+        conn.close()
+    return {
+        "enabled": settings.enabled,
+        "interval_seconds": settings.interval_seconds,
+        "kickoff_tolerance_seconds": settings.kickoff_tolerance_seconds,
+        "post_live_grace_seconds": settings.post_live_grace_seconds,
+        "polls": polls,
+        "events": events,
+    }
+
+
 @app.get("/scheduler/player-stat-polling")
 def polling_status():
     from scheduler.player_stat_polling import get_player_stat_polling_worker

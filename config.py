@@ -205,3 +205,15 @@ AFL_MATCH_STATE_CAPTURE_POST_LIVE_GRACE_SECONDS = _parse_int_env("AFL_MATCH_STAT
 AFL_DIAGNOSTIC_INTERCHANGE_INTERVAL_SECONDS = _parse_int_env("AFL_DIAGNOSTIC_INTERCHANGE_INTERVAL_SECONDS", 15)
 AFL_DIAGNOSTIC_INTERCHANGE_KICKOFF_TOLERANCE_SECONDS = _parse_int_env("AFL_DIAGNOSTIC_INTERCHANGE_KICKOFF_TOLERANCE_SECONDS", 600)
 AFL_DIAGNOSTIC_INTERCHANGE_POST_LIVE_GRACE_SECONDS = _parse_int_env("AFL_DIAGNOSTIC_INTERCHANGE_POST_LIVE_GRACE_SECONDS", 600)
+
+# commentary profile (Issue #196): diagnostic-only live commentaryFeed evidence
+# capture investigating the accumulated commentaryEvent[] feed -- quarter-start/
+# quarter-end markers, scoreEvent/playerId/teamId attribution, and correlation
+# with match_clock's periodNumber/periodSeconds. A third, independently
+# selectable/schedulable checked-in profile on the same diagnostics framework as
+# match_clock and interchange -- no legacy names, since this is a new
+# investigation. See diagnostics/profiles/commentary.py and
+# scheduler/match_commentary_capture.py.
+AFL_DIAGNOSTIC_COMMENTARY_INTERVAL_SECONDS = _parse_int_env("AFL_DIAGNOSTIC_COMMENTARY_INTERVAL_SECONDS", 15)
+AFL_DIAGNOSTIC_COMMENTARY_KICKOFF_TOLERANCE_SECONDS = _parse_int_env("AFL_DIAGNOSTIC_COMMENTARY_KICKOFF_TOLERANCE_SECONDS", 600)
+AFL_DIAGNOSTIC_COMMENTARY_POST_LIVE_GRACE_SECONDS = _parse_int_env("AFL_DIAGNOSTIC_COMMENTARY_POST_LIVE_GRACE_SECONDS", 600)
