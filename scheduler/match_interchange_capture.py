@@ -132,13 +132,23 @@ def _current_match_status(conn, match_id: int) -> str | None:
     return row[0] if row else None
 
 
-def _capture_one(client: AflJsonClient, match_id: int, match_provider_id: str, *, now: datetime) -> dict[str, Any]:
+def _capture_one(client: AflJsonClient, match_id: int, match_provider_id: str, *,
+                 clock: Callable[[], datetime]) -> dict[str, Any]:
     """Poll and persist one match's matchInterchange evidence.
 
     Distinguishes endpoint availability/error outcomes explicitly (a normal
     "not yet published" 404 is not a scheduler failure) and never raises for
     an individual candidate's failure, so one bad/unavailable match never
     blocks capture for any other match in the same poll cycle.
+
+    ``observed_at`` is taken from ``clock()`` right after this match's own
+    response arrives, not from a single timestamp shared by the whole poll
+    cycle -- with several matches polled sequentially (and each request
+    subject to its own retries/backoff), reusing one cycle-start timestamp
+    for every match would misrepresent how far apart responses actually
+    landed, undermining transition-cadence analysis, correlation with
+    match_clock's evidence, and this profile's own observed_at-driven
+    post-LIVE grace window.
     """
     try:
         response = client.request(MATCH_INTERCHANGE_ENDPOINT, path_parameters={"match_provider_id": match_provider_id})
@@ -178,7 +188,7 @@ def _capture_one(client: AflJsonClient, match_id: int, match_provider_id: str, *
         try:
             current = parse_match_interchange(
                 response.data, match_id=match_id, match_provider_id=match_provider_id,
-                observed_at=now.isoformat(), match_status_at_poll=local_status,
+                observed_at=clock().isoformat(), match_status_at_poll=local_status,
             )
         except MatchInterchangeEvidenceError as exc:
             log.warning(
@@ -213,7 +223,12 @@ def capture_live_match_interchange(*, client: AflJsonClient | None = None,
     settings = MatchInterchangeCaptureSettings.from_config()
     if not settings.enabled:
         return []
-    now = (clock or (lambda: datetime.now(timezone.utc)))()
+    clock_fn = clock or (lambda: datetime.now(timezone.utc))
+    # Used only for candidate-window selection (a single consistent reference
+    # point for "is this match in-window right now" is correct there); each
+    # match's own observed_at is captured separately, per-response, inside
+    # _capture_one -- see its docstring.
+    now = clock_fn()
     conn = get_db_connection()
     try:
         matches = _capture_candidates(conn, now=now, settings=settings)
@@ -225,7 +240,7 @@ def capture_live_match_interchange(*, client: AflJsonClient | None = None,
     results: list[dict[str, Any]] = []
     for match_id, match_provider_id in matches:
         try:
-            results.append(_capture_one(active_client, match_id, match_provider_id, now=now))
+            results.append(_capture_one(active_client, match_id, match_provider_id, clock=clock_fn))
         except AflJsonError as exc:
             log.warning(
                 "matchInterchange evidence capture failed match_id=%s match_provider_id=%s error=%s",

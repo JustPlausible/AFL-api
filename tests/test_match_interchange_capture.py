@@ -170,6 +170,36 @@ def test_capture_detects_interchange_count_change_across_two_polls(db, monkeypat
     assert count == 2
 
 
+def test_capture_records_a_separate_observed_at_per_match_not_one_shared_cycle_timestamp(db, monkeypatch):
+    """Each match's observed_at must reflect when its own response actually
+    arrived, not a single timestamp captured once before the poll loop --
+    otherwise sequential per-match latency (retries, slow requests) would
+    misrepresent transition cadence and this profile's own observed_at-driven
+    post-LIVE grace window."""
+    conn, _ = db
+    add_match(conn, 8001, "CD_M1")
+    add_match(conn, 8002, "CD_M2")
+    _enable(monkeypatch)
+    client = FakeClient({
+        "CD_M1": [interchange_payload(home=[_player("CD_I1")])],
+        "CD_M2": [interchange_payload(home=[_player("CD_I2")])],
+    })
+    # A stepping clock simulates each request taking measurably longer than
+    # the last -- e.g. retries/backoff on one match's request. The first tick
+    # is consumed by candidate-window selection; one further tick per match.
+    ticks = iter([NOW, NOW, NOW + timedelta(seconds=8)])
+    capture_live_match_interchange(client=client, clock=lambda: next(ticks))
+
+    rows = {
+        row["match_provider_id"]: row["observed_at"]
+        for row in conn.execute(
+            "SELECT match_provider_id, observed_at FROM match_interchange_evidence_observations"
+        ).fetchall()
+    }
+    assert rows["CD_M1"] == NOW.isoformat()
+    assert rows["CD_M2"] == (NOW + timedelta(seconds=8)).isoformat()
+
+
 def test_capture_continues_after_one_match_fails(db, monkeypatch):
     conn, _ = db
     add_match(conn, 8001, "CD_M1")
@@ -232,7 +262,7 @@ def test_capture_distinguishes_malformed_payload(db, monkeypatch):
     _enable(monkeypatch)
     from scheduler.match_interchange_capture import _capture_one
     client = FakeClient({"CD_M1": [["not", "an", "object"]]})
-    result = _capture_one(client, 8001, "CD_M1", now=NOW)
+    result = _capture_one(client, 8001, "CD_M1", clock=lambda: NOW)
     assert result["outcome"] == "malformed_payload"
     assert conn.execute("SELECT COUNT(*) FROM match_interchange_evidence_observations").fetchone()[0] == 0
 

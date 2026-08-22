@@ -137,14 +137,27 @@ def test_parse_match_interchange_extracts_players_and_counts_from_concluded_fixt
     assert observation.raw == payload
 
 
-def test_parse_match_interchange_handles_missing_arrays_and_counts():
+def test_parse_match_interchange_preserves_missing_fields_as_none_not_empty():
+    """A missing field must be recorded as unknown (None), not coerced to an
+    empty list/dict -- otherwise detect_transitions() would read "field
+    absent" as "everyone disappeared" against a prior observation. See
+    test_detect_transitions_skips_comparison_when_a_field_is_missing below."""
     observation = parse_match_interchange(
         {"matchId": "CD_M1"}, match_id=1, match_provider_id="CD_M1", observed_at=_iso(),
     )
-    assert observation.home_interchange == []
-    assert observation.away_interchange == []
-    assert observation.home_counts == {}
-    assert observation.away_counts == {}
+    assert observation.home_interchange is None
+    assert observation.away_interchange is None
+    assert observation.home_counts is None
+    assert observation.away_counts is None
+
+
+def test_parse_match_interchange_preserves_malformed_field_types_as_none():
+    observation = parse_match_interchange(
+        {"homeInterchange": "not-a-list", "homeInterchangeCounts": ["not", "a", "dict"]},
+        match_id=1, match_provider_id="CD_M1", observed_at=_iso(),
+    )
+    assert observation.home_interchange is None
+    assert observation.home_counts is None
 
 
 def test_parse_match_interchange_rejects_non_object_payload():
@@ -293,6 +306,40 @@ def test_detect_transitions_no_changes_yields_no_flags():
     previous = parse_match_interchange(payload, match_id=1, match_provider_id="CD_M1", observed_at=_iso())
     current = parse_match_interchange(payload, match_id=1, match_provider_id="CD_M1", observed_at=_iso(15))
     assert detect_transitions(previous, current) == []
+
+
+# --- Transition detection: missing/malformed fields never fabricate a signal -
+
+def test_detect_transitions_skips_comparison_when_a_field_is_missing():
+    """A field missing/malformed in just one poll (e.g. a transient upstream
+    hiccup) must never be read as every previously-tracked player
+    disappearing, nor as the team counts changing -- see
+    parse_match_interchange()."""
+    previous = parse_match_interchange(
+        interchange_payload(home=[_player("CD_I1")], away=[_player("CD_I9")]),
+        match_id=1, match_provider_id="CD_M1", observed_at=_iso(),
+    )
+    # homeInterchange and homeInterchangeCounts both absent from this poll.
+    current = parse_match_interchange(
+        {"matchId": "CD_M1", "awayInterchange": [_player("CD_I9")],
+         "awayInterchangeCounts": {"totalInterchangeCount": 0.0, "interchangeCap": 75.0,
+                                    "interchangeCountQ1": 0.0, "interchangeCountQ2": 0.0,
+                                    "interchangeCountQ3": 0.0, "interchangeCountQ4": 0.0}},
+        match_id=1, match_provider_id="CD_M1", observed_at=_iso(15),
+    )
+    assert detect_transitions(previous, current) == []
+
+
+def test_detect_transitions_field_reappearing_after_a_missing_poll_is_not_a_false_appearance():
+    """The next normal response after a missing-field poll must not report a
+    false "everyone reappeared" either, once the field is one again observed
+    identically to before the gap."""
+    payload = interchange_payload(home=[_player("CD_I1")])
+    missing_home = parse_match_interchange(
+        {"matchId": "CD_M1"}, match_id=1, match_provider_id="CD_M1", observed_at=_iso(15),
+    )
+    reappeared = parse_match_interchange(payload, match_id=1, match_provider_id="CD_M1", observed_at=_iso(30))
+    assert detect_transitions(missing_home, reappeared) == []
 
 
 # --- Persistence: raw retention policy (meaningful vs noisy) -----------------

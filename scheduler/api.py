@@ -2,7 +2,7 @@
 import sqlite3
 from datetime import datetime
 
-from fastapi import FastAPI, HTTPException, Response, status
+from fastapi import FastAPI, HTTPException, Query, Response, status
 from apscheduler.jobstores.base import JobLookupError
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -226,8 +226,15 @@ def match_state_evidence(match_id: int | None = None, match_provider_id: str | N
 
 @app.get("/scheduler/match-interchange-evidence")
 def match_interchange_evidence(match_id: int | None = None, match_provider_id: str | None = None,
-                                transitions_only: bool = False, limit: int = 500):
-    """Read-only diagnostic evidence for Issue #193 (opt-in capture only)."""
+                                transitions_only: bool = False,
+                                limit: int = Query(default=500, ge=1, le=5000)):
+    """Read-only diagnostic evidence for Issue #193 (opt-in capture only).
+
+    ``limit`` is bounded (1-5000): each row can carry a full per-side player
+    array, and SQLite treats a non-positive LIMIT as "no limit", so an
+    unbounded/negative value here could load and return the entire evidence
+    table for a long-running capture.
+    """
     from scheduler.match_interchange_capture import MatchInterchangeCaptureSettings
     from collection.match_interchange_evidence import evidence_rows
     settings = MatchInterchangeCaptureSettings.from_config()

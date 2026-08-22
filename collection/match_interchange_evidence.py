@@ -92,10 +92,19 @@ class MatchInterchangeObservation:
     match_id: int
     match_provider_id: str
     match_status_at_poll: str | None
-    home_interchange: list[dict[str, Any]]
-    away_interchange: list[dict[str, Any]]
-    home_counts: dict[str, Any]
-    away_counts: dict[str, Any]
+    # None means the field was missing or malformed in this particular
+    # response -- distinct from an empty list/dict, which means the field
+    # was present and genuinely empty. This distinction matters: coercing a
+    # missing field to [] would make detect_transitions() report every
+    # previously-tracked player as having disappeared, and the next normal
+    # response would then report them all reappearing -- a false signal that
+    # would corrupt the very evidence this profile exists to gather. See
+    # detect_transitions(), which skips comparison for a side/field entirely
+    # whenever either snapshot has None there.
+    home_interchange: list[dict[str, Any]] | None
+    away_interchange: list[dict[str, Any]] | None
+    home_counts: dict[str, Any] | None
+    away_counts: dict[str, Any] | None
     raw: dict[str, Any]
 
 
@@ -122,7 +131,9 @@ def parse_match_interchange(payload: Any, *, match_id: int, match_provider_id: s
     """Parse a raw matchInterchange response into a diagnostic observation.
 
     Deliberately tolerant of missing/malformed optional structure but
-    requires an object payload.
+    requires an object payload. A missing or wrongly-typed field is recorded
+    as ``None`` (unknown/not observed), never coerced to an empty list/dict
+    -- see MatchInterchangeObservation for why that distinction matters.
     """
     if not isinstance(payload, dict):
         raise MatchInterchangeEvidenceError("matchInterchange payload is not an object")
@@ -135,10 +146,10 @@ def parse_match_interchange(payload: Any, *, match_id: int, match_provider_id: s
         match_id=match_id,
         match_provider_id=match_provider_id,
         match_status_at_poll=match_status_at_poll,
-        home_interchange=deepcopy(home) if isinstance(home, list) else [],
-        away_interchange=deepcopy(away) if isinstance(away, list) else [],
-        home_counts=deepcopy(home_counts) if isinstance(home_counts, dict) else {},
-        away_counts=deepcopy(away_counts) if isinstance(away_counts, dict) else {},
+        home_interchange=deepcopy(home) if isinstance(home, list) else None,
+        away_interchange=deepcopy(away) if isinstance(away, list) else None,
+        home_counts=deepcopy(home_counts) if isinstance(home_counts, dict) else None,
+        away_counts=deepcopy(away_counts) if isinstance(away_counts, dict) else None,
         raw=deepcopy(payload),
     )
 
@@ -184,29 +195,38 @@ def detect_transitions(previous: MatchInterchangeObservation | None,
         return [TRANSITION_FIRST_OBSERVATION]
 
     flags: list[str] = []
-    prev_home = _entries_by_player_id(previous.home_interchange)
-    cur_home = _entries_by_player_id(current.home_interchange)
-    prev_away = _entries_by_player_id(previous.away_interchange)
-    cur_away = _entries_by_player_id(current.away_interchange)
 
-    flags.extend(_player_set_transitions(
-        prev_home, cur_home, appeared=TRANSITION_PLAYER_APPEARED_HOME, disappeared=TRANSITION_PLAYER_DISAPPEARED_HOME
-    ))
-    flags.extend(_player_set_transitions(
-        prev_away, cur_away, appeared=TRANSITION_PLAYER_APPEARED_AWAY, disappeared=TRANSITION_PLAYER_DISAPPEARED_AWAY
-    ))
-    _player_field_transitions(prev_home, cur_home, flags)
-    _player_field_transitions(prev_away, cur_away, flags)
+    # A side/field is compared only when *both* snapshots actually observed
+    # it (neither is None) -- a field missing/malformed in just one poll must
+    # never be treated as "everyone disappeared" / "everything changed". See
+    # MatchInterchangeObservation and parse_match_interchange().
+    if previous.home_interchange is not None and current.home_interchange is not None:
+        prev_home = _entries_by_player_id(previous.home_interchange)
+        cur_home = _entries_by_player_id(current.home_interchange)
+        flags.extend(_player_set_transitions(
+            prev_home, cur_home, appeared=TRANSITION_PLAYER_APPEARED_HOME, disappeared=TRANSITION_PLAYER_DISAPPEARED_HOME
+        ))
+        _player_field_transitions(prev_home, cur_home, flags)
 
-    if previous.home_counts.get("totalInterchangeCount") != current.home_counts.get("totalInterchangeCount"):
-        flags.append(TRANSITION_HOME_TOTAL_INTERCHANGE_COUNT_CHANGED)
-    if previous.away_counts.get("totalInterchangeCount") != current.away_counts.get("totalInterchangeCount"):
-        flags.append(TRANSITION_AWAY_TOTAL_INTERCHANGE_COUNT_CHANGED)
+    if previous.away_interchange is not None and current.away_interchange is not None:
+        prev_away = _entries_by_player_id(previous.away_interchange)
+        cur_away = _entries_by_player_id(current.away_interchange)
+        flags.extend(_player_set_transitions(
+            prev_away, cur_away, appeared=TRANSITION_PLAYER_APPEARED_AWAY, disappeared=TRANSITION_PLAYER_DISAPPEARED_AWAY
+        ))
+        _player_field_transitions(prev_away, cur_away, flags)
 
-    if any(previous.home_counts.get(key) != current.home_counts.get(key) for key in _QUARTER_COUNT_KEYS):
-        flags.append(TRANSITION_HOME_QUARTER_INTERCHANGE_COUNT_CHANGED)
-    if any(previous.away_counts.get(key) != current.away_counts.get(key) for key in _QUARTER_COUNT_KEYS):
-        flags.append(TRANSITION_AWAY_QUARTER_INTERCHANGE_COUNT_CHANGED)
+    if previous.home_counts is not None and current.home_counts is not None:
+        if previous.home_counts.get("totalInterchangeCount") != current.home_counts.get("totalInterchangeCount"):
+            flags.append(TRANSITION_HOME_TOTAL_INTERCHANGE_COUNT_CHANGED)
+        if any(previous.home_counts.get(key) != current.home_counts.get(key) for key in _QUARTER_COUNT_KEYS):
+            flags.append(TRANSITION_HOME_QUARTER_INTERCHANGE_COUNT_CHANGED)
+
+    if previous.away_counts is not None and current.away_counts is not None:
+        if previous.away_counts.get("totalInterchangeCount") != current.away_counts.get("totalInterchangeCount"):
+            flags.append(TRANSITION_AWAY_TOTAL_INTERCHANGE_COUNT_CHANGED)
+        if any(previous.away_counts.get(key) != current.away_counts.get(key) for key in _QUARTER_COUNT_KEYS):
+            flags.append(TRANSITION_AWAY_QUARTER_INTERCHANGE_COUNT_CHANGED)
 
     return flags
 

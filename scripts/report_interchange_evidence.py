@@ -51,14 +51,16 @@ def _print_match_report(match_provider_id: str, rows: list[dict], *, verbose: bo
         display_flags = flags if verbose else _meaningful_flags(flags)
         if not display_flags:
             continue
-        home_total = row["home_counts"].get("totalInterchangeCount")
-        away_total = row["away_counts"].get("totalInterchangeCount")
+        home_total = row["home_counts"].get("totalInterchangeCount") if row["home_counts"] is not None else "unknown"
+        away_total = row["away_counts"].get("totalInterchangeCount") if row["away_counts"] is not None else "unknown"
+        home_players = len(row["home_interchange"]) if row["home_interchange"] is not None else "unknown"
+        away_players = len(row["away_interchange"]) if row["away_interchange"] is not None else "unknown"
         print(
             f"  seq={row['poll_sequence']:>4} at={row['observed_at']} "
             f"flags={','.join(display_flags)} "
             f"match_status_at_poll={row['match_status_at_poll']} "
             f"home_total={home_total} away_total={away_total} "
-            f"home_players={len(row['home_interchange'])} away_players={len(row['away_interchange'])}"
+            f"home_players={home_players} away_players={away_players}"
         )
 
 
