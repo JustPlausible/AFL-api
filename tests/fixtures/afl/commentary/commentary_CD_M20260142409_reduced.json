@@ -1,0 +1,18 @@
+{
+  "matchId": "CD_M20260142409",
+  "lastUpdated": "2026-08-23T12:15:40.217+0000",
+  "commentaryEvent": [
+    {"comment": "It was a comfortable 62 point win for Hawthorn. The win was enough to secure a top-4 berth, but not enough for them to leapfrog Brisbane into third place. The Hawks dominated field position, winning the inside 50 count by 20 off the back of 30 forward half intercepts that resulted in 7.3.45.", "periodNumber": 4, "periodSeconds": 1821, "playerId": null, "teamId": null, "scoreEvent": false},
+    {"comment": "The siren has sounded to end Q4.", "periodNumber": 4, "periodSeconds": 1821, "playerId": null, "teamId": null, "scoreEvent": false},
+    {"comment": "GOAL - Eagles (Harley Reid)", "periodNumber": 4, "periodSeconds": 1623, "playerId": "CD_I1023492", "teamId": "CD_T150", "scoreEvent": true},
+    {"comment": "BEHIND - Hawks (Jack Dalton)", "periodNumber": 4, "periodSeconds": 1441, "playerId": "CD_I1033042", "teamId": "CD_T80", "scoreEvent": true},
+    {"comment": "Q4 is now underway.", "periodNumber": 4, "periodSeconds": 0, "playerId": null, "teamId": null, "scoreEvent": false},
+    {"comment": "BEHIND - Eagles (Rushed)", "periodNumber": 2, "periodSeconds": 107, "playerId": null, "teamId": "CD_T150", "scoreEvent": true},
+    {"comment": "Q2 is now underway.", "periodNumber": 2, "periodSeconds": 0, "playerId": null, "teamId": null, "scoreEvent": false},
+    {"comment": "West Coast have 22 kicks and 42 handballs for the match which is inviting the Hawthorn pressure. The Hawks have a pressure rating of 198, compared to West Coast's 181.", "periodNumber": 1, "periodSeconds": 1483, "playerId": null, "teamId": null, "scoreEvent": false},
+    {"comment": "GOAL - Hawks (Jack Gunston)", "periodNumber": 1, "periodSeconds": 1483, "playerId": "CD_I291351", "teamId": "CD_T80", "scoreEvent": true},
+    {"comment": "Q1 is now underway.", "periodNumber": 1, "periodSeconds": 0, "playerId": null, "teamId": null, "scoreEvent": false},
+    {"comment": "Welcome to Optus Stadium for the West Coast Eagles v Hawthorn Round 24 clash.", "periodNumber": 0, "periodSeconds": 0, "playerId": null, "teamId": null, "scoreEvent": false},
+    {"comment": "Ins for Hawks: J.Dalton", "periodNumber": 0, "periodSeconds": 0, "playerId": null, "teamId": null, "scoreEvent": false}
+  ]
+}

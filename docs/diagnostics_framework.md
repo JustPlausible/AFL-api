@@ -54,6 +54,26 @@ the production design work tracked in Issue #187: commentary text, score
 events and injury/interchange context captured here are evidence for that
 future decision, never a production signal in their own right.
 
+**Update (Issue #201):** the evidence this profile gathered ahead of and
+during Round 24 -- including a real same-slot scoring-outcome change on a
+different match in the same capture set -- was used to design and ship a
+**separate, new production path**: `afl_json/match_commentary.py`,
+`scheduler/match_commentary_production.py`,
+`match_commentary_events`/`match_commentary_polls` (migration `0019`), and
+`GET /api/v1/matches/{match_id}/commentary`. This `commentary` diagnostic
+profile itself is **unchanged** -- it still runs opt-in exactly as
+described below, writes only to `commentary_evidence_polls`/
+`commentary_evidence_events`, and is still never read by the production
+collector, the scheduler, or `/api/v1`. It remains genuinely useful after
+production promotion for: confirming whether an apparent future event
+mutation originated upstream (its append-only, never-overwritten poll/event
+history is exactly the evidence needed); parser-regression testing against
+newly captured payload shapes before changing the production parser;
+and independent verification if the production collector's own behaviour is
+ever in question. See `docs/investigation/afl-json/ENDPOINT_CATALOG.md` §5
+"Update (Issue #201)" and `docs/architecture/api/commentary_api_design.md`
+for the full production design.
+
 ## Diagnostics vs. production collectors
 
 This is the one rule the whole framework exists to enforce:

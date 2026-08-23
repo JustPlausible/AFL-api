@@ -321,24 +321,35 @@ Observed authenticated JSON contains match commentary linked to player/team even
 
 | Collector | DB | Scheduler | Consumer API |
 |---|---|---|---|
-| **Diagnostic-only** | **Diagnostic-only** | **Diagnostic-only** | **No** |
+| **Production** (`afl_json/match_commentary.py`) | **Production** (`match_commentary_events` + `match_commentary_polls`, migration `0019`) | **Production** (`scheduler/match_commentary_production.py`, always-on, `AFL_COMMENTARY_PRODUCTION_ENABLED`) | **Yes** -- `GET /api/v1/matches/{match_id}/commentary` |
 
-**Update (Issue #196):** as of this writing the endpoint is under active
-diagnostic verification through the checked-in `commentary` diagnostic
-profile (see `docs/diagnostics_framework.md`). It is explicitly opt-in
-(`AFL_DIAGNOSTICS_ENABLED=true`, `AFL_DIAGNOSTIC_PROFILES` including
-`commentary`), writes only to its own diagnostic evidence tables
-(`commentary_evidence_polls` + `commentary_evidence_events`, migration
-`0018`), and is never consumed by scheduler planning or `/api/v1`. This is
-**not** a production collector and `commentaryFeed` is **not** a
-production-supported endpoint contract -- the diagnostic profile exists to
-gather live evidence (endpoint availability timing, whether quarter-start/
-quarter-end markers and score events are consistently well-formed, whether
-previously published entries are ever edited/removed/reordered) that a
-future, separate implementation decision (tracked in Issue #187) would need.
+**Update (Issue #201):** promoted to a production-supported endpoint
+contract on real Round 24 evidence (see
+`docs/investigation/afl-json/ENDPOINT_CATALOG.md` §5 "Update (Issue #201)"
+for the full confirmed contract). Production ingestion runs unconditionally
+via the normal scheduler (`scheduler/scheduled_tasks.py`), independent of
+`AFL_DIAGNOSTICS_ENABLED`/`AFL_DIAGNOSTIC_PROFILES` entirely, and persists
+canonically-linked, deduplicated events to `match_commentary_events`. The
+consumer route returns a clean, chronological event stream -- never
+diagnostic poll observations. Commentary remains non-authoritative for
+match finality, lifecycle, or player statistics (see
+`docs/architecture/api/commentary_api_design.md`).
 
-**Recommendation:** optional extension only; no current canonical-stat
-dependency, pending the outcome of the live diagnostic investigation above.
+**Diagnostic evidence capture unchanged:** the `commentary` diagnostic
+profile from Issue #196 (`collection/match_commentary_evidence.py`,
+`scheduler/match_commentary_capture.py`,
+`commentary_evidence_polls`/`commentary_evidence_events`, migration `0018`)
+is untouched and keeps running independently, opt-in via
+`AFL_DIAGNOSTICS_ENABLED=true` + `AFL_DIAGNOSTIC_PROFILES` including
+`commentary`. It remains useful for parser-regression evidence and replay
+investigation, but is not read by the production collector, the scheduler,
+or `/api/v1`.
+
+**Recommendation:** production-ready for consumer use; see the API design
+doc for filtering/ordering/identity-resolution semantics and known
+limitations (event-identity heuristics, `lastUpdated` not being a reliable
+change signal, no additional structured scoring fields beyond
+`scoreEvent`).
 
 ## 5. HTML/rendered source implementation matrix
 
@@ -436,7 +447,7 @@ These pages are no longer the preferred source for canonical player membership b
 | `matchRoster/full` | None | No | No | Investigation only |
 | `matchItem` periods/events | None | No | No | Investigation only |
 | Interchange history | Diagnostic evidence table only (`match_interchange_evidence_observations`) | No | No | Active diagnostic investigation (Issue #193), not production-supported |
-| Commentary | None | No | No | Investigation only |
+| Commentary | `match_commentary_events` (migration `0019`) | **Yes** | **Yes** | `/api/v1/matches/{id}/commentary` (Issue #201); diagnostic evidence table also still maintained separately |
 | Stats Centre players | None | No | No | Investigation only |
 | Leader totals/averages | CSV artifact | No | No | Manual export |
 
@@ -540,9 +551,16 @@ A future design decision should determine whether v1 encompasses these domains o
 
 ### Finding 7 - Several discovered CFS sources are research evidence only
 
-`matchItem`, `matchRoster/full`, `matchInterchange`, `commentaryFeed` and Stats Centre player queries should not be described as supported AFL-api endpoints.
+`matchItem`, `matchRoster/full`, `matchInterchange` and Stats Centre player
+queries should not be described as supported AFL-api endpoints. They are
+known upstream endpoints, not maintained collector capabilities.
 
-They are known upstream endpoints, not maintained collector capabilities.
+`commentaryFeed` is the exception as of Issue #201: it has been promoted to
+a production-supported endpoint contract (production collector, persistence
+and `/api/v1/matches/{id}/commentary` consumer route) -- see §4's
+"CFS `commentaryFeed/{matchProviderId}`" entry above. Its diagnostic
+evidence-capture profile from Issue #196 remains separately available for
+debugging/replay, but is no longer the only pathway.
 
 ## 9. Recommended priorities
 
@@ -608,6 +626,6 @@ while:
 
 and:
 
-**`matchItem`, `matchRoster/full`, interchange, commentary and Stats Centre remain investigation-only sources.**
+**`matchItem`, `matchRoster/full`, interchange and Stats Centre remain investigation-only sources; commentary is production-supported as of Issue #201 (see §4).**
 
 Maintaining those distinctions allows future collection work to be driven by a clear consumer API or operational requirement rather than by endpoint availability alone.

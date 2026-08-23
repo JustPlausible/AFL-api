@@ -12,3 +12,8 @@ not by themselves describe shipped behaviour.
   implementation design for the first `/api/v1` player-stat resource. Stage 1
   is shipped; see the [consumer reference](../../api_v1_player_stats.md) for
   current behaviour.
+- [Production CFS match-commentary persistence and consumer API](commentary_api_design.md)
+  records the implementation design for promoting `commentaryFeed` from
+  diagnostic evidence capture (Issue #196) to production persistence and
+  `/api/v1/matches/{match_id}/commentary` (Issue #201). Shipped; see the
+  [consumer reference](../../api_v1_commentary.md) for current behaviour.

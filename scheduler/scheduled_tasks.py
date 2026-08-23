@@ -65,6 +65,12 @@ def player_stat_polling_planner():
     return get_player_stat_polling_worker().run_once()
 
 
+@scheduler.scheduled_job(IntervalTrigger(seconds=config.AFL_COMMENTARY_PRODUCTION_INTERVAL_SECONDS), id="match_commentary_production", name="Production CFS match-commentary polling", max_instances=1, coalesce=True, misfire_grace_time=10)
+def match_commentary_production_job():
+    from scheduler.match_commentary_production import poll_match_commentary
+    return poll_match_commentary()
+
+
 # Start the scheduler loop
 if __name__ == "__main__":
     from scheduler.job_cleaner import clean_broken_jobs

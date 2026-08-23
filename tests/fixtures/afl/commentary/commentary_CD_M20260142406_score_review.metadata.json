@@ -1,0 +1,71 @@
+{
+  "domain": "match_commentary",
+  "fixture_set": "CD_M20260142406_same_slot_scoring_outcome_change",
+  "season": 2026,
+  "round_number": 24,
+  "match": {
+    "match_provider_id": "CD_M20260142406",
+    "status": "LIVE (Q3) when the outcome change was first observed; CONCLUDED by the time of the real final capture",
+    "home_team": {"name": "Western Bulldogs", "commentary_label": "Bulldogs", "provider_id": "CD_T140"},
+    "away_team": {"name": "Melbourne", "commentary_label": "Demons", "provider_id": "CD_T90"}
+  },
+  "terminology_note": [
+    "This fixture set and the code/docs/tests it backs deliberately say 'same-slot scoring-outcome change' or 'scoring outcome change', never 'official score review' or 'confirmed reversal'.",
+    "The evidence below proves the PUBLISHED OUTCOME changed (GOAL -> BEHIND) at an identical match-clock/player/team/scoreEvent slot. It does not prove WHY -- no explicit review, correction, or umpiring-decision field or marker exists anywhere in the commentaryFeed payload. Asserting 'official review' would be inferring intent the source data does not supply.",
+    "This wording was corrected after initial review feedback on the PR that introduced this fixture set; the original wording ('official score-review reversal') overstated what the evidence actually shows."
+  ],
+  "files": {
+    "commentary_CD_M20260142406_full.json": {
+      "kind": "raw_capture",
+      "description": "Verbatim final concluded-match commentaryFeed response for CD_M20260142406, supplied directly by the repository owner (via a PR comment, as a GitHub file attachment) specifically to strengthen this fixture set after initial review. Used unedited.",
+      "key_finding": "At periodNumber=3, periodSeconds=839, this real final array contains ONLY 'BEHIND - Bulldogs (Cody Weightman)'. The earlier 'GOAL - Bulldogs (Cody Weightman)' text (see the live diagnostic evidence below) is NOT present anywhere in this array. This proves the upstream feed itself can replace an entry's text in place between polls -- it does not necessarily retain every historical version forever."
+    },
+    "commentary_CD_M20260142406_score_review_poll1.json": {
+      "kind": "reconstruction",
+      "description": "A reduced, hand-assembled snapshot representing the accumulated feed as it stood at the moment the diagnostic profile first recorded the GOAL (real score-event field values, taken from the diagnostic text report -- see provenance below -- not a verbatim raw-array capture, since no such capture exists for this earlier moment in the match)."
+    },
+    "commentary_CD_M20260142406_score_review_poll2.json": {
+      "kind": "reduced_real_capture",
+      "description": "A reduced subset of commentary_CD_M20260142406_full.json (the real final capture) -- every event in this file is copied verbatim from that real response; nothing is fabricated. Demonstrates the real final state: only the BEHIND remains at the period=3/839s slot."
+    }
+  },
+  "provenance": {
+    "kind": "mixed: one real raw capture (commentary_CD_M20260142406_full.json, and the poll2 reduction of it) plus one reconstruction (poll1) from a companion diagnostic evidence report",
+    "sources": [
+      {
+        "source": "commentary_CD_M20260142409.txt (user-supplied diagnostic-evidence text report covering the whole Round 24 weekend, produced by scripts/report_commentary_evidence.py against the commentary diagnostic profile's real captured evidence for several matches, including CD_M20260142406)",
+        "supplies": "the live poll sequence proving a GOAL was observed before a BEHIND at the identical slot: 'event id=169 possibly replaces event id=167: seq=431 at 2026-08-22T08:01:29.020316+00:00 period=3/839s player=CD_I1011803 team=CD_T140 scoreEvent=True comment=\"BEHIND - Bulldogs (Cody Weightman)\"', immediately preceded in the same match's score-events list by 'seq=426 at 2026-08-22T08:00:14.027505+00:00 period=3/839s player=CD_I1011803 team=CD_T140 scoreEvent=True comment=\"GOAL - Bulldogs (Cody Weightman)\"'."
+      },
+      {
+        "source": "commentary_CD_M20260142406.response.json, supplied directly by the repository owner as a PR comment attachment on the pull request that introduced this fixture set, in response to review feedback",
+        "supplies": "the real, verbatim final concluded-match commentaryFeed response (commentary_CD_M20260142406_full.json) -- confirms only the BEHIND remains at the period=3/839s slot in the final accumulated array."
+      }
+    ],
+    "explanation": [
+      "The user's originally attached JSON ('.response.json') and text report for this issue are both for CD_M20260142409, which shows no same-slot scoring-outcome change in either supplied file.",
+      "The SAME text report also summarises several other Round 24 matches captured by the same diagnostic run, and CD_M20260142406's section contains a real, diagnostic-detected 'possible edits/changes' entry pairing a GOAL with a later BEHIND at the identical slot -- see the live-poll-sequence source above.",
+      "That pairing is a genuine, real change in published scoring outcome, not a fabricated scenario. It is the real evidence Issue #201 asked to be found in the supplied Round 24 captures.",
+      "The diagnostic text report only records structured per-event fields (seq, timestamp, period, player, team, scoreEvent, comment) for score events and quarter markers -- it does not preserve a verbatim full commentaryEvent[] array snapshot of the EARLIER (before-the-change) moment the way a raw Bruno '.response.json' capture does. commentary_CD_M20260142406_score_review_poll1.json therefore remains a reconstruction of that earlier moment, using the real field values from the report.",
+      "After initial PR review, the repository owner supplied the real final concluded-match capture directly (commentary_CD_M20260142406_full.json), which replaced what had previously been a second reconstructed 'poll2' fixture. This upgraded the 'after' state of this fixture set from a reconstruction to a genuine raw capture, and revealed that the upstream feed had NOT retained the earlier GOAL text alongside the BEHIND -- only the BEHIND remains. commentary_CD_M20260142406_score_review_poll2.json is a reduced, verbatim subset of that real file."
+    ]
+  },
+  "sequence": [
+    {
+      "file": "commentary_CD_M20260142406_score_review_poll1.json",
+      "kind": "reconstruction",
+      "represents": "the accumulated feed as of the poll that first recorded the GOAL",
+      "matches_report_seq": 426
+    },
+    {
+      "file": "commentary_CD_M20260142406_score_review_poll2.json",
+      "kind": "reduced_real_capture",
+      "represents": "the real final accumulated feed state -- the BEHIND is present; the GOAL is not",
+      "matches_report_seq": 431
+    }
+  ],
+  "notes": [
+    "Persisting poll1 then poll2 through afl_json.match_commentary.persist_commentary_feed must produce TWO distinct match_commentary_events rows for period=3/839s (the GOAL, first observed from poll1; the BEHIND, first observed from poll2), never one row silently overwritten by the other -- even though the real upstream feed's own array (poll2, and commentary_CD_M20260142406_full.json) no longer contains the GOAL text at all.",
+    "The BEHIND row must be linked via possible_edit_of_event_id to the GOAL row's internal id, since both share playerId=CD_I1011803 (non-null) and an identical slot key.",
+    "Both rows must remain visible, in their original first_observed_at order, from GET /api/v1/matches/{match_id}/commentary -- this is the concrete behavioural difference between AFL-api's own append-only history and the upstream feed's apparent in-place mutability."
+  ]
+}

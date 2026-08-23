@@ -223,6 +223,38 @@ Useful regression assertions include:
 - chronological ordering can be derived deterministically;
 - the captured HTML widget exposes the expected match and competition IDs.
 
+## Production fixtures (Issue #201)
+
+Two additional real/evidence-backed fixture sets support the production
+persistence and consumer API added in Issue #201 (see
+`afl_json/match_commentary.py`, `scheduler/match_commentary_production.py`,
+`api/routes_v1.py`):
+
+* `commentary_CD_M20260142409_full.json` / `commentary_CD_M20260142409_reduced.json`
+  (metadata: `commentary_CD_M20260142409.metadata.json`) -- a real, verbatim
+  Round 24 Bruno capture (`.response.json`) supplied by the user for
+  `CD_M20260142409` (West Coast Eagles v Hawthorn), POSTGAME/CONCLUDED, plus
+  a hand-reduced subset preserving the exact structure of several edge
+  cases: two genuine same-`(periodNumber, periodSeconds)` pairs, a
+  team-only `Rushed` behind, player+team-linked goals/behinds, and
+  pre-match commentary.
+* `commentary_CD_M20260142406_full.json` (real, verbatim final
+  concluded-match capture, supplied directly by the repository owner) plus
+  `commentary_CD_M20260142406_score_review_poll1.json` /
+  `_poll2.json` (metadata: `commentary_CD_M20260142406_score_review.metadata.json`)
+  -- evidence for a genuine **same-slot scoring-outcome change**
+  (`GOAL -> BEHIND` for the same player at the same match-clock second)
+  found in a *different* Round 24 match (`CD_M20260142406`) from the same
+  capture set. `poll1` remains a clearly-labelled reconstruction of the
+  earlier (pre-change) state; `poll2` is a reduced, verbatim subset of the
+  real full capture, which also revealed that the upstream feed itself no
+  longer contains the earlier `GOAL` text -- only AFL-api's own append-only
+  persistence retains both. Deliberately not called a "review" or
+  "reversal" anywhere in this fixture set: the feed never states why the
+  outcome changed. `CD_M20260142409` itself shows no such sequence in
+  either originally-supplied file -- see the metadata file's `provenance`
+  for the full explanation of where the real evidence was actually found.
+
 ## Potential future use
 
 This endpoint may support optional fantasy-league features such as live match commentary, scoring-event notifications, player-linked fantasy alerts, translated commentary, automated match summaries, injury or interchange warnings and live commentary filtering by fantasy squad.

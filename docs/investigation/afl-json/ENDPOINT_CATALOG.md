@@ -341,6 +341,112 @@ whether previously published entries are ever edited, removed or reordered
 across the remaining Round 24 matches, alongside `match_clock` and
 `interchange`.
 
+**Update (Issue #201): `commentaryFeed/{matchProviderId}` is now a
+production-supported endpoint contract**, promoted from the Issue #196
+diagnostic investigation on real Round 24 evidence -- a live-poll capture
+sequence and a raw Bruno `.response.json` snapshot for `CD_M20260142409`
+(West Coast Eagles v Hawthorn, POSTGAME/CONCLUDED), plus the combined
+diagnostic-evidence report covering the rest of that weekend's matches (see
+`tests/fixtures/afl/commentary/commentary_CD_M20260142409.metadata.json`).
+This section records the **confirmed production contract**; the diagnostic
+evidence-capture pathway described above remains running and useful, but is
+no longer the only or the authoritative path -- see the "Production vs.
+diagnostic" note below.
+
+*Endpoint:* `GET {CFS root}/commentaryFeed/{match_provider_id}` --
+`https://api.afl.com.au/cfs/commentaryFeed/{match_provider_id}`, one
+directory above the `/cfs/afl` root most other CFS endpoints live under
+(Issue #199 tracks a possible future URL-model refactor; the production
+endpoint definition in `afl_json/match_commentary.py` uses the same
+`base_url_override` technique as the diagnostic definition rather than
+pre-empting that refactor).
+
+*Confirmed feed-level fields:* `matchId` (Champion Data match id),
+`lastUpdated` (ISO-8601 with milliseconds, e.g.
+`2026-08-23T12:15:40.217+0000`), `commentaryEvent[]`.
+
+*Confirmed event-level fields (unchanged from Issue #196, now confirmed on a
+concluded real match):* `comment`, `periodNumber`, `periodSeconds`,
+`playerId`, `teamId`, `scoreEvent`. **No additional structured scoring
+fields** (e.g. a points value or a discrete goal/behind/rushed type) were
+present anywhere in the captured concluded response -- `scoreEvent` remains
+the only structured scoring fact; the outcome type stays free text only.
+
+*Confirmed accumulation/ordering behaviour:* the feed is still an
+**accumulated, newest-first** array with **no upstream event identifier** --
+confirmed again on real concluded data (period/second strictly
+non-increasing from array index 0). Multiple events legitimately share one
+`(periodNumber, periodSeconds)` pair (e.g. general statistical commentary
+and a scoring event both timestamped `period=1, seconds=1483` in the
+captured `CD_M20260142409` response).
+
+*Confirmed scoreEvent behaviour:* `scoreEvent=true` events can have a null
+`playerId` with a non-null `teamId` for a rushed behind (e.g.
+`"BEHIND - Eagles (Rushed)"`), confirming the diagnostic evidence's
+team-only score-event case on real data.
+
+*Confirmed player/team identity supply:* structured `playerId`/`teamId`
+only, exactly as documented under Issue #196; pre-match (`periodNumber=0`)
+and general narrative commentary carry both as null. Never inferred from
+the `comment` text.
+
+*New finding -- `lastUpdated` is not a reliable change signal:* the Bruno
+capture's `lastUpdated` (`12:15:40.217`) is materially newer than the
+diagnostic capture's final poll for the same match
+(`observed_at=2026-08-23T12:13:44Z`) with an identical event count --
+`lastUpdated` can advance without new event content appearing. Production
+ingestion must dedupe by event fingerprint, never by watching `lastUpdated`
+alone.
+
+*New finding -- a genuine same-slot scoring-outcome change was observed* in
+the combined Round 24 diagnostic evidence, though not in `CD_M20260142409`
+itself (that match's supplied evidence shows no such sequence in either
+file). A different Round 24 match in the same capture set,
+`CD_M20260142406`, recorded `"GOAL - Bulldogs (Cody Weightman)"` at
+`period=3, seconds=839` (live diagnostic poll evidence), then a later poll
+recorded a second, distinct event `"BEHIND - Bulldogs (Cody Weightman)"` at
+the *same* `(periodNumber, periodSeconds, playerId, teamId, scoreEvent)`
+slot. The real final concluded-match capture for this match
+(`tests/fixtures/afl/commentary/commentary_CD_M20260142406_full.json`,
+supplied directly by the repository owner) confirms only the `BEHIND`
+remains at that slot -- the upstream feed itself appears to replace an
+entry's text in place rather than only ever appending. AFL-api's own
+persistence deliberately does not mirror that: it records the `BEHIND` as a
+new event and links it via `possible_edit_of_event_id`, but never deletes
+or rewrites the row already stored for the `GOAL` (see
+`tests/fixtures/afl/commentary/commentary_CD_M20260142406_score_review.metadata.json`
+for the full evidence chain and provenance). Nothing in the feed identifies
+*why* the outcome changed -- no explicit review/correction marker exists --
+so this is documented as an observed "scoring-outcome change", not an
+"official review" or "reversal". This validates, on real evidence, the
+"possible edit" slot-key detection Issue #196 already implemented for
+exactly this shape of event, and is the basis for the production
+`possible_edit_of_event_id` linkage in `afl_json/match_commentary.py`.
+
+*POSTGAME/CONCLUDED behaviour:* the feed remains queryable and stable after
+a match concludes -- the Bruno capture above was taken after the
+diagnostic profile's final live poll, well into POSTGAME/CONCLUDED, and
+returned the complete event history (as it stood at that time -- see the
+same-slot scoring-outcome change finding above for a case where that
+history no longer includes an earlier entry's exact text). Production
+polling therefore continues through POSTGAME and for a bounded grace period
+after, specifically to catch a late-arriving scoring-outcome change like
+the one above (see `scheduler/match_commentary_production.py`).
+
+*Production vs. diagnostic:* the diagnostic `commentary` profile
+(`collection/match_commentary_evidence.py`,
+`scheduler/match_commentary_capture.py`,
+`commentary_evidence_polls`/`commentary_evidence_events`) is **unchanged and
+still running independently** -- it remains useful for parser-regression
+evidence, replay investigation, and confirming whether an apparent event
+mutation originated upstream. It is **not** the backing store for the
+consumer API. Production ingestion is a new, separate, narrowly-scoped path
+(`afl_json/match_commentary.py`, `scheduler/match_commentary_production.py`,
+`match_commentary_events`/`match_commentary_polls` -- migration `0019`),
+mirroring how `afl_json/match_period.py` (Issue #187) sits alongside its own
+diagnostic predecessor. See `docs/architecture/api/commentary_api_design.md`
+for the full production/consumer design.
+
 ## 6. Canonical field mapping for match player statistics
 
 The original Codex table was based on HTML scraping and contained placeholder JSON paths. For the JSON collector, most HTML fallback rules are no longer primary. Keep the HTML scraper only as a fallback adapter.
