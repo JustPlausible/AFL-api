@@ -223,6 +223,31 @@ Useful regression assertions include:
 - chronological ordering can be derived deterministically;
 - the captured HTML widget exposes the expected match and competition IDs.
 
+## Production fixtures (Issue #201)
+
+Two additional real/evidence-backed fixture sets support the production
+persistence and consumer API added in Issue #201 (see
+`afl_json/match_commentary.py`, `scheduler/match_commentary_production.py`,
+`api/routes_v1.py`):
+
+* `commentary_CD_M20260142409_full.json` / `commentary_CD_M20260142409_reduced.json`
+  (metadata: `commentary_CD_M20260142409.metadata.json`) -- a real, verbatim
+  Round 24 Bruno capture (`.response.json`) supplied by the user for
+  `CD_M20260142409` (West Coast Eagles v Hawthorn), POSTGAME/CONCLUDED, plus
+  a hand-reduced subset preserving the exact structure of several edge
+  cases: two genuine same-`(periodNumber, periodSeconds)` pairs, a
+  team-only `Rushed` behind, player+team-linked goals/behinds, and
+  pre-match commentary.
+* `commentary_CD_M20260142406_score_review_poll1.json` /
+  `_poll2.json` (metadata: `commentary_CD_M20260142406_score_review.metadata.json`)
+  -- a **reconstruction**, clearly labelled as such, of a genuine official
+  score-review reversal (`GOAL -> BEHIND` for the same player at the same
+  match-clock second) found in the diagnostic evidence for a *different*
+  Round 24 match (`CD_M20260142406`) in the same user-supplied capture set.
+  `CD_M20260142409` itself shows no review sequence in either supplied
+  file -- see that fixture set's metadata `notes` for the full explanation
+  of where the real review evidence was actually found.
+
 ## Potential future use
 
 This endpoint may support optional fantasy-league features such as live match commentary, scoring-event notifications, player-linked fantasy alerts, translated commentary, automated match summaries, injury or interchange warnings and live commentary filtering by fantasy squad.

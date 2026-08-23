@@ -66,6 +66,12 @@ def _match_commentary_capture_enabled() -> bool:
     return bool(config.AFL_DIAGNOSTICS_ENABLED) and "commentary" in config.AFL_DIAGNOSTIC_PROFILES
 
 
+def _match_commentary_production_enabled() -> bool:
+    """Production commentary collection (Issue #201) -- independent of the
+    diagnostics framework entirely; gated only by its own flag."""
+    return bool(config.AFL_COMMENTARY_PRODUCTION_ENABLED)
+
+
 @dataclass(frozen=True)
 class LogSource:
     """One known operational log source.
@@ -219,6 +225,18 @@ _SOURCES: tuple[LogSource, ...] = (
             "The 'commentary' diagnostic profile is not enabled "
             "(AFL_DIAGNOSTICS_ENABLED / AFL_DIAGNOSTIC_PROFILES)."
         ),
+    ),
+    LogSource(
+        id="match_commentary_production",
+        display_name="Match Commentary Production",
+        description=(
+            "Production commentaryFeed collection backing /api/v1/matches/{match_id}/commentary "
+            "(Issue #201). Independent of the diagnostics framework."
+        ),
+        logger_name="match_commentary_production",
+        filename="match_commentary_production.log",
+        enabled=_match_commentary_production_enabled,
+        disabled_reason="AFL_COMMENTARY_PRODUCTION_ENABLED is not enabled.",
     ),
 )
 

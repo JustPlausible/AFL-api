@@ -217,3 +217,26 @@ AFL_DIAGNOSTIC_INTERCHANGE_POST_LIVE_GRACE_SECONDS = _parse_int_env("AFL_DIAGNOS
 AFL_DIAGNOSTIC_COMMENTARY_INTERVAL_SECONDS = _parse_int_env("AFL_DIAGNOSTIC_COMMENTARY_INTERVAL_SECONDS", 15)
 AFL_DIAGNOSTIC_COMMENTARY_KICKOFF_TOLERANCE_SECONDS = _parse_int_env("AFL_DIAGNOSTIC_COMMENTARY_KICKOFF_TOLERANCE_SECONDS", 600)
 AFL_DIAGNOSTIC_COMMENTARY_POST_LIVE_GRACE_SECONDS = _parse_int_env("AFL_DIAGNOSTIC_COMMENTARY_POST_LIVE_GRACE_SECONDS", 600)
+
+# Production match-commentary collection (Issue #201). Independent of
+# AFL_DIAGNOSTICS_ENABLED/AFL_DIAGNOSTIC_PROFILES entirely -- this is a normal
+# production collector, registered unconditionally in
+# scheduler/scheduled_tasks.py, and is only gated by its own enabled flag here
+# (default on). See afl_json/match_commentary.py and
+# scheduler/match_commentary_production.py.
+#
+# The interval defaults slightly slower than the commentary diagnostic's
+# proven 15s cadence: Round 24 evidence (docs/investigation/afl-json/ENDPOINT_CATALOG.md)
+# shows commentary events arrive far less often than every 15s (dozens of
+# events across a ~2 hour match), so 20s keeps consumer-visible latency low
+# without polling meaningfully more often than the feed actually changes.
+AFL_COMMENTARY_PRODUCTION_ENABLED = _parse_bool_env("AFL_COMMENTARY_PRODUCTION_ENABLED", True)
+AFL_COMMENTARY_PRODUCTION_INTERVAL_SECONDS = _parse_int_env("AFL_COMMENTARY_PRODUCTION_INTERVAL_SECONDS", 20)
+AFL_COMMENTARY_PRODUCTION_KICKOFF_TOLERANCE_SECONDS = _parse_int_env("AFL_COMMENTARY_PRODUCTION_KICKOFF_TOLERANCE_SECONDS", 600)
+# Kept generous relative to the diagnostic's 600s post-LIVE grace: Round 24
+# evidence confirmed a genuine official score-review correction
+# (CD_M20260142406) reaching the feed as a new accumulated entry, and a
+# review can plausibly take longer than 10 minutes after full-time to
+# resolve. This window covers POSTGAME (always polled -- see
+# recently_active_match_provider_ids) plus a bounded grace after that.
+AFL_COMMENTARY_PRODUCTION_POSTGAME_GRACE_SECONDS = _parse_int_env("AFL_COMMENTARY_PRODUCTION_POSTGAME_GRACE_SECONDS", 1800)

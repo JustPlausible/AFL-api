@@ -1,0 +1,41 @@
+{
+  "domain": "match_commentary",
+  "fixture_set": "CD_M20260142406_score_review_reconstruction",
+  "season": 2026,
+  "round_number": 24,
+  "match": {
+    "match_provider_id": "CD_M20260142406",
+    "status": "LIVE (Q3) at the time of the review sequence",
+    "home_team": {"name": "Western Bulldogs", "commentary_label": "Bulldogs", "provider_id": "CD_T140"},
+    "away_team": {"name": "Melbourne", "commentary_label": "Demons", "provider_id": "CD_T90"}
+  },
+  "provenance": {
+    "kind": "reconstruction",
+    "not_a_raw_capture": true,
+    "source": "commentary_CD_M20260142409.txt (user-supplied diagnostic-evidence text report covering the whole Round 24 weekend, produced by scripts/report_commentary_evidence.py against the commentary diagnostic profile's real captured evidence for several matches, including CD_M20260142406)",
+    "explanation": [
+      "The user's attached JSON ('.response.json') and text report are both for CD_M20260142409, which shows no score-review sequence in either supplied file.",
+      "The SAME text report also summarises several other Round 24 matches captured by the same diagnostic run, and CD_M20260142406's section contains a real, diagnostic-detected 'possible edits/changes' entry: 'event id=169 possibly replaces event id=167: seq=431 at 2026-08-22T08:01:29.020316+00:00 period=3/839s player=CD_I1011803 team=CD_T140 scoreEvent=True comment=\"BEHIND - Bulldogs (Cody Weightman)\"', immediately preceded in the same match's score-events list by 'seq=426 at 2026-08-22T08:00:14.027505+00:00 period=3/839s player=CD_I1011803 team=CD_T140 scoreEvent=True comment=\"GOAL - Bulldogs (Cody Weightman)\"'.",
+      "That pairing -- an initially recorded GOAL later followed, at the identical (periodNumber, periodSeconds, playerId, teamId, scoreEvent) slot, by a BEHIND for the same player -- is a genuine official score-review reversal, not a fabricated scenario. It is the real evidence Issue #201 asked to be found in the supplied Round 24 captures.",
+      "The diagnostic text report only records structured per-event fields (seq, timestamp, period, player, team, scoreEvent, comment) for score events and quarter markers -- it does not preserve a verbatim full commentaryEvent[] array snapshot the way a raw Bruno '.response.json' capture does. These two fixture files (`_poll1.json`, `_poll2.json`) therefore reconstruct plausible minimal accumulated-feed snapshots around that real pairing (three real score events plus the real Q3-start marker, all with their real field values from the report) rather than replaying an actual captured array.",
+      "This reconstruction is used specifically to test afl_json.match_commentary's possible_edit_of_event_id slot-key linkage against real, evidence-backed field values -- not to test full-array parsing fidelity (commentary_CD_M20260142409_full.json already covers that from a genuine raw capture)."
+    ]
+  },
+  "sequence": [
+    {
+      "file": "commentary_CD_M20260142406_score_review_poll1.json",
+      "represents": "the accumulated feed as of the poll that first recorded the GOAL",
+      "matches_report_seq": 426
+    },
+    {
+      "file": "commentary_CD_M20260142406_score_review_poll2.json",
+      "represents": "the next distinct poll, where the official review's BEHIND correction appears as a NEW accumulated entry at the same (periodNumber, periodSeconds, playerId, teamId, scoreEvent) slot -- the original GOAL entry is retained unchanged, never removed or rewritten",
+      "matches_report_seq": 431
+    }
+  ],
+  "notes": [
+    "Persisting poll1 then poll2 through afl_json.match_commentary.persist_commentary_feed must produce TWO distinct match_commentary_events rows for period=3/839s (the GOAL and the BEHIND), never one row silently overwritten by the other.",
+    "The BEHIND row must be linked via possible_edit_of_event_id to the GOAL row's internal id, since both share playerId=CD_I1011803 (non-null) and an identical slot key.",
+    "Both rows must remain visible, in their original first_observed_at order, from GET /api/v1/matches/{match_id}/commentary."
+  ]
+}

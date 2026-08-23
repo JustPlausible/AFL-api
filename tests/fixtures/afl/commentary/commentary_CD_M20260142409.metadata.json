@@ -1,0 +1,36 @@
+{
+  "domain": "match_commentary",
+  "fixture_set": "CD_M20260142409_postgame_full_and_reduced",
+  "season": 2026,
+  "round_number": 24,
+  "match": {
+    "match_provider_id": "CD_M20260142409",
+    "status": "POSTGAME/CONCLUDED (Q4 siren present; capture taken after the diagnostic profile's final live poll)",
+    "home_team": {"name": "West Coast Eagles", "provider_id": "CD_T150"},
+    "away_team": {"name": "Hawthorn", "commentary_label": "Hawks", "provider_id": "CD_T80"}
+  },
+  "files": {
+    "commentary_CD_M20260142409_full.json": "Verbatim raw commentaryFeed response, provided by the user as a Bruno-captured '.response.json' for this match. Used unedited as a regression fixture.",
+    "commentary_CD_M20260142409_reduced.json": "Hand-trimmed subset of the same real response (12 of 89 events), preserving array order and every field exactly, selected to cover: two distinct real duplicate-(periodNumber,periodSeconds) pairs (4/1821: closing narrative + Q4 siren; 1/1483: statistical narrative + a scoreEvent=true goal), a player+team-linked goal, a player+team-linked behind, a team-only 'Rushed' behind with playerId=null, three quarter-start markers, and pre-match (periodNumber=0) commentary with both playerId and teamId null."
+  },
+  "capture": {
+    "capture_tool": "Bruno",
+    "request": {
+      "method": "GET",
+      "url": "{{CFS_API_BASE}}/commentaryFeed/{{matchId}}",
+      "resolved_url": "https://api.afl.com.au/cfs/commentaryFeed/CD_M20260142409"
+    },
+    "response": {"http_status": 200, "content_type": "application/json"},
+    "supplied_by": "user, alongside a companion diagnostic-evidence text report covering the whole Round 24 weekend (commentary_CD_M20260142409.txt), for Issue #201"
+  },
+  "notes": [
+    "commentaryEvent is reverse-chronological (newest first), consistent with every other observed commentaryFeed capture.",
+    "No upstream per-event identifier is present anywhere in this response, confirming the Issue #196 finding on real concluded data.",
+    "No additional structured scoring fields beyond scoreEvent were found anywhere in this response -- the six fields already documented under Issue #196 (comment, periodNumber, periodSeconds, playerId, teamId, scoreEvent) are the complete event shape.",
+    "scoreEvent=true events include a team-only 'BEHIND - Eagles (Rushed)' with playerId=null (periodNumber=2, periodSeconds=107), confirming the diagnostic evidence's team-only score-event case on real data.",
+    "Two genuine same-(periodNumber,periodSeconds) pairs are present: (4, 1821) pairs a general narrative comment with the Q4 siren marker; (1, 1483) pairs a statistical narrative comment with a scoreEvent=true goal. Both are used to test deterministic same-second ordering (afl_json.match_commentary.event_rows: source_index DESC as a documented-best-effort chronological tiebreaker within one clock second, then id ASC).",
+    "lastUpdated (2026-08-23T12:15:40.217+0000) is materially later than the final poll observed_at recorded for this match in the companion diagnostic text report (2026-08-23T12:13:44Z) with an identical event count -- confirming that lastUpdated can advance without new event content, and must never be used as a substitute for fingerprint-based event deduplication.",
+    "This specific match's captured evidence (this file plus the diagnostic text report) shows no score-review/reversal sequence for CD_M20260142409 itself -- see commentary_CD_M20260142406_score_review.metadata.json for the real Round 24 review sequence, which was observed on a different match in the same diagnostic capture set.",
+    "Used by tests/test_match_commentary_production.py and scripts/import_commentary_capture.py's usage example; also usable directly via `python -m scripts.import_commentary_capture --file tests/fixtures/afl/commentary/commentary_CD_M20260142409_reduced.json --source-label ...` for local development."
+  ]
+}

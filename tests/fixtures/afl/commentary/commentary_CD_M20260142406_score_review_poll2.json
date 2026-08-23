@@ -1,0 +1,11 @@
+{
+  "matchId": "CD_M20260142406",
+  "lastUpdated": "2026-08-22T08:01:29.020+0000",
+  "commentaryEvent": [
+    {"comment": "BEHIND - Bulldogs (Cody Weightman)", "periodNumber": 3, "periodSeconds": 839, "playerId": "CD_I1011803", "teamId": "CD_T140", "scoreEvent": true},
+    {"comment": "GOAL - Bulldogs (Cody Weightman)", "periodNumber": 3, "periodSeconds": 839, "playerId": "CD_I1011803", "teamId": "CD_T140", "scoreEvent": true},
+    {"comment": "GOAL - Bulldogs (Marcus Bontempelli)", "periodNumber": 3, "periodSeconds": 568, "playerId": "CD_I297373", "teamId": "CD_T140", "scoreEvent": true},
+    {"comment": "GOAL - Bulldogs (Aaron Naughton)", "periodNumber": 3, "periodSeconds": 500, "playerId": "CD_I1002404", "teamId": "CD_T140", "scoreEvent": true},
+    {"comment": "Q3 is now underway.", "periodNumber": 3, "periodSeconds": 0, "playerId": null, "teamId": null, "scoreEvent": false}
+  ]
+}

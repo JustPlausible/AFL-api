@@ -624,6 +624,153 @@ def get_match_player_stats(
     )
 
 
+class CommentaryPlayer(BaseModel):
+    """Minimal player identity attached to one commentary event."""
+
+    id: int = Field(description="Canonical AFL-api player identifier.")
+    name: str | None = Field(description="Canonical display name, or null when not yet resolved.")
+    provider_id: str | None = Field(description="Source Champion Data player identifier.")
+
+
+class CommentaryTeam(BaseModel):
+    """Minimal team identity attached to one commentary event."""
+
+    id: int = Field(description="Canonical AFL-api team identifier.")
+    name: str | None = Field(description="Canonical persisted team name, or null when unavailable.")
+    provider_id: str | None = Field(description="Source Champion Data team identifier.")
+
+
+class CommentaryEvent(BaseModel):
+    """One normalized production commentary event."""
+
+    id: int = Field(description="Stable AFL-api-generated event identifier. Not a Champion Data id.")
+    match_id: int
+    period_number: int | None = Field(description="0 for pre-match commentary, 1-4 for regulation quarters.")
+    period_seconds: int | None = Field(description="Elapsed seconds within the period.")
+    comment: str = Field(description="Original commentary text exactly as supplied by the source feed.")
+    score_event: bool | None = Field(
+        description="Source scoreEvent flag exactly as supplied. Never inferred from comment text."
+    )
+    player: CommentaryPlayer | None = Field(
+        description="Linked player identity, or null when the source event has no playerId or it is unresolved."
+    )
+    team: CommentaryTeam | None = Field(
+        description="Linked team identity, or null when the source event has no teamId or it is unresolved."
+    )
+    observed_at: str = Field(description="UTC time AFL-api first observed this event in the source feed.")
+    possible_edit_of_event_id: int | None = Field(
+        description=(
+            "Heuristic, non-authoritative link to an earlier event this one likely republishes or "
+            "corrects (e.g. an official score-review reversal), based on a shared match-clock/player/"
+            "team/score_event combination. Both events remain in the response; this link never causes "
+            "the earlier event to be hidden, merged, or removed. Null when no such link was detected."
+        )
+    )
+
+
+class MatchCommentaryResponse(BaseModel):
+    match: MatchInfo
+    events: list[CommentaryEvent]
+
+
+def _commentary_name_lookups(
+    conn, rows: list[dict],
+) -> tuple[dict[int, str | None], dict[int, str | None]]:
+    player_ids = {row["canonical_player_id"] for row in rows if row["canonical_player_id"] is not None}
+    team_ids = {row["canonical_team_id"] for row in rows if row["canonical_team_id"] is not None}
+    player_names: dict[int, str | None] = {}
+    if player_ids:
+        placeholders = ",".join("?" for _ in player_ids)
+        for prow in conn.execute(
+            f"SELECT id, display_name, given_name, family_name FROM canonical_players WHERE id IN ({placeholders})",
+            tuple(player_ids),
+        ):
+            player_names[prow["id"]] = _display_name(prow)
+    team_names: dict[int, str | None] = {}
+    if team_ids:
+        placeholders = ",".join("?" for _ in team_ids)
+        for trow in conn.execute(
+            f"SELECT afl_id, name FROM afl_teams WHERE afl_id IN ({placeholders})", tuple(team_ids),
+        ):
+            team_names[trow["afl_id"]] = trow["name"]
+    return player_names, team_names
+
+
+def _commentary_event_from_row(row: dict, player_names: dict, team_names: dict) -> CommentaryEvent:
+    player = None
+    if row["canonical_player_id"] is not None:
+        player = CommentaryPlayer(
+            id=row["canonical_player_id"], name=player_names.get(row["canonical_player_id"]),
+            provider_id=row["player_provider_id"],
+        )
+    team = None
+    if row["canonical_team_id"] is not None:
+        team = CommentaryTeam(
+            id=row["canonical_team_id"], name=team_names.get(row["canonical_team_id"]),
+            provider_id=row["team_provider_id"],
+        )
+    return CommentaryEvent(
+        id=row["id"], match_id=row["match_id"], period_number=row["period_number"],
+        period_seconds=row["period_seconds"], comment=row["comment"], score_event=row["score_event"],
+        player=player, team=team, observed_at=row["first_observed_at"],
+        possible_edit_of_event_id=row["possible_edit_of_event_id"],
+    )
+
+
+@router.get(
+    "/api/v1/matches/{match_id}/commentary",
+    response_model=MatchCommentaryResponse,
+    responses={404: {"model": ApplicationErrorResponse, "description": "Match not found"}},
+    summary="Get production commentary events for a match",
+    description=(
+        "Returns normalized CFS commentaryFeed events for one canonical match, backed by production "
+        "persistence (Issue #201) rather than the separate commentary diagnostic evidence tables. "
+        "Ordering is chronological (period_number then period_seconds ascending) for consumer "
+        "usability, even though the upstream feed itself is observed newest-first. player and team "
+        "are null when the source event carries no playerId/teamId, or when that provider id has no "
+        "known canonical crosswalk yet -- never guessed from the comment text. score_event and comment "
+        "are persisted exactly as supplied by the source; no goal/behind/points outcome is parsed from "
+        "prose. Commentary is not authoritative for match finality, lifecycle, or player statistics. "
+        "A valid match with no commentary yet returns an empty events collection."
+    ),
+)
+def get_match_commentary(
+    match_id: int,
+    period: int | None = Query(None, description="Filter to one period_number (0 for pre-match)."),
+    player_id: int | None = Query(None, description="Filter to one canonical player identifier."),
+    team_id: int | None = Query(None, description="Filter to one canonical team identifier."),
+    score_events_only: bool = Query(False, description="Return only events with score_event=true."),
+    credential: AuthenticatedCredential = Depends(authenticate_api_key),
+) -> MatchCommentaryResponse | JSONResponse:
+    log(f"💬 {credential.label} requested v1 commentary for match {match_id}", "INFO")
+    from afl_json.match_commentary import event_rows
+
+    conn = get_db_connection()
+    try:
+        match_row = conn.execute(
+            "SELECT match_id, match_provider_id, round_id, season_id, status FROM matches WHERE match_id = ?",
+            (match_id,),
+        ).fetchone()
+        if match_row is None:
+            return application_error(404, "match_not_found", "Match not found.")
+
+        rows = event_rows(
+            conn, match_id=match_id, period_number=period, canonical_player_id=player_id,
+            canonical_team_id=team_id, score_events_only=score_events_only,
+        )
+        player_names, team_names = _commentary_name_lookups(conn, rows)
+    finally:
+        conn.close()
+
+    return MatchCommentaryResponse(
+        match=MatchInfo(
+            match_id=match_row["match_id"], match_provider_id=match_row["match_provider_id"],
+            round_id=match_row["round_id"], season_id=match_row["season_id"], status=match_row["status"],
+        ),
+        events=[_commentary_event_from_row(row, player_names, team_names) for row in rows],
+    )
+
+
 class PlayerIdentifiers(BaseModel):
     """Known provider-ID crosswalks for one canonical player."""
 
