@@ -214,6 +214,24 @@ def test_invalid_numeric_field_does_not_create_a_false_delta():
     assert _history(conn) == []
 
 
+def test_recovery_after_an_invalid_poll_diffs_against_last_known_good_value():
+    """PR #203 review finding: an invalid_numeric poll in between two valid
+    polls must not make the later valid poll compare against the malformed
+    poll's incidental cfs_player_stats NULL. goals: 2 -> invalid -> 3 must
+    record a single 2 -> 3 (+1) transition, not a fabricated None -> 3."""
+    conn = _db()
+    upsert_player_stats(conn, _result([("CD_I1", "home", {"goals": 2})], collected_at="2026-01-01T00:00:00+00:00"))
+    invalid = _result([("CD_I1", "home", {"goals": "not-a-number"})], collected_at="2026-01-01T00:05:00+00:00")
+    upsert_player_stats(conn, invalid)
+    assert conn.execute(
+        "SELECT goals FROM cfs_player_stats WHERE champion_data_player_id='CD_I1'"
+    ).fetchone() == (None,)
+    upsert_player_stats(conn, _result([("CD_I1", "home", {"goals": 3})], collected_at="2026-01-01T00:10:00+00:00"))
+    rows = _history(conn)
+    assert len(rows) == 1
+    assert rows[0][:4] == ("goals", 2, 3, 1)
+
+
 # --- 10. Canonical player linkage ----------------------------------------
 
 def test_canonical_player_linkage_is_retained_when_available():

@@ -485,6 +485,39 @@ def _reduce_decimal(value: Decimal) -> int | Decimal:
     return int(value) if value == value.to_integral_value() else value
 
 
+def _last_recorded_value(conn: sqlite3.Connection, record: CanonicalPlayerStat,
+                         field: str) -> tuple[bool, Decimal | None]:
+    """The last value history/baseline actually recorded as *observed* for
+    this field -- immune to a later invalid/malformed poll silently
+    overwriting ``cfs_player_stats`` with ``NULL`` for that field (that write
+    is existing, unchanged ``cfs_player_stats`` behaviour, but it must never
+    poison the history comparison: a valid recovery afterwards should diff
+    against the last genuinely observed value, not the malformed poll's
+    incidental ``NULL``).
+
+    Returns ``(found, value)``: ``found=False`` means neither a prior history
+    row nor a ``BASELINE`` checkpoint exists for this field yet (e.g. history
+    was enabled after this player's row already existed), so the caller
+    should fall back to the live ``cfs_player_stats`` value as a best-effort
+    degrade.
+    """
+    row = conn.execute(
+        f"SELECT new_value FROM {_HISTORY_TABLE} WHERE match_provider_id=? "
+        "AND champion_data_player_id=? AND stat_field=? ORDER BY id DESC LIMIT 1",
+        (record.match_provider_id, record.champion_data_player_id, field),
+    ).fetchone()
+    if row is not None:
+        return True, _as_decimal(row[0])
+    row = conn.execute(
+        f"SELECT {field} FROM {_CHECKPOINT_TABLE} WHERE match_provider_id=? "
+        "AND champion_data_player_id=? AND checkpoint_marker=?",
+        (record.match_provider_id, record.champion_data_player_id, CHECKPOINT_MARKER_BASELINE),
+    ).fetchone()
+    if row is not None:
+        return True, _as_decimal(row[0])
+    return False, None
+
+
 def _record_history_and_checkpoint(conn: sqlite3.Connection, record: CanonicalPlayerStat, *,
                                    previous: Mapping[str, Any] | None, accepted: bool, authority: int,
                                    status: PlayerStatsStatus,
@@ -496,7 +529,8 @@ def _record_history_and_checkpoint(conn: sqlite3.Connection, record: CanonicalPl
         for field in CANONICAL_STAT_FIELDS:
             if field in invalid_fields:
                 continue
-            old = _as_decimal(previous.get(field))
+            found, last_recorded = _last_recorded_value(conn, record, field)
+            old = last_recorded if found else _as_decimal(previous.get(field))
             new = _as_decimal(getattr(record, field))
             if old == new:
                 continue
