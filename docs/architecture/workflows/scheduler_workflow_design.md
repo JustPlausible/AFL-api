@@ -165,6 +165,39 @@ and half-time transitions) to refine polling cadence where operational metrics
 demonstrate a measurable benefit. Version 1 intentionally maintains fixed,
 predictable cadences during live play.
 
+### 5.2 Normalized match-period state (informational only)
+
+Issue #148's diagnostic evidence capture (`collection/match_state_evidence.py`,
+`diagnostics/profiles/match_clock.py`) established from live Round 24 capture
+that CFS `matchItem`'s `score.matchClock.periods` -- specifically each
+period's `periodNumber` and `periodCompleted` -- reliably distinguishes
+active quarters from quarter/half/three-quarter-time breaks for ordinary
+regulation-time matches. Issue #187 promotes that mapping (not the diagnostic
+collector itself, which remains independent and keeps capturing evidence) to
+a small production module, `afl_json/match_period.py`, exposing a
+`MatchPeriodState` vocabulary (`Q1, QT, Q2, HT, Q3, 3QT, Q4, FT, UNKNOWN`).
+
+State is derived purely from `periodNumber` + `periodCompleted` of the latest
+well-formed period; `periodSeconds` is never consulted, because Round 24
+evidence showed it can stall mid-quarter during ordinary play without that
+indicating a break. Only regulation periods 1-4 are mapped -- extra time,
+suspended/abandoned matches and other unexpected period structures remain
+unverified and deliberately degrade to `UNKNOWN`, as does any missing, empty
+or malformed `matchClock`/`periods` data.
+
+This state is **informational only** and is not wired into any scheduling,
+finality, or lifecycle decision in this version. It does not influence match-
+window leases, recovery, or the fixed live-play polling cadence above; the
+existing `matches.status` lifecycle (`UPCOMING`/`LIVE`/`POSTGAME`/`CONCLUDED`,
+see `afl_json/match_status.py`) remains the sole authority for those
+decisions, including finality. In particular, `Q4` reaching `FULL_TIME` does
+not itself imply `CONCLUDED` -- Round 24 evidence shows `FULL_TIME` typically
+precedes (or coincides with) `POSTGAME`, with `CONCLUDED` a distinct, later
+transition this module has no opinion on. It exists so a later issue can
+evaluate whether operational metrics justify using it -- for example to vary
+polling cadence during breaks -- without having to re-derive the mapping from
+raw evidence again.
+
 ## 6. Match controller and claim model
 
 Use one logical controller per relevant match, backed by durable database state.

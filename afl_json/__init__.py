@@ -59,6 +59,10 @@ from .match_status import (
     later_match_status, normalise_match_status, persist_match_status_resolution,
     reconcile_match_status,
 )
+from .match_period import (
+    MatchPeriodState, derive_match_period_state, extract_match_clock_periods,
+    match_period_state_from_payload,
+)
 from .bootstrap import BootstrapSummary, persist_afl_metadata
 from .player_persistence import (
     PlayerIdentityConflict, PlayerPersistenceSummary, persist_player_seasons,
@@ -120,6 +124,10 @@ __all__ = [
     "normalise_match_status",
     "persist_match_status_resolution",
     "reconcile_match_status",
+    "MatchPeriodState",
+    "derive_match_period_state",
+    "extract_match_clock_periods",
+    "match_period_state_from_payload",
     "BootstrapSummary",
     "persist_afl_metadata",
     "PlayerIdentityConflict",
