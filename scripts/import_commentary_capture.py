@@ -7,9 +7,16 @@ exposes a consumer-facing way to POST commentary into the production,
 CFS-backed store (see ``docs/architecture/api/commentary_api_design.md``,
 "Input/output boundary"). This script is invoked directly by an operator/
 developer from a checkout, is not wired into ``cli.py`` or any HTTP route,
-and requires an explicit, human-supplied provenance label for every import so
-a replayed capture is never mistaken for a live poll in
-``match_commentary_polls``/``match_commentary_events``.
+and requires an explicit, human-supplied provenance label for every import.
+That label is persisted, not just printed: every event row this script
+inserts gets ``source="replay:<label>"`` (overriding the live collector's
+``"cfs_commentary_feed"`` default), and -- regardless of whether the import
+inserted any new event rows, or only touched existing ones'
+``last_observed_at`` bookkeeping -- the ``match_commentary_polls`` row this
+import always writes gets ``collector_version="match_commentary_import_v1"``
+(overriding the live collector's version). A replay is therefore always
+distinguishable from a genuine live production poll at the poll-row level,
+and every event it originates is distinguishable at the event-row level.
 
 Typical uses:
 
@@ -109,7 +116,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Payload could not be parsed: {exc}", file=sys.stderr)
             return 2
 
-        result = persist_commentary_feed(conn, feed)
+        result = persist_commentary_feed(
+            conn, feed,
+            source=f"replay:{args.source_label}",
+            collector_version="match_commentary_import_v1",
+        )
         conn.commit()
     except Exception:
         conn.rollback()

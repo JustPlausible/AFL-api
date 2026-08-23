@@ -149,6 +149,24 @@ def test_parse_treats_missing_commentary_event_as_none_not_empty_list():
     assert feed.events is None
 
 
+def test_parse_rejects_payload_for_a_different_match():
+    """A misrouted/mis-cached response (or a wrong replay-CLI override) must
+    never be silently persisted against the wrong canonical match."""
+    payload = commentary_payload(events=[_event()], match_id="CD_M_SOME_OTHER_MATCH")
+    with pytest.raises(MatchCommentaryError):
+        parse_commentary_feed(
+            payload, match_id=HAWTHORN_MATCH_ID, match_provider_id=HAWTHORN_MATCH_PROVIDER_ID, observed_at=_iso(),
+        )
+
+
+def test_parse_tolerates_missing_top_level_match_id():
+    payload = {"lastUpdated": "x", "commentaryEvent": [_event()]}
+    feed = parse_commentary_feed(
+        payload, match_id=HAWTHORN_MATCH_ID, match_provider_id=HAWTHORN_MATCH_PROVIDER_ID, observed_at=_iso(),
+    )
+    assert len(feed.events) == 1
+
+
 def test_categorise_event_matches_structural_and_narrow_text_rules():
     assert categorise_event(comment="anything", period_seconds=0, score_event=True) == CATEGORY_SCORE_EVENT
     assert categorise_event(comment="Q1 is now underway.", period_seconds=0, score_event=False) == CATEGORY_QUARTER_START
@@ -339,6 +357,64 @@ def test_score_event_persisted_exactly_as_supplied(db):
     )}
     assert rows["GOAL - Hawks (Jack Gunston)"] == 1
     assert rows["Some narrative."] == 0
+
+
+def test_event_with_missing_comment_persists_with_null_comment(db):
+    """comment is nullable end-to-end (persistence + API model, see
+    api/routes_v1.py's CommentaryEvent) since the source occasionally omits
+    it -- this must never raise on write or on a later unfiltered read."""
+    conn, _ = db
+    payload = commentary_payload(events=[{"periodNumber": 1, "periodSeconds": 5, "playerId": None, "teamId": None, "scoreEvent": False}])
+    feed = parse_commentary_feed(payload, match_id=HAWTHORN_MATCH_ID, match_provider_id=HAWTHORN_MATCH_PROVIDER_ID, observed_at=_iso())
+    result = persist_commentary_feed(conn, feed)
+    assert result["new_event_count"] == 1
+    row = conn.execute("SELECT comment FROM match_commentary_events WHERE match_provider_id=?", (HAWTHORN_MATCH_PROVIDER_ID,)).fetchone()
+    assert row["comment"] is None
+
+
+def test_replay_source_and_collector_version_overrides_mark_provenance(db):
+    """scripts/import_commentary_capture.py always passes distinct source/
+    collector_version so a replay is never indistinguishable in the
+    database from a genuine live production poll."""
+    conn, _ = db
+    payload = commentary_payload(events=[_event()])
+    feed = parse_commentary_feed(payload, match_id=HAWTHORN_MATCH_ID, match_provider_id=HAWTHORN_MATCH_PROVIDER_ID, observed_at=_iso())
+    persist_commentary_feed(conn, feed, source="replay:manual test", collector_version="match_commentary_import_v1")
+
+    event_row = conn.execute(
+        "SELECT source, collector_version FROM match_commentary_events WHERE match_provider_id=?",
+        (HAWTHORN_MATCH_PROVIDER_ID,),
+    ).fetchone()
+    assert event_row["source"] == "replay:manual test"
+    assert event_row["collector_version"] == "match_commentary_import_v1"
+
+    poll_row = conn.execute(
+        "SELECT collector_version FROM match_commentary_polls WHERE match_provider_id=?",
+        (HAWTHORN_MATCH_PROVIDER_ID,),
+    ).fetchone()
+    assert poll_row["collector_version"] == "match_commentary_import_v1"
+
+
+def test_replay_touch_only_poll_is_still_marked_even_with_no_new_events(db):
+    """Even when a replay only re-observes already-known fingerprints (no
+    new event rows), the poll row it writes must still carry the replay's
+    collector_version -- this is what makes a touch-only replay
+    distinguishable from a live poll."""
+    conn, _ = db
+    payload = commentary_payload(events=[_event()])
+    feed1 = parse_commentary_feed(payload, match_id=HAWTHORN_MATCH_ID, match_provider_id=HAWTHORN_MATCH_PROVIDER_ID, observed_at=_iso(0))
+    persist_commentary_feed(conn, feed1)  # genuine "live" poll
+
+    feed2 = parse_commentary_feed(payload, match_id=HAWTHORN_MATCH_ID, match_provider_id=HAWTHORN_MATCH_PROVIDER_ID, observed_at=_iso(30))
+    result2 = persist_commentary_feed(conn, feed2, source="replay:manual test", collector_version="match_commentary_import_v1")
+    assert result2["new_event_count"] == 0
+
+    poll_rows = conn.execute(
+        "SELECT poll_sequence, collector_version FROM match_commentary_polls WHERE match_provider_id=? ORDER BY poll_sequence",
+        (HAWTHORN_MATCH_PROVIDER_ID,),
+    ).fetchall()
+    assert poll_rows[0]["collector_version"] != "match_commentary_import_v1"
+    assert poll_rows[1]["collector_version"] == "match_commentary_import_v1"
 
 
 def test_missing_commentary_array_is_not_a_hard_failure(db):

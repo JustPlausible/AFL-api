@@ -234,6 +234,19 @@ def test_distinguishes_malformed_top_level_payload(db, monkeypatch):
     assert conn.execute("SELECT COUNT(*) FROM match_commentary_events").fetchone()[0] == 0
 
 
+def test_distinguishes_payload_for_a_different_match_as_malformed(db, monkeypatch):
+    """A CFS response whose own matchId disagrees with the requested match
+    must never be persisted against the candidate match -- it is treated
+    the same as any other malformed payload."""
+    conn, _ = db
+    add_match(conn, 8001, "CD_M1")
+    _enabled(monkeypatch)
+    client = FakeClient({"CD_M1": [commentary_payload(events=[_event()], match_id="CD_M_WRONG")]})
+    result = _capture_one(client, 8001, "CD_M1", clock=lambda: NOW)
+    assert result["outcome"] == "malformed_payload"
+    assert conn.execute("SELECT COUNT(*) FROM match_commentary_events").fetchone()[0] == 0
+
+
 def test_polls_scheduled_match_whose_kickoff_has_passed_within_tolerance(db, monkeypatch):
     conn, _ = db
     start = NOW - timedelta(seconds=300)

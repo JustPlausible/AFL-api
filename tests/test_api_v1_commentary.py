@@ -171,6 +171,23 @@ def test_null_player_and_team_render_as_null_never_guessed(tmp_path, monkeypatch
     assert event["team"] is None
 
 
+def test_event_with_null_comment_does_not_break_the_response(tmp_path, monkeypatch):
+    """A source event that omits comment persists with comment=null; the
+    response model must render it as null rather than raising a validation
+    error for every unfiltered request against this match."""
+    def seed(conn):
+        _seed_base(conn)
+        _seed_events(conn, [
+            {"periodNumber": 1, "periodSeconds": 5, "playerId": None, "teamId": None, "scoreEvent": False},
+        ])
+
+    db_path = _make_db(tmp_path, seed=seed)
+    client = _client(db_path, monkeypatch)
+    response = _get(client)
+    assert response.status_code == 200
+    assert response.json()["events"][0]["comment"] is None
+
+
 def test_score_events_only_filter(tmp_path, monkeypatch):
     def seed(conn):
         _seed_base(conn)

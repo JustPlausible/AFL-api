@@ -109,6 +109,14 @@ re-implementation** (not a shared import, per §3.1):
   precise anchor. This is exactly what the real `CD_M20260142406` review
   case validated (see §4).
 
+`parse_commentary_feed` also rejects a payload whose own top-level
+`matchId` is present and does not match the requested `match_provider_id`
+(raises `MatchCommentaryError`, mapped by the scheduler to a
+`malformed_payload` poll outcome, never persisted). Without this check, a
+misrouted/mis-cached CFS response -- or a wrong `--match-provider-id`
+override to the replay CLI -- would be silently persisted against the
+wrong canonical match.
+
 Documented assumptions and limitations:
 
 * two genuinely distinct events that are byte-identical across every
@@ -289,9 +297,18 @@ output: AFL-api persistence -> GET /api/v1/matches/{match_id}/commentary -> cons
 `scripts/import_commentary_capture.py` is the explicitly-scoped internal/dev
 replay mechanism Issue #201 asks for as the alternative: a CLI script,
 never wired into `cli.py` or any HTTP route, requiring an explicit
-`--source-label` provenance string for every import. It reuses the same
-idempotent `persist_commentary_feed`, so replaying a fixture twice produces
-zero new rows the second time.
+`--source-label` provenance string for every import. That label is
+persisted, not just printed: every event row an import creates is stored
+with `source="replay:<label>"` (overriding the live collector's
+`"cfs_commentary_feed"`), and every poll row it writes is stored with a
+distinct `collector_version` (`"match_commentary_import_v1"`), so a replay
+is always distinguishable from a genuine live production poll in the
+database, never silently indistinguishable from one. It also validates the
+payload's own `matchId` against the requested/derived `match_provider_id`
+(see §3.3), so a wrong `--match-provider-id` override cannot silently
+misattribute a replayed capture. It reuses the same idempotent
+`persist_commentary_feed`, so replaying a fixture twice produces zero new
+rows the second time.
 
 ## 8. Architecture constraints preserved
 

@@ -336,9 +336,23 @@ def parse_commentary_feed(payload: Any, *, match_id: int, match_provider_id: str
     field -- recorded as ``events=None``, never coerced to an empty list. An
     individual event entry that is not an object is skipped rather than
     aborting the whole parse.
+
+    Also raises ``MatchCommentaryError`` when the payload's own top-level
+    ``matchId`` is present and does not match the requested
+    ``match_provider_id``. Without this check, a misrouted/mis-cached
+    response for a *different* match would be silently persisted against
+    the caller-supplied canonical match, corrupting that match's
+    commentary. A missing/null ``matchId`` is not itself an error (some
+    captures may omit it); only a confirmed mismatch is rejected.
     """
     if not isinstance(payload, dict):
         raise MatchCommentaryError("commentaryFeed payload is not an object")
+    payload_match_id = payload.get("matchId")
+    if isinstance(payload_match_id, str) and payload_match_id != match_provider_id:
+        raise MatchCommentaryError(
+            f"commentaryFeed payload matchId {payload_match_id!r} does not match requested "
+            f"match_provider_id {match_provider_id!r}"
+        )
     feed_last_updated = _coerce_str(payload.get("lastUpdated"))
     raw_events = payload.get("commentaryEvent")
     events: list[ParsedCommentaryEvent] | None
@@ -448,8 +462,18 @@ def _load_existing_events(conn: sqlite3.Connection, match_provider_id: str,
     return fingerprint_to_id, slot_to_candidates
 
 
-def persist_commentary_feed(conn: sqlite3.Connection, feed: ParsedCommentaryFeed) -> dict[str, Any]:
+def persist_commentary_feed(conn: sqlite3.Connection, feed: ParsedCommentaryFeed, *,
+                            source: str = SOURCE_LABEL,
+                            collector_version: str = COLLECTOR_VERSION) -> dict[str, Any]:
     """Insert one successfully parsed poll, deduplicating events by fingerprint.
+
+    ``source``/``collector_version`` default to the live production
+    collector's own constants, but callers with a different provenance --
+    notably ``scripts/import_commentary_capture.py``, which requires an
+    explicit ``--source-label`` -- must override both so a replayed/imported
+    capture is distinguishable in ``match_commentary_events.source`` and
+    ``match_commentary_polls.collector_version`` from a genuine live
+    production poll, rather than silently indistinguishable from one.
 
     Never overwrites a previously captured event's content: an already-known
     fingerprint only has its ``last_observed_*`` bookkeeping touched. A
@@ -513,8 +537,8 @@ def persist_commentary_feed(conn: sqlite3.Connection, feed: ParsedCommentaryFeed
                     None if event.score_event is None else int(event.score_event),
                     event.player_provider_id, canonical_player_id, event.team_provider_id, canonical_team_id,
                     event.category, event.source_index, possible_edit_of_id, feed.observed_at, feed.observed_at,
-                    feed.feed_last_updated, feed.feed_last_updated, SOURCE_LABEL,
-                    json.dumps(event.raw, sort_keys=True), COLLECTOR_VERSION,
+                    feed.feed_last_updated, feed.feed_last_updated, source,
+                    json.dumps(event.raw, sort_keys=True), collector_version,
                 ),
             )
             new_event_id = cur.lastrowid
@@ -535,7 +559,7 @@ def persist_commentary_feed(conn: sqlite3.Connection, feed: ParsedCommentaryFeed
            ) VALUES (?,?,?,?,?,?,?,?,?,?)""",
         (
             feed.match_id, feed.match_provider_id, next_sequence, feed.observed_at, feed.match_status_at_poll,
-            OUTCOME_SUCCESS, event_count_in_feed, len(new_events), feed.feed_last_updated, COLLECTOR_VERSION,
+            OUTCOME_SUCCESS, event_count_in_feed, len(new_events), feed.feed_last_updated, collector_version,
         ),
     )
     return {

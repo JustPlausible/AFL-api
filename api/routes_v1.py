@@ -647,7 +647,12 @@ class CommentaryEvent(BaseModel):
     match_id: int
     period_number: int | None = Field(description="0 for pre-match commentary, 1-4 for regulation quarters.")
     period_seconds: int | None = Field(description="Elapsed seconds within the period.")
-    comment: str = Field(description="Original commentary text exactly as supplied by the source feed.")
+    comment: str | None = Field(
+        description=(
+            "Original commentary text exactly as supplied by the source feed, or null when the "
+            "source event omitted or malformed the comment field."
+        )
+    )
     score_event: bool | None = Field(
         description="Source scoreEvent flag exactly as supplied. Never inferred from comment text."
     )
