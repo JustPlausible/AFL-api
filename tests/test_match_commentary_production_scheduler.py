@@ -136,7 +136,7 @@ def test_polls_live_match_and_persists_first_observation(db, monkeypatch):
 
 def test_polls_postgame_match_not_only_live(db, monkeypatch):
     """Confirms Issue #201's requirement to keep polling through POSTGAME so
-    a late-arriving score-review correction is not missed."""
+    a late-arriving scoring-outcome change is not missed."""
     conn, _ = db
     add_match(conn, 8001, "CD_M1", status="POSTGAME")
     _enabled(monkeypatch)

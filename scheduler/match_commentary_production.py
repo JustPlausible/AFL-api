@@ -42,7 +42,7 @@ Candidates are the union of:
   of the ``matches`` table);
 * currently ``POSTGAME`` matches (``_postgame_matches`` below -- the same
   plain-read pattern, added because the confirmed ``CD_M20260142406``
-  score-review correction (see ``afl_json.match_commentary`` module
+  same-slot scoring-outcome change (see ``afl_json.match_commentary`` module
   docstring) demonstrates commentary can still change after a match leaves
   LIVE but before it is finalised);
 * a bounded pre-kickoff tolerance window (``_kickoff_tolerance_matches``,

@@ -666,7 +666,7 @@ class CommentaryEvent(BaseModel):
     possible_edit_of_event_id: int | None = Field(
         description=(
             "Heuristic, non-authoritative link to an earlier event this one likely republishes or "
-            "corrects (e.g. an official score-review reversal), based on a shared match-clock/player/"
+            "revises (e.g. a same-slot scoring-outcome change), based on a shared match-clock/player/"
             "team/score_event combination. Both events remain in the response; this link never causes "
             "the earlier event to be hidden, merged, or removed. Null when no such link was detected."
         )

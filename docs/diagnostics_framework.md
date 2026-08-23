@@ -55,7 +55,7 @@ events and injury/interchange context captured here are evidence for that
 future decision, never a production signal in their own right.
 
 **Update (Issue #201):** the evidence this profile gathered ahead of and
-during Round 24 -- including a real official score-review reversal on a
+during Round 24 -- including a real same-slot scoring-outcome change on a
 different match in the same capture set -- was used to design and ship a
 **separate, new production path**: `afl_json/match_commentary.py`,
 `scheduler/match_commentary_production.py`,

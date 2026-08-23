@@ -72,19 +72,30 @@ Confirmed from the Round 24 evidence:
   match, with an identical event count) -- so ``lastUpdated`` alone is
   **not** a reliable "there is something new" signal and must never be used
   as a substitute for fingerprint-based dedup;
-  * a genuine **official score-review reversal** is present in the
+  * a genuine **same-slot scoring-outcome change** is present in the
   combined Round 24 diagnostic evidence (not in ``CD_M20260142409`` itself,
   which shows no such sequence in either supplied file -- see
   ``docs/investigation/afl-json/ENDPOINT_CATALOG.md`` for the exact match):
   ``CD_M20260142406`` recorded ``"GOAL - Bulldogs (Cody Weightman)"`` at
-  ``period=3, seconds=839``, then on a later poll a second, distinct event
-  ``"BEHIND - Bulldogs (Cody Weightman)"`` at the *same* ``period=3,
-  seconds=839`` for the same player/team/``scoreEvent``. The original GOAL
-  entry was never removed or rewritten -- both remain in the accumulated
-  feed. This is exactly the "possible edit" slot-key pattern the diagnostic
-  module already detects, now confirmed against a real review sequence
-  rather than only a hypothetical one; this module's ``possible_edit_of_event_id``
-  linkage (see below) is built to preserve precisely this timeline.
+  ``period=3, seconds=839`` (live diagnostic poll evidence), then a later
+  poll recorded a second, distinct event ``"BEHIND - Bulldogs (Cody
+  Weightman)"`` at the *same* ``period=3, seconds=839`` for the same
+  player/team/``scoreEvent``. The real final concluded-match capture for
+  this match confirms only the ``BEHIND`` remains at that slot -- i.e. the
+  upstream feed itself appears to have replaced the earlier text, not
+  merely appended alongside it (see ``commentary_CD_M20260142406_full.json``).
+  This module deliberately does **not** mirror that upstream mutability:
+  once observed, an event's row is never deleted or rewritten just because
+  a later poll's array no longer contains matching text at that slot -- see
+  "Event identity / deduplication" above. Nothing in the available evidence
+  identifies *why* the outcome changed (no explicit review/correction
+  marker exists in the feed), so this module and its docs deliberately say
+  "scoring-outcome change" rather than "official review" or "reversal".
+  This is exactly the "possible edit" slot-key pattern the diagnostic
+  module already detects, now confirmed against a real observed change
+  rather than only a hypothetical one; this module's
+  ``possible_edit_of_event_id`` linkage (see below) is built to preserve
+  precisely this timeline.
 
 ## Do not parse prose
 
@@ -115,23 +126,31 @@ the ``match_period.py`` precedent.
 A narrower **slot key** -- the same tuple without ``comment`` -- links a new
 event to the most recently first-observed prior event sharing that slot,
 *only* when the new event carries a non-null ``player_provider_id`` (exactly
-the diagnostic module's restriction, which the ``CD_M20260142406`` review
-case above validates: the reversal is player-attributed). The link is
-recorded as ``possible_edit_of_event_id`` and is additive/heuristic only --
-it is surfaced to consumers, never used to hide, merge, or delete the
+the diagnostic module's restriction, which the ``CD_M20260142406`` case
+above validates: the scoring-outcome change is player-attributed). The link
+is recorded as ``possible_edit_of_event_id`` and is additive/heuristic only
+-- it is surfaced to consumers, never used to hide, merge, or delete the
 earlier row. This is deliberately named "possible" for the same reason the
 diagnostic evidence is: two independent, unrelated events *could*
-legitimately collide on the same slot, so this must not be presented to
-consumers as a certain fact.
+legitimately collide on the same slot, and the feed itself never states
+*why* a slot's published outcome changed, so this must not be presented to
+consumers as a confirmed correction/review.
 
 Documented limitations (carried over from the diagnostic investigation,
-still true on real evidence):
+updated where real evidence has since confirmed or contradicted them):
 
 * two genuinely distinct events that are byte-identical across every
   fingerprinted field would collide and be treated as one event;
-* event *removal* is not detected -- the accumulated feed only ever grows in
-  every observation to date, so there is no evidence removal occurs, and
-  nothing here assumes otherwise;
+* the ``CD_M20260142406`` evidence shows the upstream feed **can** replace
+  an entry's text in place between polls (the earlier ``GOAL`` text is gone
+  from the final concluded array; only the later ``BEHIND`` remains at that
+  slot -- see above). This module deliberately does not mirror that
+  mutability in its own persistence: it detects the replacement's *new*
+  fingerprint as a new event and links it, but never deletes or rewrites
+  the row it already stored for the earlier text, precisely so AFL-api's
+  own history stays complete even when the upstream feed's own history does
+  not. True out-of-band *removal* -- a slot that later reports no event at
+  all, with nothing replacing it -- remains unobserved and undetected;
 * sub-second real-world ordering between two events sharing one
   ``(period_number, period_seconds)`` pair is inferred only from original
   array position (see ``source_index`` below), never confirmed by an
@@ -580,8 +599,8 @@ def recently_active_match_provider_ids(conn: sqlite3.Connection, *, now: datetim
     appear to carry a live/score status field either), extended to also
     cover POSTGAME so a match that has left LIVE but not yet reached a
     stable CONCLUDED continues to be polled long enough to catch a
-    late-arriving official score-review correction (see the confirmed
-    ``CD_M20260142406`` review sequence in the module docstring).
+    late-arriving same-slot scoring-outcome change (see the confirmed
+    ``CD_M20260142406`` case in the module docstring).
     """
     if grace_seconds <= 0:
         return []

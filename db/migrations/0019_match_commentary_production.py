@@ -17,9 +17,9 @@ capture, but deliberately lighter:
   Champion Data ``playerId``/``teamId`` and, where resolvable, the linked
   canonical AFL-api identity -- never guessed, left NULL when unresolved.
   ``possible_edit_of_event_id`` is a heuristic, non-destructive link to an
-  earlier event that this one likely republishes/corrects (e.g. an official
-  score review): the earlier row is never overwritten or deleted, so the
-  full source timeline stays intact.
+  earlier event that this one likely republishes/revises (e.g. a same-slot
+  scoring-outcome change): the earlier row is never overwritten or deleted,
+  so the full source timeline stays intact.
 * ``match_commentary_polls`` -- lightweight per-match poll bookkeeping
   (sequence continuity across restarts, endpoint outcome, feed metadata).
   Unlike the diagnostic poll table, this **never** retains the raw feed

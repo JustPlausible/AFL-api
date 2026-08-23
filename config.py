@@ -234,9 +234,10 @@ AFL_COMMENTARY_PRODUCTION_ENABLED = _parse_bool_env("AFL_COMMENTARY_PRODUCTION_E
 AFL_COMMENTARY_PRODUCTION_INTERVAL_SECONDS = _parse_int_env("AFL_COMMENTARY_PRODUCTION_INTERVAL_SECONDS", 20)
 AFL_COMMENTARY_PRODUCTION_KICKOFF_TOLERANCE_SECONDS = _parse_int_env("AFL_COMMENTARY_PRODUCTION_KICKOFF_TOLERANCE_SECONDS", 600)
 # Kept generous relative to the diagnostic's 600s post-LIVE grace: Round 24
-# evidence confirmed a genuine official score-review correction
-# (CD_M20260142406) reaching the feed as a new accumulated entry, and a
-# review can plausibly take longer than 10 minutes after full-time to
-# resolve. This window covers POSTGAME (always polled -- see
-# recently_active_match_provider_ids) plus a bounded grace after that.
+# evidence confirmed a genuine same-slot scoring-outcome change
+# (CD_M20260142406) reaching the feed as a new accumulated entry, and
+# whatever upstream process produces that change can plausibly take longer
+# than 10 minutes after full-time to resolve. This window covers POSTGAME
+# (always polled -- see recently_active_match_provider_ids) plus a bounded
+# grace after that.
 AFL_COMMENTARY_PRODUCTION_POSTGAME_GRACE_SECONDS = _parse_int_env("AFL_COMMENTARY_PRODUCTION_POSTGAME_GRACE_SECONDS", 1800)

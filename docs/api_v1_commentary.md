@@ -73,13 +73,15 @@ Field notes:
   the source Champion Data id preserved alongside the resolved canonical
   `id`/`name`.
 * **`possible_edit_of_event_id`** is a heuristic, non-authoritative link to
-  an earlier event this one likely republishes or corrects — most notably
-  an official score-review reversal (a `GOAL` later followed by a `BEHIND`,
+  an earlier event this one likely republishes or revises — most notably a
+  same-slot scoring-outcome change (a `GOAL` later followed by a `BEHIND`,
   or vice versa, at the identical match-clock/player/team/`score_event`
-  combination). **Both** events always remain in the response; this field
-  never causes the earlier event to be merged, hidden, or removed — AFL-api
-  represents what the source feed actually published over time. `null` when
-  no such link was detected.
+  combination; the source feed never states why the outcome changed, so
+  this is not presented as a confirmed "review" or "correction"). **Both**
+  events always remain in the response; this field never causes the earlier
+  event to be merged, hidden, or removed — AFL-api represents what the
+  source feed actually published over time. `null` when no such link was
+  detected.
 * A valid `match_id` with no commentary yet (or ever) returns `200` with an
   empty `events` collection — this is not an error.
 

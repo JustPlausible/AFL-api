@@ -229,15 +229,16 @@ def test_period_and_player_and_team_filters(tmp_path, monkeypatch):
     assert len(by_team) == 1 and by_team[0]["comment"] == "GOAL - Hawks (Jack Gunston)"
 
 
-def test_score_review_reversal_exposes_both_events_with_link(tmp_path, monkeypatch):
+def test_same_slot_scoring_outcome_change_exposes_both_events_with_link(tmp_path, monkeypatch):
     def seed(conn):
         _seed_base(conn)
         _seed_events(conn, [
             {"comment": "GOAL - Hawks (Jack Gunston)", "periodNumber": 3, "periodSeconds": 839,
              "playerId": "CD_I291351", "teamId": "CD_T80", "scoreEvent": True},
         ])
-        # A second, distinct poll where an official review changes the outcome
-        # at the identical match-clock/player/team/scoreEvent slot.
+        # A second, distinct poll where the published outcome changes at the
+        # identical match-clock/player/team/scoreEvent slot (the source feed
+        # never states why -- see afl_json.match_commentary module docstring).
         _seed_events(conn, [
             {"comment": "BEHIND - Hawks (Jack Gunston)", "periodNumber": 3, "periodSeconds": 839,
              "playerId": "CD_I291351", "teamId": "CD_T80", "scoreEvent": True},

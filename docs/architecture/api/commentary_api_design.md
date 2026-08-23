@@ -36,12 +36,15 @@ evidence-cited contract. Summary:
   null `playerId` (team-only, e.g. a rushed behind).
 * `lastUpdated` can advance with no new event content -- never a substitute
   for fingerprint-based dedup.
-* A genuine official score-review reversal was observed in the Round 24
+* A genuine same-slot scoring-outcome change was observed in the Round 24
   evidence set (a different match, `CD_M20260142406`, from the same capture
   run as the supplied `CD_M20260142409` evidence): an initial `GOAL` was
   followed by a `BEHIND` at the identical
   `(periodNumber, periodSeconds, playerId, teamId, scoreEvent)` slot. The
-  original entry was never removed or rewritten.
+  real final concluded-match capture confirms only the `BEHIND` remains at
+  that slot in the upstream feed -- the earlier entry's text was replaced,
+  not merely supplemented. AFL-api's own persistence does not mirror that
+  replacement; see §5.
 * The feed remains queryable and stable well into POSTGAME/CONCLUDED.
 
 ## 3. Persistence and event-identity design
@@ -74,7 +77,7 @@ API reads:
 | `team_provider_id`, `canonical_team_id` | Source Champion Data team id, and its resolved canonical link (nullable, never guessed). |
 | `category` | Best-effort, non-authoritative `quarter_start`/`quarter_end`/`score_event` label. |
 | `source_index` | Position in the source array at first observation (ordering tiebreaker; see §5.2). |
-| `possible_edit_of_event_id` | Heuristic, non-destructive link to an earlier event this one likely republishes/corrects (see §4). |
+| `possible_edit_of_event_id` | Heuristic, non-destructive link to an earlier event this one likely republishes/revises (see §5). |
 | `first_observed_at`, `last_observed_at` | UTC observation timestamps. |
 | `source_feed_last_updated`, `last_seen_feed_last_updated` | Source `lastUpdated` at first/most-recent observation. |
 | `source` | Constant provenance marker (`cfs_commentary_feed`). |
@@ -152,20 +155,47 @@ Documented assumptions and limitations:
   response. Nothing in this module ever parses a player or team name out of
   the free-text `comment`.
 
-## 5. Score-review / reversal preservation
+## 5. Same-slot scoring-outcome change preservation
+
+*Terminology note:* this section deliberately says "scoring-outcome
+change", not "official score review" or "reversal". The evidence proves
+the *outcome* changed; nothing in the feed states *why* -- there is no
+review/correction marker of any kind. Presenting it as a confirmed review
+would be inferring intent the source data does not supply.
 
 ### 5.1 The real evidence
 
-Diagnostic capture across Round 24 recorded, for match `CD_M20260142406`:
-`"GOAL - Bulldogs (Cody Weightman)"` at `period=3, seconds=839`, then on a
-later poll `"BEHIND - Bulldogs (Cody Weightman)"` at the identical
-`(period_number, period_seconds, playerId, teamId, scoreEvent)` slot. The
-original `GOAL` entry was never removed or rewritten -- both remained in the
-accumulated feed. `CD_M20260142409` itself (the match in the two files
-supplied for this issue) shows no such sequence in either supplied file; see
+Two independent pieces of evidence, both for match `CD_M20260142406`
+(a different Round 24 match from `CD_M20260142409`, the match in the two
+files originally supplied for this issue):
+
+1. **Live diagnostic poll sequence** (from the combined Round 24 diagnostic
+   report): poll `seq=426` at `2026-08-22T08:00:14Z` recorded
+   `"GOAL - Bulldogs (Cody Weightman)"` at `period=3, seconds=839`; a later
+   poll `seq=431` at `2026-08-22T08:01:29Z` recorded a second, distinct
+   event, `"BEHIND - Bulldogs (Cody Weightman)"`, at the identical
+   `(period_number, period_seconds, playerId, teamId, scoreEvent)` slot.
+   This proves the `GOAL` version was genuinely published and observed
+   before the `BEHIND` version.
+2. **Real final concluded-match capture**
+   (`tests/fixtures/afl/commentary/commentary_CD_M20260142406_full.json`,
+   supplied directly by the repository owner from the same capture run):
+   at `period=3, seconds=839` the array contains only
+   `"BEHIND - Bulldogs (Cody Weightman)"` -- the `GOAL` text is **not**
+   present anywhere in the final accumulated array. This proves the
+   upstream feed itself does not necessarily retain both versions forever;
+   by the time of this capture, the earlier text had been replaced.
+
+Together, these prove AFL-api cannot rely on any single poll of the
+upstream feed to reconstruct this history -- only *observing* the earlier
+`GOAL` at the time it was live, and never discarding that observation
+later, preserves it. `CD_M20260142409` itself shows no such sequence in
+either of the two files originally supplied for this issue; see
 `tests/fixtures/afl/commentary/commentary_CD_M20260142406_score_review.metadata.json`
-for the full, honestly-labelled provenance of the reconstructed fixture used
-to test this.
+for the full evidence chain and exact provenance of each fixture file used
+to test this (one real full capture, one earlier state reconstructed from
+the diagnostic report's structured per-event fields since that report does
+not retain a verbatim raw-array capture of the earlier state).
 
 ### 5.2 How it is preserved
 
@@ -173,19 +203,24 @@ to test this.
   (different `comment`), so this is not a dedup collision.
 * The later row's `possible_edit_of_event_id` points at the earlier row via
   the slot-key heuristic (§3.3).
-* Neither row is ever updated, hidden, or deleted because of this link.
+* Neither row is ever updated, hidden, or deleted because of this link --
+  in particular, AFL-api's own persistence does **not** mirror the upstream
+  feed's apparent in-place replacement (§5.1, evidence 2): once a
+  fingerprint has been observed and stored, no later poll's array content
+  (or lack thereof) ever causes that row to be rewritten or removed.
 * The consumer API returns both, in chronological order (`period_number`
   then `period_seconds` ascending; within one clock second, `source_index`
   descending -- larger source index means an earlier position in a
   newest-first array, i.e. observed further back in time -- then `id`
   ascending as a final deterministic tiebreaker), with
   `possible_edit_of_event_id` exposed so a consumer can recognise and, if it
-  chooses, present the correction.
+  chooses, present the change.
 
 This is a **heuristic, non-authoritative** link, named "possible" for the
 same reason the diagnostic evidence is: two independent, unrelated events
-could in principle collide on the same slot. It is surfaced, never used to
-merge or hide data.
+could in principle collide on the same slot, and the feed never states why
+a slot's outcome changed. It is surfaced, never used to merge or hide data,
+and never presented to consumers as a confirmed correction.
 
 ## 6. Production scheduler lifecycle
 
@@ -206,7 +241,7 @@ the existing `player_stat_polling_planner`), gated only by its own
   (`recently_active_match_provider_ids`, reading this module's own
   `match_commentary_polls`). Candidates = `LIVE` ∪ `POSTGAME` ∪ bounded
   pre-kickoff tolerance ∪ bounded post-active grace. `POSTGAME` is always
-  included (not just a grace window) because the real review-reversal
+  included (not just a grace window) because the real scoring-outcome-change
   evidence (§5.1) demonstrates commentary can still change after a match
   leaves `LIVE` but before it is finalised.
 * **Why not the `match_stat_windows` lease system:** a deliberate, scoped
@@ -334,23 +369,34 @@ rows the second time.
 
 Raised here rather than guessed around, per Issue #201:
 
-* The supplied `CD_M20260142409` evidence (both files) shows **no**
-  score-review sequence for that specific match -- the real reversal used
-  to validate §5 came from a different match, `CD_M20260142406`, in the
-  same capture set, reconstructed from the diagnostic text report's
-  structured fields (not a raw array capture -- see the fixture metadata's
-  provenance section). A raw, verbatim before/after array capture of an
-  actual review sequence would be a stronger regression fixture than the
-  current reconstruction, if one becomes available from a future match.
+* The supplied `CD_M20260142409` evidence (both original files) shows
+  **no** same-slot scoring-outcome change for that specific match -- the
+  real evidence used to validate §5 came from a different match,
+  `CD_M20260142406`, in the same capture set. The repository owner
+  subsequently supplied the real, verbatim final concluded-match capture
+  for that match
+  (`tests/fixtures/afl/commentary/commentary_CD_M20260142406_full.json`),
+  which is now used directly for the "after" state; only the earlier
+  ("before" the change) state remains a reconstruction from the diagnostic
+  report's structured per-event fields, since no raw capture of that
+  earlier state exists (see the fixture metadata's provenance section).
+* Nothing in the source feed identifies *why* a same-slot scoring outcome
+  changed -- there is no explicit review/correction field or marker of any
+  kind. This design and its docs therefore deliberately avoid asserting
+  "official review" or "reversal" as a fact; only the observed change in
+  published outcome is a fact.
 * `source_index`-based same-second ordering (§5.2) is a documented
   best-effort inference, not an independently confirmed sub-second clock.
   If a future capture ever contradicts the "lower array index is more
   recent" assumption, this ordering rule will need revisiting.
-* Event *removal* has never been observed and is not handled -- if a future
-  capture demonstrates the feed can shrink, that is new evidence requiring
-  a deliberate follow-up decision, not something this design guesses at.
+* The `CD_M20260142406` evidence proves the upstream feed **can** replace
+  an entry's text in place between polls (§5.1) -- true out-of-band
+  *removal* (a slot that later reports no event at all, with nothing
+  replacing it) remains unobserved and is not separately handled. If a
+  future capture demonstrates that, it is new evidence requiring a
+  deliberate follow-up decision, not something this design guesses at.
 * `possible_edit_of_event_id` linking is restricted to player-attributed
-  events. A team-only score-review reversal (e.g. correcting a rushed
+  events. A team-only scoring-outcome change (e.g. correcting a rushed
   behind's team attribution) would not be linked by the current heuristic;
   no such case has been observed in the supplied evidence.
 * Whether `commentaryFeed` first becomes available at a materially

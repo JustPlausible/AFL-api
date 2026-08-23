@@ -441,14 +441,19 @@ def test_persist_poll_outcome_records_non_success_attempts(db):
     assert row["outcome"] == "not_published"
 
 
-# --- Score-review / reversal preservation (CD_M20260142406 real evidence) -----
+# --- Same-slot scoring-outcome change preservation (CD_M20260142406 real evidence) ---
 
-def test_score_review_reversal_preserves_both_events_and_links_them(db):
-    """Real Round 24 review sequence (see
+def test_same_slot_scoring_outcome_change_preserves_both_events_and_links_them(db):
+    """Real Round 24 scoring-outcome change (see
     commentary_CD_M20260142406_score_review.metadata.json): a GOAL is
     followed, at the identical match-clock/player/team/scoreEvent slot, by a
-    BEHIND. Both must remain persisted; the correction must be linked back
-    to the original via possible_edit_of_event_id."""
+    BEHIND -- confirmed both by the live diagnostic poll sequence (poll1)
+    and by the real final concluded-match capture (poll2, a reduced,
+    verbatim subset of commentary_CD_M20260142406_full.json), which shows
+    only the BEHIND remains upstream. Both must remain persisted regardless;
+    the later event must be linked back to the earlier one via
+    possible_edit_of_event_id. Deliberately not called a "review" or
+    "reversal" -- the feed never states why the outcome changed."""
     conn, _ = db
     poll1 = commentary_fixture("commentary_CD_M20260142406_score_review_poll1.json")
     poll2 = commentary_fixture("commentary_CD_M20260142406_score_review_poll2.json")

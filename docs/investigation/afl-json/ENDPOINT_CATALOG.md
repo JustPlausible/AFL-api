@@ -398,30 +398,40 @@ diagnostic capture's final poll for the same match
 ingestion must dedupe by event fingerprint, never by watching `lastUpdated`
 alone.
 
-*New finding -- a genuine official score-review reversal was observed* in
+*New finding -- a genuine same-slot scoring-outcome change was observed* in
 the combined Round 24 diagnostic evidence, though not in `CD_M20260142409`
 itself (that match's supplied evidence shows no such sequence in either
 file). A different Round 24 match in the same capture set,
 `CD_M20260142406`, recorded `"GOAL - Bulldogs (Cody Weightman)"` at
-`period=3, seconds=839`, then on a later poll a second, distinct event
-`"BEHIND - Bulldogs (Cody Weightman)"` at the *same*
-`(periodNumber, periodSeconds, playerId, teamId, scoreEvent)` slot -- the
-original GOAL entry was never removed or rewritten; both remain in the
-accumulated feed (see
+`period=3, seconds=839` (live diagnostic poll evidence), then a later poll
+recorded a second, distinct event `"BEHIND - Bulldogs (Cody Weightman)"` at
+the *same* `(periodNumber, periodSeconds, playerId, teamId, scoreEvent)`
+slot. The real final concluded-match capture for this match
+(`tests/fixtures/afl/commentary/commentary_CD_M20260142406_full.json`,
+supplied directly by the repository owner) confirms only the `BEHIND`
+remains at that slot -- the upstream feed itself appears to replace an
+entry's text in place rather than only ever appending. AFL-api's own
+persistence deliberately does not mirror that: it records the `BEHIND` as a
+new event and links it via `possible_edit_of_event_id`, but never deletes
+or rewrites the row already stored for the `GOAL` (see
 `tests/fixtures/afl/commentary/commentary_CD_M20260142406_score_review.metadata.json`
-for the full reconstruction and provenance). This validates, on real
-evidence, the "possible edit" slot-key detection Issue #196 already
-implemented for exactly this shape of event, and is the basis for the
-production `possible_edit_of_event_id` linkage in
-`afl_json/match_commentary.py`.
+for the full evidence chain and provenance). Nothing in the feed identifies
+*why* the outcome changed -- no explicit review/correction marker exists --
+so this is documented as an observed "scoring-outcome change", not an
+"official review" or "reversal". This validates, on real evidence, the
+"possible edit" slot-key detection Issue #196 already implemented for
+exactly this shape of event, and is the basis for the production
+`possible_edit_of_event_id` linkage in `afl_json/match_commentary.py`.
 
 *POSTGAME/CONCLUDED behaviour:* the feed remains queryable and stable after
 a match concludes -- the Bruno capture above was taken after the
 diagnostic profile's final live poll, well into POSTGAME/CONCLUDED, and
-returned the complete, unchanged event history. Production polling
-therefore continues through POSTGAME and for a bounded grace period after,
-specifically to catch a late-arriving official review correction like the
-one above (see `scheduler/match_commentary_production.py`).
+returned the complete event history (as it stood at that time -- see the
+same-slot scoring-outcome change finding above for a case where that
+history no longer includes an earlier entry's exact text). Production
+polling therefore continues through POSTGAME and for a bounded grace period
+after, specifically to catch a late-arriving scoring-outcome change like
+the one above (see `scheduler/match_commentary_production.py`).
 
 *Production vs. diagnostic:* the diagnostic `commentary` profile
 (`collection/match_commentary_evidence.py`,

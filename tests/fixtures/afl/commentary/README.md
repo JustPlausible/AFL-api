@@ -238,15 +238,22 @@ persistence and consumer API added in Issue #201 (see
   cases: two genuine same-`(periodNumber, periodSeconds)` pairs, a
   team-only `Rushed` behind, player+team-linked goals/behinds, and
   pre-match commentary.
-* `commentary_CD_M20260142406_score_review_poll1.json` /
+* `commentary_CD_M20260142406_full.json` (real, verbatim final
+  concluded-match capture, supplied directly by the repository owner) plus
+  `commentary_CD_M20260142406_score_review_poll1.json` /
   `_poll2.json` (metadata: `commentary_CD_M20260142406_score_review.metadata.json`)
-  -- a **reconstruction**, clearly labelled as such, of a genuine official
-  score-review reversal (`GOAL -> BEHIND` for the same player at the same
-  match-clock second) found in the diagnostic evidence for a *different*
-  Round 24 match (`CD_M20260142406`) in the same user-supplied capture set.
-  `CD_M20260142409` itself shows no review sequence in either supplied
-  file -- see that fixture set's metadata `notes` for the full explanation
-  of where the real review evidence was actually found.
+  -- evidence for a genuine **same-slot scoring-outcome change**
+  (`GOAL -> BEHIND` for the same player at the same match-clock second)
+  found in a *different* Round 24 match (`CD_M20260142406`) from the same
+  capture set. `poll1` remains a clearly-labelled reconstruction of the
+  earlier (pre-change) state; `poll2` is a reduced, verbatim subset of the
+  real full capture, which also revealed that the upstream feed itself no
+  longer contains the earlier `GOAL` text -- only AFL-api's own append-only
+  persistence retains both. Deliberately not called a "review" or
+  "reversal" anywhere in this fixture set: the feed never states why the
+  outcome changed. `CD_M20260142409` itself shows no such sequence in
+  either originally-supplied file -- see the metadata file's `provenance`
+  for the full explanation of where the real evidence was actually found.
 
 ## Potential future use
 
