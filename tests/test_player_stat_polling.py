@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from afl_json.client import AflJsonAuthenticationError, AflJsonClient
+from afl_json.match_period import MatchPeriodState
 from afl_json.player_stats import PlayerStatsStatus, normalise_player_stats
 from db.migration_runner import migrate_database
 from scheduler.match_windows import MatchWindowSettings, reconcile
@@ -624,6 +625,56 @@ def test_missing_or_preterminal_control_row_rolls_back_success(db, mutation):
         worker.run_once()
     assert conn.execute("SELECT COUNT(*) FROM cfs_player_stats").fetchone()[0] == 0
     assert conn.execute("SELECT status,lease_token FROM match_stat_windows").fetchone()[0] == "leased"
+
+
+def test_period_state_provider_hook_tags_checkpoints_without_a_second_network_call(db):
+    """Issue #195: the scheduler's optional MatchPeriodState hook must reach
+    cfs_player_stat_history/checkpoints purely through the existing single
+    upsert_player_stats() call inside this same attempt -- no additional
+    client.get() call, no second scheduler/poller path."""
+    conn, path = db
+    add_match(conn); reconcile(conn, now=NOW, settings=window_settings()); conn.commit()
+    client = Client(live_payload()); lane = DirectLane(path)
+    worker = PlayerStatPollingWorker(
+        settings=settings(), window_settings=window_settings(), client_pool=Pool(client),
+        clock=lambda: NOW, lane=lane,
+        period_state_provider=lambda row: MatchPeriodState.HALF_TIME,
+    )
+    out = worker.run_once()[0]
+    assert out["status"] == "rescheduled"
+    assert client.calls == 1
+    markers = {row[0] for row in conn.execute("SELECT DISTINCT checkpoint_marker FROM cfs_player_stat_checkpoints")}
+    assert markers == {"BASELINE", "HT"}
+
+
+def test_period_state_provider_failure_is_swallowed_and_never_blocks_persistence(db):
+    conn, path = db
+    add_match(conn); reconcile(conn, now=NOW, settings=window_settings()); conn.commit()
+    client = Client(live_payload()); lane = DirectLane(path)
+
+    def broken_provider(row):
+        raise RuntimeError("boom")
+
+    worker = PlayerStatPollingWorker(
+        settings=settings(), window_settings=window_settings(), client_pool=Pool(client),
+        clock=lambda: NOW, lane=lane, period_state_provider=broken_provider,
+    )
+    out = worker.run_once()[0]
+    assert out["status"] == "rescheduled"
+    assert conn.execute("SELECT COUNT(*) FROM cfs_player_stats").fetchone()[0] == 2
+    markers = {row[0] for row in conn.execute("SELECT DISTINCT checkpoint_marker FROM cfs_player_stat_checkpoints")}
+    assert markers == {"BASELINE"}
+
+
+def test_default_worker_has_no_period_state_provider_and_unchanged_network_call_count(db):
+    conn, path = db
+    add_match(conn); reconcile(conn, now=NOW, settings=window_settings()); conn.commit()
+    client = Client(live_payload()); lane = DirectLane(path)
+    worker = PlayerStatPollingWorker(settings=settings(), window_settings=window_settings(),
+        client_pool=Pool(client), clock=lambda: NOW, lane=lane)
+    assert worker.period_state_provider is None
+    worker.run_once()
+    assert client.calls == 1
 
 
 def test_polling_import_has_no_runtime_database_side_effect_and_identity_is_process_specific(tmp_path):

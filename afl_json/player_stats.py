@@ -14,10 +14,31 @@ from typing import Any, Callable, Mapping
 
 from .client import AflJsonClient, AflJsonInvalidResponse, AflJsonResourceUnavailable
 from .collectors import RawResponseWriter
+from .match_period import MatchPeriodState
 from .match_status import MatchLifecycle, later_match_status, normalise_match_status
 
 ENDPOINT_NAME = "match_player_statistics"
 SOURCE_ENDPOINT = "/cfs/afl/playerStats/match/{matchProviderId}"
+
+# Issue #195: sparse full-canonical-line checkpoint markers. QT/HT/3QT/FT come
+# from the shared, already-normalized afl_json.match_period.MatchPeriodState
+# vocabulary (Issue #187) -- this module never derives period state itself.
+# BASELINE and CONCLUDED are not period states at all: BASELINE is "the first
+# accepted observation for this player in this match" and CONCLUDED is the
+# authoritative match-lifecycle marker, deliberately distinct from FT (Q4
+# completing) because Issue #187 established that FT does not itself imply
+# CONCLUDED -- a postgame adjustment can still change the canonical line
+# between the two.
+CHECKPOINT_MARKER_BASELINE = "BASELINE"
+CHECKPOINT_MARKER_CONCLUDED = "CONCLUDED"
+_PERIOD_CHECKPOINT_MARKERS: Mapping[MatchPeriodState, str] = {
+    MatchPeriodState.QUARTER_TIME: "QT",
+    MatchPeriodState.HALF_TIME: "HT",
+    MatchPeriodState.THREE_QUARTER_TIME: "3QT",
+    MatchPeriodState.FULL_TIME: "FT",
+}
+_HISTORY_TABLE = "cfs_player_stat_history"
+_CHECKPOINT_TABLE = "cfs_player_stat_checkpoints"
 
 # Observed source names are deliberately centralised. Adding a confirmed
 # canonical AFL field should require changing this mapping, the record, and
@@ -298,8 +319,18 @@ def _number(value: Any) -> int | Decimal:
     return int(number) if number == number.to_integral_value() else number
 
 
-def upsert_player_stats(conn: sqlite3.Connection, result: PlayerStatsCollectionResult) -> int:
-    """Upsert current observations without allowing stale/live data over a final snapshot."""
+def upsert_player_stats(conn: sqlite3.Connection, result: PlayerStatsCollectionResult, *,
+                        match_period_state: MatchPeriodState | None = None) -> int:
+    """Upsert current observations without allowing stale/live data over a final snapshot.
+
+    ``match_period_state`` is optional context (Issue #187's shared
+    :class:`~afl_json.match_period.MatchPeriodState`) describing the match
+    period at the moment of this observation. It never affects whether an
+    observation is accepted into ``cfs_player_stats`` -- it is only used,
+    when ``cfs_player_stat_history``/``cfs_player_stat_checkpoints`` exist, to
+    tag append-only history rows and to decide which sparse period checkpoint
+    (if any) this accepted observation also satisfies (Issue #195).
+    """
     if result.status in {PlayerStatsStatus.UNAVAILABLE, PlayerStatsStatus.EMPTY}:
         return 0
     authority = 2 if result.status is PlayerStatsStatus.CONCLUDED else 1
@@ -307,6 +338,8 @@ def upsert_player_stats(conn: sqlite3.Connection, result: PlayerStatsCollectionR
     stat_columns = {row[1] for row in conn.execute("PRAGMA table_info(cfs_player_stats)")}
     supports_canonical_link = ("player_provider_ids" in tables
                                and "canonical_player_id" in stat_columns)
+    history_enabled = _HISTORY_TABLE in tables and _CHECKPOINT_TABLE in tables
+    invalid_fields_by_player = _invalid_fields_by_player(result.diagnostics) if history_enabled else {}
     written = 0
     for record in result.records:
         values = asdict(record)
@@ -317,6 +350,7 @@ def upsert_player_stats(conn: sqlite3.Connection, result: PlayerStatsCollectionR
             (record.champion_data_player_id,),
         ).fetchone() if supports_canonical_link else None)
         canonical_player_id = mapped_player[0] if mapped_player else None
+        previous = (_previous_canonical_row(conn, record) if history_enabled else None)
         # Collection time alone does not make a snapshot new information. A
         # repeated response should therefore be a zero-write idempotent run,
         # while a newer same-authority response with any changed source or
@@ -374,8 +408,190 @@ def upsert_player_stats(conn: sqlite3.Connection, result: PlayerStatsCollectionR
                    AND excluded.collected_at >= cfs_player_stats.collected_at
                    AND ({meaningful_change}))
         """, parameters)
-        written += cursor.rowcount
+        accepted = cursor.rowcount == 1
+        if accepted:
+            written += 1
+        # A checkpoint is a full-line snapshot, not a change event: it must be
+        # captured whenever this observation was not rejected as stale/lower
+        # authority, even if every compared column already matched (e.g. a
+        # player with an unchanged stat line polled again at a break) and the
+        # upsert above was therefore a no-op (rowcount 0). Field-level history
+        # rows are the strict subset that additionally requires ``accepted``
+        # (an actual applied change) -- see _record_history_and_checkpoint.
+        if history_enabled and (accepted or _is_at_least_as_authoritative(previous, authority, record.collected_at)):
+            _record_history_and_checkpoint(
+                conn, record, previous=previous, accepted=accepted, authority=authority,
+                status=result.status, match_period_state=match_period_state,
+                canonical_player_id=canonical_player_id,
+                invalid_fields=invalid_fields_by_player.get(record.champion_data_player_id, frozenset()),
+            )
     return written
+
+
+def _is_at_least_as_authoritative(previous: Mapping[str, Any] | None, authority: int,
+                                  collected_at: str) -> bool:
+    """Mirrors the authority/time half of the upsert's own WHERE guard (minus
+    the meaningful-change term), so checkpoint eligibility can be decided
+    without re-running the SQL comparison in Python."""
+    if previous is None:
+        return True
+    if authority > previous["snapshot_authority"]:
+        return True
+    return authority == previous["snapshot_authority"] and collected_at >= previous["collected_at"]
+
+
+def _invalid_fields_by_player(diagnostics: list[PlayerStatDiagnostic]) -> dict[str, frozenset[str]]:
+    """Canonical fields whose source value failed numeric validation this poll.
+
+    These fields must never be compared for history: the normaliser already
+    stores ``None`` for them in ``cfs_player_stats`` (unchanged, existing
+    behaviour), but that ``None`` reflects a rejected/malformed source value,
+    not a genuinely observed removal -- history must not fabricate a false
+    statistic-removal event from it.
+    """
+    source_to_canonical = {source: canonical for canonical, source in CANONICAL_STAT_FIELDS.items()}
+    by_player: dict[str, set[str]] = {}
+    for diagnostic in diagnostics:
+        if diagnostic.code != "invalid_numeric" or not diagnostic.player_id or not diagnostic.field:
+            continue
+        canonical = source_to_canonical.get(diagnostic.field)
+        if canonical:
+            by_player.setdefault(diagnostic.player_id, set()).add(canonical)
+    return {player_id: frozenset(fields) for player_id, fields in by_player.items()}
+
+
+def _previous_canonical_row(conn: sqlite3.Connection, record: CanonicalPlayerStat) -> Mapping[str, Any] | None:
+    """The authoritative canonical stat line (plus its authority/collection
+    time) as it stood immediately before this observation is applied -- the
+    pre-image history must diff against and checkpoint eligibility must
+    compare against, captured before the upsert's own INSERT/UPDATE runs."""
+    row = conn.execute(
+        f"SELECT {', '.join(CANONICAL_STAT_FIELDS)}, snapshot_authority, collected_at "
+        "FROM cfs_player_stats WHERE match_provider_id=? AND champion_data_player_id=?",
+        (record.match_provider_id, record.champion_data_player_id),
+    ).fetchone()
+    if row is None:
+        return None
+    return dict(zip((*CANONICAL_STAT_FIELDS, "snapshot_authority", "collected_at"), row))
+
+
+def _as_decimal(value: Any) -> Decimal | None:
+    if value is None:
+        return None
+    return value if isinstance(value, Decimal) else Decimal(str(value))
+
+
+def _reduce_decimal(value: Decimal) -> int | Decimal:
+    return int(value) if value == value.to_integral_value() else value
+
+
+def _last_recorded_value(conn: sqlite3.Connection, record: CanonicalPlayerStat,
+                         field: str) -> tuple[bool, Decimal | None]:
+    """The last value history/baseline actually recorded as *observed* for
+    this field -- immune to a later invalid/malformed poll silently
+    overwriting ``cfs_player_stats`` with ``NULL`` for that field (that write
+    is existing, unchanged ``cfs_player_stats`` behaviour, but it must never
+    poison the history comparison: a valid recovery afterwards should diff
+    against the last genuinely observed value, not the malformed poll's
+    incidental ``NULL``).
+
+    Returns ``(found, value)``: ``found=False`` means neither a prior history
+    row nor a ``BASELINE`` checkpoint exists for this field yet (e.g. history
+    was enabled after this player's row already existed), so the caller
+    should fall back to the live ``cfs_player_stats`` value as a best-effort
+    degrade.
+    """
+    row = conn.execute(
+        f"SELECT new_value FROM {_HISTORY_TABLE} WHERE match_provider_id=? "
+        "AND champion_data_player_id=? AND stat_field=? ORDER BY id DESC LIMIT 1",
+        (record.match_provider_id, record.champion_data_player_id, field),
+    ).fetchone()
+    if row is not None:
+        return True, _as_decimal(row[0])
+    row = conn.execute(
+        f"SELECT {field} FROM {_CHECKPOINT_TABLE} WHERE match_provider_id=? "
+        "AND champion_data_player_id=? AND checkpoint_marker=?",
+        (record.match_provider_id, record.champion_data_player_id, CHECKPOINT_MARKER_BASELINE),
+    ).fetchone()
+    if row is not None:
+        return True, _as_decimal(row[0])
+    return False, None
+
+
+def _record_history_and_checkpoint(conn: sqlite3.Connection, record: CanonicalPlayerStat, *,
+                                   previous: Mapping[str, Any] | None, accepted: bool, authority: int,
+                                   status: PlayerStatsStatus,
+                                   match_period_state: MatchPeriodState | None,
+                                   canonical_player_id: Any,
+                                   invalid_fields: frozenset[str]) -> None:
+    is_baseline = previous is None
+    if accepted and not is_baseline:
+        for field in CANONICAL_STAT_FIELDS:
+            if field in invalid_fields:
+                continue
+            found, last_recorded = _last_recorded_value(conn, record, field)
+            old = last_recorded if found else _as_decimal(previous.get(field))
+            new = _as_decimal(getattr(record, field))
+            if old == new:
+                continue
+            delta = _reduce_decimal(new - old) if (old is not None and new is not None) else None
+            conn.execute(f"""
+                INSERT INTO {_HISTORY_TABLE} (
+                    match_provider_id, afl_match_id, champion_data_player_id, canonical_player_id,
+                    observed_at, match_period_state, stat_field, previous_value, new_value, delta,
+                    source_endpoint, resolved_match_status, snapshot_authority
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """, (
+                record.match_provider_id,
+                None if record.afl_match_id is None else str(record.afl_match_id),
+                record.champion_data_player_id, canonical_player_id, record.collected_at,
+                match_period_state.value if match_period_state else None, field,
+                _sqlite_number(old) if old is not None else None,
+                _sqlite_number(new) if new is not None else None,
+                _sqlite_number(delta) if delta is not None else None,
+                record.source_endpoint, record.resolved_match_status, authority,
+            ))
+    markers = []
+    if is_baseline:
+        markers.append(CHECKPOINT_MARKER_BASELINE)
+    period_marker = _PERIOD_CHECKPOINT_MARKERS.get(match_period_state) if match_period_state else None
+    if period_marker:
+        markers.append(period_marker)
+    if status is PlayerStatsStatus.CONCLUDED:
+        markers.append(CHECKPOINT_MARKER_CONCLUDED)
+    for marker in markers:
+        _upsert_checkpoint(conn, marker, record, canonical_player_id=canonical_player_id, authority=authority)
+
+
+def _upsert_checkpoint(conn: sqlite3.Connection, marker: str, record: CanonicalPlayerStat, *,
+                       canonical_player_id: Any, authority: int) -> None:
+    numeric = [_sqlite_number(getattr(record, name)) for name in CANONICAL_STAT_FIELDS]
+    comparisons = [f"excluded.{name} IS NOT {_CHECKPOINT_TABLE}.{name}" for name in CANONICAL_STAT_FIELDS]
+    comparisons.append(f"excluded.canonical_player_id IS NOT {_CHECKPOINT_TABLE}.canonical_player_id")
+    meaningful_change = " OR ".join(comparisons)
+    conn.execute(f"""
+        INSERT INTO {_CHECKPOINT_TABLE} (
+            match_provider_id, afl_match_id, champion_data_player_id, canonical_player_id,
+            checkpoint_marker, observed_at, source_endpoint, resolved_match_status,
+            snapshot_authority, {', '.join(CANONICAL_STAT_FIELDS)}
+        ) VALUES (?,?,?,?,?,?,?,?,?,{', '.join('?' for _ in CANONICAL_STAT_FIELDS)})
+        ON CONFLICT(match_provider_id, champion_data_player_id, checkpoint_marker) DO UPDATE SET
+            canonical_player_id=excluded.canonical_player_id,
+            afl_match_id=excluded.afl_match_id,
+            observed_at=excluded.observed_at,
+            source_endpoint=excluded.source_endpoint,
+            resolved_match_status=excluded.resolved_match_status,
+            snapshot_authority=excluded.snapshot_authority,
+            {', '.join(f'{name}=excluded.{name}' for name in CANONICAL_STAT_FIELDS)}
+        WHERE excluded.snapshot_authority > {_CHECKPOINT_TABLE}.snapshot_authority
+           OR (excluded.snapshot_authority = {_CHECKPOINT_TABLE}.snapshot_authority
+               AND excluded.observed_at >= {_CHECKPOINT_TABLE}.observed_at
+               AND ({meaningful_change}))
+    """, (
+        record.match_provider_id, None if record.afl_match_id is None else str(record.afl_match_id),
+        record.champion_data_player_id, canonical_player_id, marker, record.collected_at,
+        record.source_endpoint, record.resolved_match_status, authority, *numeric,
+    ))
 
 
 def resolve_canonical_match_status(conn: sqlite3.Connection, *,

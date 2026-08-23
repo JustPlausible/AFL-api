@@ -15,6 +15,7 @@ import config
 from afl_json.client import (AflJsonAuthenticationError, AflJsonClient, AflJsonHttpError,
                              AflJsonInvalidResponse, AflJsonTransportError,
                              HttpPolicy, WMCTokenProvider)
+from afl_json.match_period import MatchPeriodState
 from afl_json.match_status import later_match_status
 from afl_json.player_stats import (MatchPlayerStatsCollector, PlayerStatsStatus,
                                    resolve_canonical_match_status, upsert_player_stats)
@@ -205,7 +206,8 @@ class PlayerStatPollingWorker:
                  clock: Clock | None = None,
                  jitter: Jitter = deterministic_jitter,
                  finalization_hook: Callable[[str], None] | None = None,
-                 lane=write_lane):
+                 lane=write_lane,
+                 period_state_provider: Callable[[dict[str, Any]], MatchPeriodState | None] | None = None):
         self.settings = settings or PlayerStatPollingSettings.from_config()
         self.window_settings = window_settings or MatchWindowSettings.from_config()
         self.client_pool = client_pool or SchedulerCfsClientPool()
@@ -214,6 +216,19 @@ class PlayerStatPollingWorker:
         self.jitter = jitter
         self.finalization_hook = finalization_hook or (lambda point: None)
         self.lane = lane
+        # Issue #195/#187: optional, best-effort MatchPeriodState lookup for
+        # the claimed window. This poller does not itself know how to derive
+        # period state -- CFS matchItem/matchClock is not yet a maintained,
+        # verified production endpoint (see afl_json/match_period.py), so the
+        # narrowest integration here is a caller-supplied hook rather than a
+        # new network call baked into every attempt. Left unset, behaviour
+        # and network-call volume are completely unchanged: player-stat
+        # history/checkpoints are still recorded, just without QT/HT/3QT/FT
+        # period tagging until a provider is wired in. It must never raise --
+        # a lookup failure degrades to no period context, never affects
+        # finality, cadence, or the accepted/rejected outcome of a
+        # player-stat observation.
+        self.period_state_provider = period_state_provider
         self._network = threading.BoundedSemaphore(max(1, self.settings.network_concurrency))
         self._state = threading.Lock()
         self._lifecycle = threading.Lock()
@@ -384,7 +399,8 @@ class PlayerStatPollingWorker:
                     if updated.rowcount != 1:
                         raise RuntimeError("Expected one running scrape run at response checkpoint")
                 self.lane.execute("player_stats_poll.response_received", run_id, checkpoint)
-                return self._persist_success(row, result, execution, network_ms, canonical_status)
+                period_state = self._resolve_period_state(row)
+                return self._persist_success(row, result, execution, network_ms, canonical_status, period_state)
             except AflJsonAuthenticationError as exc:
                 return self._persist_failure(row, execution, exc, _failure_backoff(row, self.settings.auth_pause, self.settings), "auth_failed_paused", set_auth_pause=True)
             except AflJsonHttpError as exc:
@@ -418,8 +434,18 @@ class PlayerStatPollingWorker:
             return {"status": reason, "next_due_at": _iso(next_due), "scrape_run_id": run_id}
         return self.lane.execute("player_stats_poll.persist_skip", row["window_id"], op)
 
+    def _resolve_period_state(self, row: dict[str, Any]) -> MatchPeriodState | None:
+        """Best-effort, non-raising lookup -- see ``period_state_provider`` above."""
+        if self.period_state_provider is None:
+            return None
+        try:
+            return self.period_state_provider(row)
+        except Exception:
+            return None
+
     def _persist_success(self, row, result, execution: AttemptExecution, network_ms: int,
-                         canonical_status: str | None = None) -> dict[str, Any]:
+                         canonical_status: str | None = None,
+                         period_state: MatchPeriodState | None = None) -> dict[str, Any]:
         run_id = execution.run_id
         now = self.clock().astimezone(timezone.utc)
         failure_like = result.status in {PlayerStatsStatus.EMPTY, PlayerStatsStatus.UNKNOWN}
@@ -449,7 +475,7 @@ class PlayerStatPollingWorker:
                 written = 0
                 finality, auth = before_finality, before_auth
             else:
-                written = upsert_player_stats(conn, result)
+                written = upsert_player_stats(conn, result, match_period_state=period_state)
                 finality, auth = _finality(conn, row["match_provider_id"])
             self.finalization_hook("after_domain_write")
             complete = finality is FinalityState.AUTHORITATIVE_COMPLETE
