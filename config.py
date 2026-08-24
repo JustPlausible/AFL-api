@@ -250,13 +250,13 @@ AFL_COMMENTARY_PRODUCTION_POSTGAME_GRACE_SECONDS = _parse_int_env("AFL_COMMENTAR
 # (default on). See afl_json/match_interchange.py and
 # scheduler/match_interchange_production.py.
 #
-# Interval/tolerance/grace defaults mirror the proven commentary production
-# settings above -- there is no captured live interchange poll cadence
-# evidence to tune against (see afl_json.match_interchange module docstring
-# on the limits of the available Round 24 evidence), so this deliberately
-# starts from the same, already-validated production cadence rather than
-# guessing a different one.
+# Interval/tolerance defaults mirror the proven commentary production
+# settings above. There is deliberately no POSTGAME grace-window setting:
+# real Round 24 evidence showed matchInterchange state freezes completely at
+# the LIVE -> POSTGAME transition (see afl_json.match_interchange module
+# docstring), so this collector takes exactly one POSTGAME reconciliation
+# poll per match (afl_json.match_interchange.pending_postgame_reconciliation_matches)
+# and then stops, rather than continuing to poll through a bounded window.
 AFL_INTERCHANGE_PRODUCTION_ENABLED = _parse_bool_env("AFL_INTERCHANGE_PRODUCTION_ENABLED", True)
 AFL_INTERCHANGE_PRODUCTION_INTERVAL_SECONDS = _parse_int_env("AFL_INTERCHANGE_PRODUCTION_INTERVAL_SECONDS", 20)
 AFL_INTERCHANGE_PRODUCTION_KICKOFF_TOLERANCE_SECONDS = _parse_int_env("AFL_INTERCHANGE_PRODUCTION_KICKOFF_TOLERANCE_SECONDS", 600)
-AFL_INTERCHANGE_PRODUCTION_POSTGAME_GRACE_SECONDS = _parse_int_env("AFL_INTERCHANGE_PRODUCTION_POSTGAME_GRACE_SECONDS", 1800)

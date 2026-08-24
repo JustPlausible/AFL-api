@@ -517,11 +517,17 @@ existing `player_provider_ids`/`afl_teams.provider_id` crosswalks, exactly
 like `afl_json/match_commentary.py`. Display name and jumper number are
 never used for identity. Unresolved crosswalks stay `NULL`, never guessed.
 
-*Scheduling/lifecycle:* production polling covers LIVE, POSTGAME, a bounded
-pre-kickoff tolerance, and a bounded post-active grace window after
-LIVE/POSTGAME (covering the CONCLUDED transition) -- the same
-stateless, self-terminating candidate-window pattern as commentary
-production (`scheduler/match_interchange_production.py`). Interchange
+*Scheduling/lifecycle:* production polling covers LIVE (including a bounded
+pre-kickoff tolerance window before it), then takes exactly **one** final
+reconciliation poll the first time a match reaches POSTGAME, then stops --
+no bounded grace window, and no dependency on or wait for CONCLUDED. This
+was tightened from an earlier bounded-grace-window design once real
+evidence (`CD_M20260142409`) showed `matchInterchange` state freezes
+completely, field-for-field, at the exact LIVE -> POSTGAME transition and
+never changes again across 40 real POSTGAME polls -- continued polling
+through a grace window would only ever re-observe an identical payload.
+`CONCLUDED` remains entirely the authoritative match-state pipeline's
+concern (`scheduler/match_interchange_production.py`). Interchange
 availability never affects match finality, lifecycle, or authoritative
 player-stat collection.
 

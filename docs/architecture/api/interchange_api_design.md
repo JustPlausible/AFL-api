@@ -128,11 +128,14 @@ poll -- was subsequently reviewed (Issue #204 comment, PR #206):
 
 **One thing remains open: CONCLUDED behaviour.** This match's capture ends
 at poll_sequence 693, still `POSTGAME` -- no `CONCLUDED` row was ever
-captured, consistent with the post-live grace window elapsing first.
-Whether `matchInterchange` stays queryable/frozen or becomes unavailable
-once a match reaches `CONCLUDED` remains unverified. The consumer API makes
-no claim beyond "the most recently observed state" (§8.1), and polling
-continues through `POSTGAME` and a bounded grace period regardless (§7).
+captured, consistent with the diagnostic profile that produced this
+evidence having its own post-live grace window elapse before
+`matches.status` advanced further. Whether `matchInterchange` stays
+queryable/frozen or becomes unavailable once a match reaches `CONCLUDED`
+remains unverified. The consumer API makes no claim beyond "the most
+recently observed state" (§8.1); production collection itself takes
+exactly one reconciliation poll at `POSTGAME` and then stops, never polling
+into or waiting for `CONCLUDED` at all (§7).
 
 On the strength of the confirmed findings, the production contract exposes
 **`on_bench`** -- a per-player boolean reflecting current
@@ -268,37 +271,52 @@ diagnostic module already proved via `load_previous_observation`.
 
 ## 7. Scheduler / lifecycle behaviour
 
-`scheduler/match_interchange_production.py` mirrors
+**Lifecycle: `LIVE` -> one final `POSTGAME` reconciliation poll -> stop.**
+`scheduler/match_interchange_production.py` initially mirrored
 `scheduler/match_commentary_production.py`'s candidate-window model exactly
-(see that module's docstring for the full rationale): the union of
-currently-`LIVE` matches, currently-`POSTGAME` matches, a bounded
-pre-kickoff tolerance window, and a bounded post-active grace window
-computed from this module's own `match_interchange_polls` bookkeeping.
+(continuous `POSTGAME` polling plus a bounded post-active grace window).
+Once the real `CD_M20260142409` POSTGAME-freeze evidence (§2.1) showed that
+design would only ever re-observe an identical payload after the first
+POSTGAME poll, the lifecycle was tightened (Issue #204 follow-up comment on
+PR #206) to: the union of currently-`LIVE` matches, a bounded pre-kickoff
+tolerance window, and currently-`POSTGAME` matches that have **not yet**
+received their one reconciliation poll
+(`afl_json.match_interchange.pending_postgame_reconciliation_matches`).
 
 * **QT/HT/3QT:** covered automatically -- `matches.status` stays `LIVE`
   through a regulation-time break, so no special-case code is needed.
-* **POSTGAME:** always polled explicitly (`_postgame_matches`).
-* **CONCLUDED / final reconciliation:** the post-active grace window
-  (`AFL_INTERCHANGE_PRODUCTION_POSTGAME_GRACE_SECONDS`, default 1800s)
-  keeps polling for a bounded period after the last `LIVE`/`POSTGAME` poll,
-  which covers the `POSTGAME -> CONCLUDED` transition and gives a final
-  settled-state poll without a separate reconciliation pass.
+* **POSTGAME / final reconciliation:** the *first* poll to observe a match
+  as `POSTGAME` (checked via a durable, restart-safe read of this module's
+  own `match_interchange_polls` -- "has a poll ever recorded
+  `match_status_at_poll='POSTGAME'` for this match?", never in-memory state
+  or a timer) is that match's one and only reconciliation poll. Every
+  subsequent poll cycle excludes it -- no grace window, no repeated
+  re-observation.
+* **`CONCLUDED`:** not this module's concern at all. It has no code path
+  that reads, waits for, or depends on `CONCLUDED` -- that transition, and
+  match finality generally, are decided entirely by the normal
+  authoritative match-state pipeline.
 * **Endpoint-not-yet-available:** `AflJsonResourceUnavailable` maps to a
   `not_published` poll outcome, recorded via `persist_poll_outcome` -- never
-  a hard failure.
+  a hard failure. Note this still counts as "reconciled" for a `POSTGAME`
+  match (any recorded outcome does, per
+  `pending_postgame_reconciliation_matches`'s docstring), so a transient
+  failure on the one reconciliation attempt is not retried forever.
 * **Retry/auth handling:** reuses the shared `AflJsonClient` and its
   existing token/retry behaviour, identical to every other production CFS
   collector.
-* **Restart recovery / idempotency:** see §6.
+* **Restart recovery / idempotency:** see §6 -- the reconciliation check
+  itself is restart-safe for the same reason (a durable table read, not a
+  timer or in-memory flag).
 * Interchange availability **never** determines match finality, and never
   interferes with authoritative player-stat collection -- this module has
   no write path to `matches`, `cfs_player_stats`, or any lease/finality
   table, and never raises out of a poll cycle.
 
-Settings (`AFL_INTERCHANGE_PRODUCTION_*`) default to the same values already
-proven for commentary production (20s interval, 600s kickoff tolerance,
-1800s postgame grace) rather than guessing a different cadence, since no
-captured live interchange poll-cadence evidence exists to tune against.
+Settings (`AFL_INTERCHANGE_PRODUCTION_*`) default to the same interval/
+kickoff-tolerance values already proven for commentary production (20s
+interval, 600s kickoff tolerance) rather than guessing different ones.
+There is deliberately no `..._POSTGAME_GRACE_SECONDS` setting -- see above.
 
 ## 8. Consumer API
 

@@ -54,14 +54,12 @@ def add_match(conn, match_id, provider, status="LIVE", start=None):
     conn.commit()
 
 
-def _enabled(monkeypatch, *, interval=20, kickoff_tolerance=None, postgame_grace=None):
+def _enabled(monkeypatch, *, interval=20, kickoff_tolerance=None):
     import config
     monkeypatch.setattr(config, "AFL_INTERCHANGE_PRODUCTION_ENABLED", True, raising=False)
     monkeypatch.setattr(config, "AFL_INTERCHANGE_PRODUCTION_INTERVAL_SECONDS", interval, raising=False)
     if kickoff_tolerance is not None:
         monkeypatch.setattr(config, "AFL_INTERCHANGE_PRODUCTION_KICKOFF_TOLERANCE_SECONDS", kickoff_tolerance, raising=False)
-    if postgame_grace is not None:
-        monkeypatch.setattr(config, "AFL_INTERCHANGE_PRODUCTION_POSTGAME_GRACE_SECONDS", postgame_grace, raising=False)
 
 
 def _disabled(monkeypatch):
@@ -138,9 +136,9 @@ def test_polls_live_match_and_persists_first_observation(db, monkeypatch):
     assert state_count == 1
 
 
-def test_polls_postgame_match_not_only_live(db, monkeypatch):
-    """CONCLUDED final-reconciliation coverage: matches remain pollable
-    through POSTGAME so the settled end-of-match state is captured."""
+def test_polls_postgame_match_for_its_one_reconciliation_poll(db, monkeypatch):
+    """A match that reaches POSTGAME with no prior POSTGAME poll gets
+    exactly one reconciliation poll."""
     conn, _ = db
     add_match(conn, 8001, "CD_M1", status="POSTGAME")
     _enabled(monkeypatch)
@@ -150,21 +148,43 @@ def test_polls_postgame_match_not_only_live(db, monkeypatch):
     assert results[0]["outcome"] == "success"
 
 
-def test_recently_active_grace_window_covers_concluded_reconciliation(db, monkeypatch):
-    """After a match leaves POSTGAME for CONCLUDED, it stays pollable for a
-    bounded grace window so a final settled poll is still taken."""
+def test_postgame_match_is_not_polled_again_after_its_reconciliation_poll(db, monkeypatch):
+    """Real Round 24 evidence showed matchInterchange state freezes
+    completely at the LIVE -> POSTGAME transition, so a second poll cycle
+    while the match is still POSTGAME must not poll it again -- no grace
+    window, no repeated re-observation of an identical payload."""
     conn, _ = db
     add_match(conn, 8001, "CD_M1", status="POSTGAME")
-    _enabled(monkeypatch, postgame_grace=600)
+    _enabled(monkeypatch)
     client = FakeClient({"CD_M1": [interchange_payload(home=[_entry("CD_I1")])]})
-    poll_match_interchange(client=client, clock=lambda: NOW)
+    first = poll_match_interchange(client=client, clock=lambda: NOW)
+    assert len(first) == 1
+
+    # Still POSTGAME on the next poll cycle -- must not be re-polled.
+    client2 = FakeClient({"CD_M1": [interchange_payload(home=[_entry("CD_I1", count=2)])]})
+    second = poll_match_interchange(client=client2, clock=lambda: NOW + timedelta(seconds=20))
+    assert second == []
+    assert client2.calls == []
+    # The stale state from the one reconciliation poll is left untouched.
+    row = conn.execute("SELECT interchange_count FROM match_interchange_state WHERE match_provider_id='CD_M1'").fetchone()
+    assert row["interchange_count"] == 1
+
+
+def test_module_has_no_opinion_on_concluded_matches(db, monkeypatch):
+    """Once a match reaches CONCLUDED, this module never polls it again --
+    CONCLUDED and match finality generally are the authoritative pipeline's
+    concern, not interchange collection's."""
+    conn, _ = db
+    add_match(conn, 8001, "CD_M1", status="POSTGAME")
+    _enabled(monkeypatch)
+    poll_match_interchange(client=FakeClient({"CD_M1": [interchange_payload(home=[_entry("CD_I1")])]}), clock=lambda: NOW)
 
     conn.execute("UPDATE matches SET status='CONCLUDED' WHERE match_id=8001")
     conn.commit()
     client2 = FakeClient({"CD_M1": [interchange_payload(home=[_entry("CD_I1", count=2)])]})
     results = poll_match_interchange(client=client2, clock=lambda: NOW + timedelta(seconds=30))
-    assert len(results) == 1
-    assert results[0]["outcome"] == "success"
+    assert results == []
+    assert client2.calls == []
 
 
 def test_multiple_transitions_across_two_polls(db, monkeypatch):
@@ -293,6 +313,5 @@ def test_settings_reject_non_positive_interval(monkeypatch):
     monkeypatch.setattr(config, "AFL_INTERCHANGE_PRODUCTION_ENABLED", True, raising=False)
     monkeypatch.setattr(config, "AFL_INTERCHANGE_PRODUCTION_INTERVAL_SECONDS", 0, raising=False)
     monkeypatch.setattr(config, "AFL_INTERCHANGE_PRODUCTION_KICKOFF_TOLERANCE_SECONDS", 600, raising=False)
-    monkeypatch.setattr(config, "AFL_INTERCHANGE_PRODUCTION_POSTGAME_GRACE_SECONDS", 1800, raising=False)
     with pytest.raises(ValueError):
         MatchInterchangeProductionSettings.from_config()

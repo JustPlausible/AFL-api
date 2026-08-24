@@ -199,7 +199,6 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timedelta
 from typing import Any, Literal
 
 from afl_json.contracts import EndpointDefinition, HttpMethod, SourceSystem
@@ -668,28 +667,43 @@ def persist_match_interchange(conn: sqlite3.Connection, parsed: ParsedMatchInter
     }
 
 
-def recently_active_match_provider_ids(conn: sqlite3.Connection, *, now: datetime,
-                                       grace_seconds: int) -> list[tuple[int, str]]:
-    """Matches whose most recent interchange poll observed the *local*
-    ``matches.status`` as LIVE or POSTGAME within ``grace_seconds`` of ``now``.
+def pending_postgame_reconciliation_matches(conn: sqlite3.Connection) -> list[tuple[int, str]]:
+    """Currently-POSTGAME matches that have not yet received their one
+    final reconciliation poll.
 
-    Mirrors ``afl_json.match_commentary.recently_active_match_provider_ids``
-    (the matchInterchange payload does not carry a live/score status field
-    either) and is entirely self-contained to this module's own
-    ``match_interchange_polls`` table.
+    Real Round 24 evidence (Issue #204 comment on PR #206, ``CD_M20260142409``)
+    showed that ``matchInterchange`` state freezes completely -- every
+    field, not just array membership -- at the exact ``LIVE`` ->
+    ``POSTGAME`` transition and does not change again across 40 real
+    POSTGAME polls spanning ~10 minutes. Continuing to poll through a bounded
+    POSTGAME grace window (the strategy this function replaced, and the one
+    still used by commentary production for a materially different reason --
+    see ``afl_json.match_commentary``) therefore buys nothing here beyond
+    the first POSTGAME poll: it would just re-observe an identical payload
+    over and over.
+
+    A match is a candidate exactly once: while ``matches.status`` reads
+    ``POSTGAME`` and no row in this module's own ``match_interchange_polls``
+    has ever recorded ``match_status_at_poll='POSTGAME'`` for it. Once that
+    first POSTGAME poll succeeds (any outcome, including a failure --
+    see ``persist_poll_outcome``, which records ``match_status_at_poll``
+    regardless of outcome), the match stops being a candidate forever,
+    including across a scheduler/container restart: the check is a durable
+    read of ``match_interchange_polls``, never in-memory state. This module
+    has no opinion on ``CONCLUDED`` -- that transition, and match finality
+    generally, are decided entirely by the normal authoritative match-state
+    pipeline, never by interchange collection.
     """
-    if grace_seconds <= 0:
-        return []
-    cutoff = (now - timedelta(seconds=grace_seconds)).isoformat()
     rows = conn.execute(
         """
-        SELECT match_id, match_provider_id, MAX(observed_at) AS last_active_at
-        FROM match_interchange_polls
-        WHERE match_status_at_poll IN ('LIVE', 'POSTGAME')
-        GROUP BY match_provider_id
-        HAVING last_active_at >= ?
-        """,
-        (cutoff,),
+        SELECT m.match_id, m.match_provider_id
+        FROM matches m
+        WHERE m.status = 'POSTGAME' AND m.match_provider_id IS NOT NULL
+          AND NOT EXISTS (
+              SELECT 1 FROM match_interchange_polls p
+              WHERE p.match_provider_id = m.match_provider_id AND p.match_status_at_poll = 'POSTGAME'
+          )
+        """
     ).fetchall()
     return [(row["match_id"], row["match_provider_id"]) for row in rows]
 

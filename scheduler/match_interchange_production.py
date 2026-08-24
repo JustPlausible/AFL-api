@@ -17,33 +17,48 @@ tables.
 
 ## Candidate selection and scheduling model
 
-Deliberately mirrors ``scheduler.match_commentary_production``'s stateless,
-self-terminating candidate-window pattern (Issue #201's precedent, itself
-following the interchange/match_clock diagnostic profiles) rather than the
-durable ``match_stat_windows`` lease system used for authoritative CFS
-player-stat polling. Interchange state is explicitly non-authoritative for
-match finality or player statistics, and persistence is idempotent by
+Deliberately mirrors ``scheduler.match_commentary_production``'s stateless
+candidate-window pattern (Issue #201's precedent, itself following the
+interchange/match_clock diagnostic profiles) rather than the durable
+``match_stat_windows`` lease system used for authoritative CFS player-stat
+polling. Interchange state is explicitly non-authoritative for match
+finality or player statistics, and persistence is idempotent by
 durable-state diff, so there is no correctness risk from two overlapping
 polls of the same match, and no concurrent-worker scenario exists in this
 single sequential poll loop -- see ``afl_json.match_interchange`` module
 docstring "Persistence shape and idempotency".
 
+**Lifecycle: LIVE -> one final POSTGAME reconciliation poll -> stop.**
 Candidates are the union of:
 
 * currently ``LIVE`` matches (``_live_matches``, reused unmodified from
   ``scheduler.match_state_capture``) -- this also covers QT/HT/3QT breaks,
   since ``matches.status`` stays ``LIVE`` through a regulation-time break;
-* currently ``POSTGAME`` matches (``_postgame_matches`` below);
 * a bounded pre-kickoff tolerance window (``_kickoff_tolerance_matches``,
   reused unmodified);
-* a bounded post-active grace window computed from this module's own
-  ``match_interchange_polls`` bookkeeping
-  (``afl_json.match_interchange.recently_active_match_provider_ids``),
-  covering the period shortly after a match reaches ``CONCLUDED`` so a final
-  poll captures the settled end-of-match state -- this is this module's
-  CONCLUDED reconciliation: no separate "final" pass is needed because the
-  grace window already keeps polling through the LIVE/POSTGAME -> CONCLUDED
-  transition.
+* currently-``POSTGAME`` matches that have **not yet received their one
+  final reconciliation poll**
+  (``afl_json.match_interchange.pending_postgame_reconciliation_matches``).
+
+This module deliberately does **not** keep polling a match once it has
+received that one POSTGAME poll, and does **not** wait for or depend on
+``CONCLUDED`` at all. Real Round 24 evidence (Issue #204 comment on PR
+#206, ``CD_M20260142409``) showed ``matchInterchange`` state -- every
+field, not just array membership -- freezes completely at the exact
+``LIVE`` -> ``POSTGAME`` transition and stays frozen across 40 real
+POSTGAME polls spanning ~10 minutes; continuing to poll through a bounded
+grace window (this module's earlier design, and still the right call for
+commentary production, whose feed *can* still change post-siren -- see
+``afl_json.match_commentary``) would only re-observe an identical payload
+over and over here. ``pending_postgame_reconciliation_matches`` is a
+durable, restart-safe check against this module's own
+``match_interchange_polls`` bookkeeping (has any poll ever recorded
+``match_status_at_poll='POSTGAME'`` for this match?), not in-memory state
+or a timer, so a container/scheduler restart can never cause the
+reconciliation poll to be skipped or repeated. ``CONCLUDED`` -- and match
+finality generally -- remain entirely the responsibility of the normal
+authoritative match-state pipeline; this module has no opinion on it and no
+code path that reads or waits for it.
 
 Interchange availability must never affect authoritative match finality or
 any other production collection path -- this module never raises out of a
@@ -69,7 +84,7 @@ from afl_json.client import (
 )
 from afl_json.match_interchange import (
     MATCH_INTERCHANGE_ENDPOINT, MatchInterchangeError, parse_match_interchange,
-    persist_match_interchange, persist_poll_outcome, recently_active_match_provider_ids,
+    pending_postgame_reconciliation_matches, persist_match_interchange, persist_poll_outcome,
 )
 from scheduler.match_state_capture import _kickoff_tolerance_matches, _live_matches
 from scheduler.write_lane import write_lane
@@ -86,7 +101,6 @@ class MatchInterchangeProductionSettings:
     enabled: bool = True
     interval_seconds: int = 20
     kickoff_tolerance_seconds: int = 600
-    postgame_grace_seconds: int = 1800
 
     @classmethod
     def from_config(cls) -> "MatchInterchangeProductionSettings":
@@ -94,14 +108,11 @@ class MatchInterchangeProductionSettings:
             enabled=config.AFL_INTERCHANGE_PRODUCTION_ENABLED,
             interval_seconds=config.AFL_INTERCHANGE_PRODUCTION_INTERVAL_SECONDS,
             kickoff_tolerance_seconds=config.AFL_INTERCHANGE_PRODUCTION_KICKOFF_TOLERANCE_SECONDS,
-            postgame_grace_seconds=config.AFL_INTERCHANGE_PRODUCTION_POSTGAME_GRACE_SECONDS,
         )
         if settings.interval_seconds <= 0:
             raise ValueError("AFL_INTERCHANGE_PRODUCTION_INTERVAL_SECONDS must be positive")
         if settings.kickoff_tolerance_seconds < 0:
             raise ValueError("AFL_INTERCHANGE_PRODUCTION_KICKOFF_TOLERANCE_SECONDS must not be negative")
-        if settings.postgame_grace_seconds < 0:
-            raise ValueError("AFL_INTERCHANGE_PRODUCTION_POSTGAME_GRACE_SECONDS must not be negative")
         return settings
 
 
@@ -126,23 +137,14 @@ def shutdown_match_interchange_production_client() -> None:
         client.close()
 
 
-def _postgame_matches(conn) -> list[tuple[int, str]]:
-    """Plain read of currently-POSTGAME matches. See module docstring."""
-    rows = conn.execute(
-        "SELECT match_id, match_provider_id FROM matches WHERE status='POSTGAME' AND match_provider_id IS NOT NULL"
-    ).fetchall()
-    return [(row[0], row[1]) for row in rows]
-
-
 def _capture_candidates(conn, *, now: datetime,
                         settings: MatchInterchangeProductionSettings) -> list[tuple[int, str]]:
     seen: set[str] = set()
     ordered: list[tuple[int, str]] = []
     for group in (
         _live_matches(conn),
-        _postgame_matches(conn),
         _kickoff_tolerance_matches(conn, now=now, tolerance_seconds=settings.kickoff_tolerance_seconds),
-        recently_active_match_provider_ids(conn, now=now, grace_seconds=settings.postgame_grace_seconds),
+        pending_postgame_reconciliation_matches(conn),
     ):
         for match_id, match_provider_id in group:
             if match_provider_id not in seen:

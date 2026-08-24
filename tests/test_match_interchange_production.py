@@ -28,9 +28,9 @@ from afl_json.match_interchange import (
     current_state_rows,
     event_rows,
     parse_match_interchange,
+    pending_postgame_reconciliation_matches,
     persist_match_interchange,
     persist_poll_outcome,
-    recently_active_match_provider_ids,
     resolve_canonical_match_id,
     resolve_canonical_player,
     resolve_canonical_team,
@@ -585,37 +585,71 @@ def test_persist_poll_outcome_records_non_success_attempts(db):
     assert row["outcome"] == "not_published"
 
 
-# --- Candidate window -----------------------------------------------------------
+# --- Candidate window: pending_postgame_reconciliation_matches ------------------
+#
+# Real Round 24 evidence (Issue #204 comment on PR #206) showed
+# matchInterchange state freezes completely at the LIVE -> POSTGAME
+# transition and never changes again across 40 real POSTGAME polls -- so
+# production polling takes exactly one POSTGAME reconciliation poll per
+# match and stops, rather than continuing through a bounded grace window.
 
-def test_recently_active_match_provider_ids_within_grace_window(db):
+def test_pending_postgame_reconciliation_matches_includes_unreconciled_postgame_match(db):
     conn, _ = db
+    conn.execute("UPDATE matches SET status='POSTGAME' WHERE match_id=?", (MATCH_ID,))
+    conn.commit()
+    assert (MATCH_ID, MATCH_PROVIDER_ID) in pending_postgame_reconciliation_matches(conn)
+
+
+def test_pending_postgame_reconciliation_matches_excludes_live_matches(db):
+    conn, _ = db
+    # db fixture already inserts the match as LIVE.
+    assert pending_postgame_reconciliation_matches(conn) == []
+
+
+def test_pending_postgame_reconciliation_matches_excludes_already_reconciled_match(db):
+    conn, _ = db
+    conn.execute("UPDATE matches SET status='POSTGAME' WHERE match_id=?", (MATCH_ID,))
+    persist_poll_outcome(
+        conn, match_id=MATCH_ID, match_provider_id=MATCH_PROVIDER_ID, observed_at=_iso(0),
+        match_status_at_poll="POSTGAME", outcome=OUTCOME_SUCCESS,
+    )
+    conn.commit()
+    assert pending_postgame_reconciliation_matches(conn) == []
+
+
+def test_pending_postgame_reconciliation_matches_a_failed_reconciliation_poll_still_counts(db):
+    """Any recorded outcome for a POSTGAME poll -- including a failure --
+    marks the match as reconciled; this must never retry forever."""
+    conn, _ = db
+    conn.execute("UPDATE matches SET status='POSTGAME' WHERE match_id=?", (MATCH_ID,))
     persist_poll_outcome(
         conn, match_id=MATCH_ID, match_provider_id=MATCH_PROVIDER_ID, observed_at=_iso(0),
         match_status_at_poll="POSTGAME", outcome="not_published",
     )
     conn.commit()
-    result = recently_active_match_provider_ids(conn, now=NOW, grace_seconds=600)
-    assert (MATCH_ID, MATCH_PROVIDER_ID) in result
+    assert pending_postgame_reconciliation_matches(conn) == []
 
 
-def test_recently_active_match_provider_ids_excludes_outside_grace_window(db):
-    conn, _ = db
-    persist_poll_outcome(
-        conn, match_id=MATCH_ID, match_provider_id=MATCH_PROVIDER_ID, observed_at=_iso(-3600),
-        match_status_at_poll="POSTGAME", outcome="not_published",
-    )
-    conn.commit()
-    assert recently_active_match_provider_ids(conn, now=NOW, grace_seconds=600) == []
-
-
-def test_recently_active_match_provider_ids_ignores_concluded_only_polls(db):
+def test_pending_postgame_reconciliation_matches_prior_live_polls_do_not_count_as_reconciled(db):
+    """A match with only LIVE-status poll history that has just transitioned
+    to POSTGAME must still be treated as needing its reconciliation poll."""
     conn, _ = db
     persist_poll_outcome(
         conn, match_id=MATCH_ID, match_provider_id=MATCH_PROVIDER_ID, observed_at=_iso(0),
-        match_status_at_poll="CONCLUDED", outcome=OUTCOME_SUCCESS,
+        match_status_at_poll="LIVE", outcome=OUTCOME_SUCCESS,
     )
+    conn.execute("UPDATE matches SET status='POSTGAME' WHERE match_id=?", (MATCH_ID,))
     conn.commit()
-    assert recently_active_match_provider_ids(conn, now=NOW, grace_seconds=600) == []
+    assert (MATCH_ID, MATCH_PROVIDER_ID) in pending_postgame_reconciliation_matches(conn)
+
+
+def test_pending_postgame_reconciliation_matches_excludes_concluded_matches(db):
+    """CONCLUDED is not this module's concern at all -- only POSTGAME
+    matches are ever reconciliation candidates."""
+    conn, _ = db
+    conn.execute("UPDATE matches SET status='CONCLUDED' WHERE match_id=?", (MATCH_ID,))
+    conn.commit()
+    assert pending_postgame_reconciliation_matches(conn) == []
 
 
 # --- current_state_rows / event_rows filtering -----------------------------------
