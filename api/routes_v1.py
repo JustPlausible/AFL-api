@@ -896,6 +896,100 @@ def get_player(
     )
 
 
+class PlayerSeasonMembership(BaseModel):
+    """One persisted competition-season membership for a canonical player."""
+
+    season_id: int = Field(description="Canonical AFL season identifier, as returned by GET /api/v1/seasons.")
+    year: int = Field(description="Season year, for display and chronological sorting.")
+    name: str = Field(description="Persisted season name.")
+    team: MatchTeam | None = Field(
+        description=(
+            "Canonical team identity the player was associated with for this season, or null "
+            "when the membership row has no resolved team. This reflects exactly the team "
+            "persisted for this season and is never carried over from an adjacent season."
+        )
+    )
+
+
+class PlayerSeasonsResponse(BaseModel):
+    canonical_player_id: int = Field(description="The canonical player these memberships belong to.")
+    seasons: list[PlayerSeasonMembership] = Field(
+        description=(
+            "Every persisted competition-season membership for this player, most recent season "
+            "first (year then season_id, both descending). A player with no known membership in "
+            "any season returns an empty list, not an error."
+        )
+    )
+
+
+def _season_memberships(conn, canonical_player_id: int) -> list[PlayerSeasonMembership]:
+    """Resolve every persisted season membership for a player, oldest history preserved.
+
+    Each row is scoped to its own ``competition_season_players`` season, so an
+    earlier season's team is never overwritten or inferred from a later one --
+    e.g. a player moving from Team A (2025, 2026) to Team B (2027) keeps 2025
+    and 2026 reporting Team A.
+    """
+    rows = conn.execute(
+        "SELECT csp.competition_season_id AS season_id, s.year, s.name, "
+        "csp.team_id, t.name AS team_name "
+        "FROM competition_season_players csp "
+        "JOIN afl_seasons s ON s.afl_id = csp.competition_season_id "
+        "LEFT JOIN afl_teams t ON t.afl_id = csp.team_id "
+        "WHERE csp.player_id = ? "
+        "ORDER BY s.year DESC, csp.competition_season_id DESC",
+        (canonical_player_id,),
+    ).fetchall()
+    return [
+        PlayerSeasonMembership(
+            season_id=row["season_id"],
+            year=row["year"],
+            name=row["name"],
+            team=(
+                MatchTeam(team_id=row["team_id"], name=row["team_name"])
+                if row["team_id"] is not None
+                else None
+            ),
+        )
+        for row in rows
+    ]
+
+
+@router.get(
+    "/api/v1/players/{canonical_player_id}/seasons",
+    response_model=PlayerSeasonsResponse,
+    responses={404: {"model": ApplicationErrorResponse, "description": "Player not found"}},
+    summary="List a canonical player's season/team memberships",
+    description=(
+        "Returns every persisted competition-season membership for one canonical player, most "
+        "recent season first. Each entry reports the team associated with the player for that "
+        "specific season only -- a later club change never rewrites an earlier season's team, "
+        "and a season with no resolved team returns team: null. Use season_id with GET "
+        "/api/v1/seasons/{season_id}/rounds to navigate to that season's matches, and the "
+        "player's champion_data_player_id (from GET /api/v1/players/{canonical_player_id}) to "
+        "filter GET /api/v1/matches/{match_id}/player-stats for that season's statistics. A "
+        "player with no known season membership returns 200 with an empty seasons list."
+    ),
+)
+def get_player_seasons(
+    canonical_player_id: int,
+    credential: AuthenticatedCredential = Depends(authenticate_api_key),
+) -> PlayerSeasonsResponse | JSONResponse:
+    log(f"📅 {credential.label} requested v1 season memberships for player {canonical_player_id}", "INFO")
+    conn = get_db_connection()
+    try:
+        player_row = conn.execute(
+            "SELECT id FROM canonical_players WHERE id = ?", (canonical_player_id,)
+        ).fetchone()
+        if player_row is None:
+            return application_error(404, "player_not_found", "Player not found.")
+        seasons = _season_memberships(conn, canonical_player_id)
+    finally:
+        conn.close()
+
+    return PlayerSeasonsResponse(canonical_player_id=canonical_player_id, seasons=seasons)
+
+
 class PlayersResponse(BaseModel):
     players: list[CanonicalPlayer]
 
