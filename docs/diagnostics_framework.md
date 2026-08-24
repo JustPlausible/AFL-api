@@ -74,6 +74,35 @@ ever in question. See `docs/investigation/afl-json/ENDPOINT_CATALOG.md` §5
 "Update (Issue #201)" and `docs/architecture/api/commentary_api_design.md`
 for the full production design.
 
+**Update (Issue #204):** the `interchange` diagnostic profile's evidence
+was similarly used to design and ship a **separate, new production path**:
+`afl_json/match_interchange.py`, `scheduler/match_interchange_production.py`,
+`match_interchange_state`/`match_interchange_events`/`match_interchange_polls`
+(migration `0021`), and `GET /api/v1/matches/{match_id}/interchanges` +
+`/interchanges/events`. Unlike commentary's promotion, the evidence basis
+here was materially thinner -- only a single captured concluded-match
+snapshot, with no live poll-to-poll sequence demonstrating array membership
+actually changing during play -- so the production consumer contract
+deliberately stops short of claiming the array-membership semantic
+(`homeInterchange[]`/`awayInterchange[]` = "currently off the ground") is
+confirmed; see `docs/api_v1_interchange.md` for the exact caveat exposed to
+consumers. This `interchange` diagnostic profile itself is **unchanged** --
+it still runs opt-in exactly as described below, writes only to
+`match_interchange_evidence_observations`, and is still never read by the
+production collector, the scheduler, or `/api/v1`. It remains genuinely
+useful after production promotion for exactly the reason commentary's does
+above, plus specifically for gathering the still-missing live
+membership-transition evidence needed to eventually resolve the open
+semantic question. See `docs/investigation/afl-json/ENDPOINT_CATALOG.md` §5
+"Update (Issue #204)" and `docs/architecture/api/interchange_api_design.md`
+for the full production design.
+
+**The production/diagnostic split for both `commentary` and `interchange`
+is now the concrete illustration of the rule this framework exists to
+enforce (see "Diagnostics vs. production collectors" immediately below):
+diagnostics remain evidence/verification tooling forever, never the
+production data path, even after a domain is promoted.**
+
 ## Diagnostics vs. production collectors
 
 This is the one rule the whole framework exists to enforce:

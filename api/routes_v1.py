@@ -974,3 +974,240 @@ def search_players(
         conn.close()
 
     return PlayersResponse(players=players)
+
+
+InterchangeSide = Literal["home", "away"]
+
+
+class InterchangeStatus(BaseModel):
+    """Current per-player CFS matchInterchange state (Issue #204).
+
+    Promotion of the Issue #193 diagnostic investigation. See
+    ``on_interchange_list``'s description for why this stops short of
+    claiming a confirmed on/off-ground semantic.
+    """
+
+    champion_data_player_id: str = Field(description="Source Champion Data player identifier. Always present.")
+    canonical_player_id: int | None = Field(
+        description="Canonical AFL-api player id, or null when this Champion Data id has no known crosswalk yet."
+    )
+    display_name: str | None = Field(description="Canonical display name, or null when unresolved.")
+    side: InterchangeSide = Field(description="Which team's interchange array this player was last observed in.")
+    team_id: int | None = Field(description="Canonical AFL-api team id, or null when unresolved.")
+    champion_data_team_id: str | None = Field(description="Source Champion Data team identifier.")
+    on_interchange_list: bool = Field(
+        description=(
+            "Whether this player's entry is present in the source homeInterchange[]/awayInterchange[] "
+            "array as of the most recent poll. This is a conservative, source-derived membership fact, "
+            "not a confirmed 'currently off the ground' signal: the only evidence captured at "
+            "implementation time is a single concluded-match snapshot, with no live poll-to-poll "
+            "sequence demonstrating that membership actually changes as players rotate during play. "
+            "Treat as best-effort until further live-match verification confirms the semantic either way."
+        )
+    )
+    interchange_count: int | None = Field(description="CFS interchangeCount, persisted exactly as supplied.")
+    bench_reason: str | None = Field(
+        description=(
+            "CFS benchReason exactly as supplied (e.g. 'ROTATION'), never inferred. Null when the "
+            "source did not supply one."
+        )
+    )
+    time_on_ground_seconds: int | None = Field(description="CFS timeOnGround, in seconds, as supplied.")
+    time_on_bench_seconds: int | None = Field(description="CFS timeOnBench, in seconds, as supplied.")
+    power_rating: int | None = Field(description="CFS powerRating, persisted exactly as supplied.")
+    first_observed_at: str = Field(description="UTC time AFL-api first observed this player in an interchange array.")
+    observed_at: str = Field(description="UTC time of the most recent poll that refreshed this player's fields.")
+
+
+class MatchInterchangesResponse(BaseModel):
+    match: MatchInfo
+    interchanges: list[InterchangeStatus]
+
+
+class InterchangeEvent(BaseModel):
+    """One meaningful CFS matchInterchange transition (Issue #204).
+
+    Only meaningful transitions are persisted -- see
+    ``afl_json.match_interchange.persist_match_interchange``. A poll where
+    only timeOnGround/timeOnBench/powerRating changed never produces a row.
+    """
+
+    id: int = Field(description="Stable AFL-api-generated event identifier. Not a Champion Data id.")
+    match_id: int
+    champion_data_player_id: str
+    canonical_player_id: int | None = Field(description="Canonical AFL-api player id, or null when unresolved.")
+    display_name: str | None = Field(description="Canonical display name, or null when unresolved.")
+    side: InterchangeSide
+    team_id: int | None = Field(description="Canonical AFL-api team id, or null when unresolved.")
+    champion_data_team_id: str | None
+    event_type: Literal["appeared", "disappeared", "interchange_count_changed", "bench_reason_changed"]
+    interchange_count: int | None
+    previous_interchange_count: int | None
+    bench_reason: str | None
+    previous_bench_reason: str | None
+    time_on_ground_seconds: int | None = Field(description="CFS timeOnGround at the time of this event, for context.")
+    time_on_bench_seconds: int | None = Field(description="CFS timeOnBench at the time of this event, for context.")
+    power_rating: int | None
+    observed_at: str = Field(
+        description=(
+            "UTC time AFL-api observed this transition at the poll that detected it. This is the poll "
+            "observation time, not an exact in-game clock instant -- matchInterchange does not supply "
+            "periodNumber/periodSeconds, so no game-clock timestamp is fabricated here."
+        )
+    )
+
+
+class MatchInterchangeEventsResponse(BaseModel):
+    match: MatchInfo
+    events: list[InterchangeEvent]
+
+
+def _interchange_name_lookups(conn, rows: list[dict]) -> dict[int, str | None]:
+    player_ids = {row["canonical_player_id"] for row in rows if row["canonical_player_id"] is not None}
+    player_names: dict[int, str | None] = {}
+    if player_ids:
+        placeholders = ",".join("?" for _ in player_ids)
+        for prow in conn.execute(
+            f"SELECT id, display_name, given_name, family_name FROM canonical_players WHERE id IN ({placeholders})",
+            tuple(player_ids),
+        ):
+            player_names[prow["id"]] = _display_name(prow)
+    return player_names
+
+
+def _interchange_status_from_row(row: dict, player_names: dict) -> InterchangeStatus:
+    return InterchangeStatus(
+        champion_data_player_id=row["player_provider_id"],
+        canonical_player_id=row["canonical_player_id"],
+        display_name=player_names.get(row["canonical_player_id"]),
+        side=row["side"],
+        team_id=row["canonical_team_id"],
+        champion_data_team_id=row["team_provider_id"],
+        on_interchange_list=row["on_interchange_list"],
+        interchange_count=row["interchange_count"],
+        bench_reason=row["bench_reason"],
+        time_on_ground_seconds=row["time_on_ground"],
+        time_on_bench_seconds=row["time_on_bench"],
+        power_rating=row["power_rating"],
+        first_observed_at=row["first_observed_at"],
+        observed_at=row["last_observed_at"],
+    )
+
+
+@router.get(
+    "/api/v1/matches/{match_id}/interchanges",
+    response_model=MatchInterchangesResponse,
+    responses={404: {"model": ApplicationErrorResponse, "description": "Match not found"}},
+    summary="Get current interchange state for a match",
+    description=(
+        "Returns current per-player CFS matchInterchange state for one canonical match, backed by "
+        "production persistence (Issue #204) rather than the separate interchange diagnostic evidence "
+        "tables (Issue #193). Includes every player observed in either interchange array at any point "
+        "in the match, so a player who has since left the array is still returned with "
+        "on_interchange_list=false and their last known field values, rather than disappearing from the "
+        "response. See on_interchange_list's field description for the documented, still-open question "
+        "about what array membership actually means. bench_reason, interchange_count, "
+        "time_on_ground_seconds, time_on_bench_seconds and power_rating are persisted and returned "
+        "exactly as supplied by CFS; none are inferred. Not authoritative for match finality, lifecycle, "
+        "or player statistics. A valid match with no interchange data yet returns an empty collection."
+    ),
+)
+def get_match_interchanges(
+    match_id: int,
+    side: InterchangeSide | None = Query(None, description="Filter to one side (home or away)."),
+    player_id: int | None = Query(None, description="Filter to one canonical player identifier."),
+    on_interchange_list_only: bool = Query(
+        False, description="When true, return only players currently present in an interchange array."
+    ),
+    credential: AuthenticatedCredential = Depends(authenticate_api_key),
+) -> MatchInterchangesResponse | JSONResponse:
+    log(f"🔁 {credential.label} requested v1 interchanges for match {match_id}", "INFO")
+    from afl_json.match_interchange import current_state_rows
+
+    conn = get_db_connection()
+    try:
+        match_row = conn.execute(
+            "SELECT match_id, match_provider_id, round_id, season_id, status FROM matches WHERE match_id = ?",
+            (match_id,),
+        ).fetchone()
+        if match_row is None:
+            return application_error(404, "match_not_found", "Match not found.")
+
+        rows = current_state_rows(
+            conn, match_id=match_id, side=side, canonical_player_id=player_id,
+            on_interchange_list_only=on_interchange_list_only,
+        )
+        player_names = _interchange_name_lookups(conn, rows)
+    finally:
+        conn.close()
+
+    return MatchInterchangesResponse(
+        match=MatchInfo(
+            match_id=match_row["match_id"], match_provider_id=match_row["match_provider_id"],
+            round_id=match_row["round_id"], season_id=match_row["season_id"], status=match_row["status"],
+        ),
+        interchanges=[_interchange_status_from_row(row, player_names) for row in rows],
+    )
+
+
+def _interchange_event_from_row(row: dict, player_names: dict) -> InterchangeEvent:
+    return InterchangeEvent(
+        id=row["id"], match_id=row["match_id"], champion_data_player_id=row["player_provider_id"],
+        canonical_player_id=row["canonical_player_id"], display_name=player_names.get(row["canonical_player_id"]),
+        side=row["side"], team_id=row["canonical_team_id"], champion_data_team_id=row["team_provider_id"],
+        event_type=row["event_type"], interchange_count=row["interchange_count"],
+        previous_interchange_count=row["previous_interchange_count"], bench_reason=row["bench_reason"],
+        previous_bench_reason=row["previous_bench_reason"], time_on_ground_seconds=row["time_on_ground"],
+        time_on_bench_seconds=row["time_on_bench"], power_rating=row["power_rating"],
+        observed_at=row["observed_at"],
+    )
+
+
+@router.get(
+    "/api/v1/matches/{match_id}/interchanges/events",
+    response_model=MatchInterchangeEventsResponse,
+    responses={404: {"model": ApplicationErrorResponse, "description": "Match not found"}},
+    summary="Get meaningful interchange transition history for a match",
+    description=(
+        "Returns the chronological (oldest-first) history of meaningful CFS matchInterchange "
+        "transitions for one canonical match: a player appearing in or disappearing from an "
+        "interchange array, and interchange_count/bench_reason changing. A poll where only "
+        "time_on_ground_seconds/time_on_bench_seconds/power_rating changed never produces an event -- "
+        "use GET /api/v1/matches/{match_id}/interchanges for current per-player values. observed_at is "
+        "the UTC time AFL-api's poll detected the transition, not an exact in-game clock instant -- "
+        "matchInterchange supplies no periodNumber/periodSeconds to correlate against, so none is "
+        "fabricated here. A valid match with no interchange transitions yet returns an empty collection."
+    ),
+)
+def get_match_interchange_events(
+    match_id: int,
+    player_id: int | None = Query(None, description="Filter to one canonical player identifier."),
+    event_type: Literal["appeared", "disappeared", "interchange_count_changed", "bench_reason_changed"] | None = Query(
+        None, description="Filter to one event type."
+    ),
+    credential: AuthenticatedCredential = Depends(authenticate_api_key),
+) -> MatchInterchangeEventsResponse | JSONResponse:
+    log(f"🔁 {credential.label} requested v1 interchange events for match {match_id}", "INFO")
+    from afl_json.match_interchange import event_rows
+
+    conn = get_db_connection()
+    try:
+        match_row = conn.execute(
+            "SELECT match_id, match_provider_id, round_id, season_id, status FROM matches WHERE match_id = ?",
+            (match_id,),
+        ).fetchone()
+        if match_row is None:
+            return application_error(404, "match_not_found", "Match not found.")
+
+        rows = event_rows(conn, match_id=match_id, canonical_player_id=player_id, event_type=event_type)
+        player_names = _interchange_name_lookups(conn, rows)
+    finally:
+        conn.close()
+
+    return MatchInterchangeEventsResponse(
+        match=MatchInfo(
+            match_id=match_row["match_id"], match_provider_id=match_row["match_provider_id"],
+            round_id=match_row["round_id"], season_id=match_row["season_id"], status=match_row["status"],
+        ),
+        events=[_interchange_event_from_row(row, player_names) for row in rows],
+    )

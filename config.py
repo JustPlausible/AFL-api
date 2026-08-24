@@ -241,3 +241,22 @@ AFL_COMMENTARY_PRODUCTION_KICKOFF_TOLERANCE_SECONDS = _parse_int_env("AFL_COMMEN
 # (always polled -- see recently_active_match_provider_ids) plus a bounded
 # grace after that.
 AFL_COMMENTARY_PRODUCTION_POSTGAME_GRACE_SECONDS = _parse_int_env("AFL_COMMENTARY_PRODUCTION_POSTGAME_GRACE_SECONDS", 1800)
+
+# Production match-interchange collection (Issue #204), promoting the Issue
+# #193 diagnostic investigation into normal production persistence. Independent
+# of AFL_DIAGNOSTICS_ENABLED/AFL_DIAGNOSTIC_PROFILES entirely -- this is a
+# normal production collector, registered unconditionally in
+# scheduler/scheduled_tasks.py, and is only gated by its own enabled flag here
+# (default on). See afl_json/match_interchange.py and
+# scheduler/match_interchange_production.py.
+#
+# Interval/tolerance/grace defaults mirror the proven commentary production
+# settings above -- there is no captured live interchange poll cadence
+# evidence to tune against (see afl_json.match_interchange module docstring
+# on the limits of the available Round 24 evidence), so this deliberately
+# starts from the same, already-validated production cadence rather than
+# guessing a different one.
+AFL_INTERCHANGE_PRODUCTION_ENABLED = _parse_bool_env("AFL_INTERCHANGE_PRODUCTION_ENABLED", True)
+AFL_INTERCHANGE_PRODUCTION_INTERVAL_SECONDS = _parse_int_env("AFL_INTERCHANGE_PRODUCTION_INTERVAL_SECONDS", 20)
+AFL_INTERCHANGE_PRODUCTION_KICKOFF_TOLERANCE_SECONDS = _parse_int_env("AFL_INTERCHANGE_PRODUCTION_KICKOFF_TOLERANCE_SECONDS", 600)
+AFL_INTERCHANGE_PRODUCTION_POSTGAME_GRACE_SECONDS = _parse_int_env("AFL_INTERCHANGE_PRODUCTION_POSTGAME_GRACE_SECONDS", 1800)

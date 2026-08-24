@@ -71,6 +71,12 @@ def match_commentary_production_job():
     return poll_match_commentary()
 
 
+@scheduler.scheduled_job(IntervalTrigger(seconds=config.AFL_INTERCHANGE_PRODUCTION_INTERVAL_SECONDS), id="match_interchange_production", name="Production CFS match-interchange polling", max_instances=1, coalesce=True, misfire_grace_time=10)
+def match_interchange_production_job():
+    from scheduler.match_interchange_production import poll_match_interchange
+    return poll_match_interchange()
+
+
 # Start the scheduler loop
 if __name__ == "__main__":
     from scheduler.job_cleaner import clean_broken_jobs
