@@ -19,16 +19,24 @@ in `X-Api-Key`; auth behaves identically to every other `/api/v1` route.
 
 ## Important: read this before using `on_interchange_list`
 
-The only real evidence available when this endpoint was promoted to
-production is a single captured **concluded**-match snapshot — there is no
-captured live poll-to-poll sequence showing array membership actually
-change as a player rotates on and off the ground during a match.
-`on_interchange_list` is therefore a **conservative, source-derived fact**
-("this player's Champion Data id appeared in the source
-`homeInterchange[]`/`awayInterchange[]` array as of the most recent poll"),
-**not a confirmed "this player is currently off the ground" signal**. Treat
-it as best-effort pending further live-match verification, and do not build
-logic that assumes it is an authoritative bench/on-ground state.
+The only real evidence checked into this repository and reviewed when this
+endpoint was promoted to production is a single captured **concluded**-match
+snapshot — no live poll-to-poll sequence is checked in showing array
+membership actually change as a player rotates on and off the ground during
+a match. (This describes what was reviewable during promotion, not a claim
+that the `interchange` diagnostic profile never observed a live match: any
+observations it wrote during an actual live deployment run live only in
+that deployment's own local `match_interchange_evidence_observations` table
+-- `.gitignore`'d SQLite state, never committed to this repository -- and
+were not available for review here. See the design doc §2.1.1 for the
+specific questions such evidence would need to answer, and how to supply it
+for re-review.) `on_interchange_list` is therefore a **conservative,
+source-derived fact** ("this player's Champion Data id appeared in the
+source `homeInterchange[]`/`awayInterchange[]` array as of the most recent
+poll"), **not a confirmed "this player is currently off the ground"
+signal**. Treat it as best-effort pending further live-match verification,
+and do not build logic that assumes it is an authoritative bench/on-ground
+state.
 
 ## `GET /api/v1/matches/{match_id}/interchanges`
 

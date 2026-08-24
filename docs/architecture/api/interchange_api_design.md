@@ -38,22 +38,34 @@ evidence-cited contract. Summary:
   `player.playerJumperNumber`, deliberately never persisted -- see §3.1),
   `interchangeCount`, `benchReason`, `timeOnGround`, `timeOnBench`,
   `powerRating`.
-* **The only real evidence available is one captured CONCLUDED-match
-  response** (`tests/fixtures/afl/interchange/match_interchange_8216_concluded.json`):
+* **The only real evidence checked into this repository is one captured
+  CONCLUDED-match response**
+  (`tests/fixtures/afl/interchange/match_interchange_8216_concluded.json`):
   five entries per side, each with substantial cumulative
   `timeOnGround`/`timeOnBench`/`interchangeCount` and `benchReason="ROTATION"`
-  throughout. There is **no captured live poll-to-poll sequence** showing
+  throughout. **No live poll-to-poll sequence is checked in** showing
   entries actually appearing/disappearing as players rotate during play --
   unlike commentary's Issue #201 promotion, which had a genuine live-poll
   capture plus a confirmed real scoring-outcome change to promote against.
+  This is a statement about what was present in the repository and
+  reviewable during this promotion, **not** a claim that the `interchange`
+  diagnostic profile never observed live matches: it ran opt-in during
+  Round 24 and, on any host it ran against, would have written poll-by-poll
+  observations into that deployment's own local
+  `match_interchange_evidence_observations` table (`.gitignore`'d SQLite
+  state, never committed -- queryable via
+  `scripts/report_interchange_evidence.py`). That data, if it exists, was
+  not supplied to or reachable from this implementation session and so was
+  not reviewed here; see §2.1 for exactly what re-reviewing it would need
+  to establish.
 
 ### 2.1 Array-membership semantics: the open question this promotion does not close
 
 Issue #204 asked this promotion to establish, from evidence, whether
 `homeInterchange[]`/`awayInterchange[]` membership means "the player is
-currently off the ground". **The available evidence cannot establish this
-either way.** The single concluded snapshot is consistent with at least two
-readings:
+currently off the ground". **Based on the evidence available to and
+reviewed by this promotion, this cannot be established either way.** The
+single concluded snapshot is consistent with at least two readings:
 
 1. These are the players who happened to be sitting on the bench right at
    full-time, each carrying their whole-match rotation tally (supports an
@@ -71,9 +83,63 @@ off-ground semantic. Every place this field appears (schema comments, the
 OpenAPI description, `docs/api_v1_interchange.md`) carries the same caveat.
 This should be revisited, and the field/semantic potentially strengthened
 (with a migration if the contract needs to change), once a live round with
-actually-observed membership transitions has been captured -- likely via
-the still-running `interchange` diagnostic profile, which is exactly the
-tool built to gather that evidence.
+actually-observed membership transitions has been reviewed -- via the
+still-running `interchange` diagnostic profile, which is exactly the tool
+built to gather that evidence, whether newly captured or already sitting
+unreviewed in an existing deployment's database.
+
+#### 2.1.1 What remains unproven, and what evidence would resolve it
+
+This promotion's review was limited to what is checked into
+`tests/fixtures/afl/interchange/` -- a single CONCLUDED-match snapshot. It
+was **not** a review of `match_interchange_evidence_observations` on any
+actually-running deployment: that table is local SQLite state
+(`data/afl_players.db` by default), excluded from version control by
+`.gitignore`, and was not supplied to or reachable from this implementation
+session. If the `interchange` diagnostic profile was left running against
+real Round 24 matches on a deployment outside this session's reach, its
+observations have not yet been reviewed against the questions below. To
+resolve them, someone with access to that deployment's database should run
+`python -m scripts.report_interchange_evidence --json` (optionally scoped
+with `--match-provider-id`) and supply the output -- or the database file
+itself -- for review. The specific open questions such evidence would need
+to answer, per match, with `match_provider_id`/`poll_sequence`/`observed_at`
+citations:
+
+1. Across successive `LIVE` polls, does the *set* of Champion Data
+   `playerId` values in `homeInterchange[]`/`awayInterchange[]` actually
+   change, or does it stay fixed with only per-entry fields (`interchangeCount`,
+   `timeOnGround`, `timeOnBench`) changing?
+2. For any player whose membership does change: do they later reappear
+   (consistent with genuine bench rotation), or once removed do they never
+   return (consistent with, e.g., being subbed out of the match entirely --
+   a different concept from bench rotation)?
+3. When a membership change is observed, what happens *concurrently* to
+   that player's `interchangeCount`, `benchReason`, `timeOnGround`,
+   `timeOnBench`, and the team-level `totalInterchangeCount`? (A count
+   increment coinciding with an appearance would be strong corroborating
+   evidence of a genuine interchange event; no concurrent change would
+   weaken that reading.)
+4. Does membership behave consistently across `LIVE`, quarter breaks
+   (`match_status_at_poll` stays `LIVE` through these -- see
+   `collection.match_state_evidence`/`afl_json.match_period` for the
+   independent period-state signal to correlate against by nearest
+   `observed_at`), `POSTGAME`, and `CONCLUDED`? A membership set that only
+   ever shrinks (never regrows) after `POSTGAME` would be consistent with
+   "final bench occupants at full-time" rather than live rotation.
+5. Do any observed transitions correlate, by nearby `observed_at` UTC
+   timestamp, with corroborating same-match commentary (e.g. an
+   interchange/rotation-related note in `match_commentary_events`) or with
+   a discontinuity in that player's `cfs_player_stats`/`cfs_player_stat_history`
+   time-on-ground-adjacent figures? Corroboration is supporting evidence
+   only, per Issue #204's constraint that commentary must never be a
+   prerequisite for determining interchange state.
+
+A genuinely conclusive answer needs at least one full live match's poll
+sequence per side showing multiple distinct players cycling through
+appearance and disappearance with plausible concurrent count changes --
+the single available CONCLUDED snapshot cannot demonstrate this by
+construction, since it has no earlier poll to diff against.
 
 ### 2.2 `benchReason`
 

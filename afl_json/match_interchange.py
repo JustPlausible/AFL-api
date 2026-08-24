@@ -47,12 +47,22 @@ what does CFS say about it?"
 Issue #204 asks this module to establish, from captured evidence, whether
 membership of ``homeInterchange[]``/``awayInterchange[]`` can safely be
 documented as meaning "the player is currently off the ground". **It
-cannot, yet.** The only real evidence available is a single CONCLUDED-match
-snapshot -- there is no captured live poll-to-poll sequence demonstrating
-that a player's entry actually appears/disappears as they rotate on and off
-the ground during play (contrast Issue #201's commentary promotion, which
-had a genuine live poll sequence plus a confirmed real scoring-outcome
-change to promote against). The five-entries-per-side shape in the
+cannot, yet, from what is checked into this repository.** The only real
+evidence present in ``tests/fixtures/afl/interchange/`` at implementation
+time is a single CONCLUDED-match snapshot -- no live poll-to-poll sequence
+is checked in demonstrating that a player's entry actually appears/
+disappears as they rotate on and off the ground during play (contrast
+Issue #201's commentary promotion, which had a genuine live poll sequence
+plus a confirmed real scoring-outcome change to promote against).
+The Issue #193 ``interchange`` diagnostic profile may have captured
+additional live-match observations directly into a deployment's own
+``match_interchange_evidence_observations`` table (via
+``scripts/report_interchange_evidence.py``) that were not supplied to, or
+reachable from, this implementation session -- that data, if it exists, has
+not been reviewed here and would need to be supplied (e.g. as a database
+export or a report run against it) before the semantic below can be
+strengthened or the open questions in this docstring resolved. The
+five-entries-per-side shape in the
 concluded snapshot, each carrying substantial cumulative
 ``timeOnGround``/``timeOnBench``/``interchangeCount`` values, is *consistent
 with* "these are the players who ended the match sitting on the bench,

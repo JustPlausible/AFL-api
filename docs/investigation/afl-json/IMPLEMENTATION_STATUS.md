@@ -308,13 +308,20 @@ normal scheduler (`scheduler/scheduled_tasks.py`), independent of
 `AFL_DIAGNOSTICS_ENABLED`/`AFL_DIAGNOSTIC_PROFILES` entirely, and persists
 canonically-linked current per-player state plus meaningful transition
 history. **Unlike** the Issue #201 commentary promotion, the evidence
-basis here is materially weaker: only a single concluded-match snapshot was
-available, with no captured live poll-to-poll sequence demonstrating array
-membership actually changing during play. The production contract therefore
-exposes a conservative `on_interchange_list` field rather than a claimed
-"on the bench right now" semantic -- see `docs/api_v1_interchange.md` for
-the full caveat. Interchange state remains non-authoritative for match
-finality, lifecycle, or player statistics.
+basis reviewed for this promotion is materially weaker: only a single
+concluded-match snapshot was checked into `tests/fixtures/afl/interchange/`
+and available for review, with no live poll-to-poll sequence in the
+repository demonstrating array membership actually changing during play.
+This reflects what was reviewable during this promotion, not a claim that
+no `interchange` diagnostic profile ran against live Round 24 matches
+elsewhere -- any such deployment-local `match_interchange_evidence_observations`
+data is `.gitignore`'d SQLite state that was not supplied to or reachable
+from this promotion; see `docs/api_v1_interchange.md` for how to supply it
+for a future re-review. The production contract therefore exposes a
+conservative `on_interchange_list` field rather than a claimed "on the
+bench right now" semantic -- see `docs/api_v1_interchange.md` for the full
+caveat. Interchange state remains non-authoritative for match finality,
+lifecycle, or player statistics.
 
 **Diagnostic evidence capture unchanged:** the `interchange` diagnostic
 profile from Issue #193 (`collection/match_interchange_evidence.py`,
@@ -579,9 +586,10 @@ endpoint contracts (production collector, persistence and a consumer
 route) -- see §4's "CFS `commentaryFeed/{matchProviderId}`" and
 "CFS `matchInterchange/{matchProviderId}`" entries above.
 `matchInterchange`'s promotion carries a materially weaker evidence basis
-than commentary's (no captured live membership-transition sequence), so its
-consumer contract stays deliberately conservative -- see
-`docs/api_v1_interchange.md`. Both endpoints' diagnostic evidence-capture
+than commentary's (no live membership-transition sequence was checked in
+or otherwise available for review during this promotion), so its consumer
+contract stays deliberately conservative -- see `docs/api_v1_interchange.md`.
+Both endpoints' diagnostic evidence-capture
 profiles (Issues #196 and #193) remain separately available for
 debugging/replay, but are no longer the only pathway for either.
 

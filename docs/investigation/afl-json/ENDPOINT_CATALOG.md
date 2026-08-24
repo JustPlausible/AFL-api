@@ -474,28 +474,39 @@ currently on the interchange list, and what does CFS say about them.
 a CONCLUDED match with five entries per side, each carrying substantial
 cumulative `timeOnGround`/`timeOnBench`/`interchangeCount` values and
 `benchReason="ROTATION"` throughout. This confirms the entry-level field
-shape above. **There is no captured live poll-to-poll sequence for
-interchange** -- unlike commentary's `CD_M20260142409` live-poll capture
-plus the confirmed `CD_M20260142406` same-slot scoring-outcome change, no
-Round 24 evidence demonstrates `homeInterchange[]`/`awayInterchange[]`
-membership actually changing as a player rotates on and off the ground
-during play.
+shape above. **No live poll-to-poll sequence for interchange is checked
+into this repository** -- unlike commentary's `CD_M20260142409` live-poll
+capture plus the confirmed `CD_M20260142406` same-slot scoring-outcome
+change, no Round 24 fixture in `tests/fixtures/afl/interchange/` demonstrates
+`homeInterchange[]`/`awayInterchange[]` membership actually changing as a
+player rotates on and off the ground during play. This is a statement about
+what is present in this repository and was reviewable during this
+promotion, not a claim that no such evidence was ever captured anywhere:
+the `interchange` diagnostic profile ran opt-in against real matches and
+would have written any live observations into a deployment's own
+`match_interchange_evidence_observations` table (queryable via
+`scripts/report_interchange_evidence.py`), which is `.gitignore`'d local
+SQLite state, never committed. If that data exists on a deployment this
+promotion did not have access to, it was not reviewed here and remains
+open follow-up work -- see the note at the end of this update.
 
 *Array-membership semantics: still open, not resolved by this promotion.*
 Issue #204 asked this promotion to establish, from evidence, whether
-membership means "the player is currently off the ground". It does not
-establish this. The single concluded-match snapshot is *consistent with*
-either: (a) these are the players who happened to be sitting on the bench
-right at full-time, each carrying their whole-match rotation tally, or (b)
-this is simply the team's fixed interchange/bench player pool for the
-entire match, always listed, with only its per-entry counters changing.
-Per Issue #204's explicit instruction not to promote a diagnostic
-hypothesis to an authoritative semantic without live-membership-transition
-evidence, the production contract therefore exposes a conservative,
-source-derived `on_interchange_list` field (see
-`docs/api_v1_interchange.md`) rather than a claimed `on_bench`/off-ground
-semantic. This should be revisited once a live round with observed
-membership transitions is available.
+membership means "the player is currently off the ground". Based on the
+evidence available to and reviewed by this promotion, it does not establish
+this. The single concluded-match snapshot is *consistent with* either: (a)
+these are the players who happened to be sitting on the bench right at
+full-time, each carrying their whole-match rotation tally, or (b) this is
+simply the team's fixed interchange/bench player pool for the entire
+match, always listed, with only its per-entry counters changing. Per Issue
+#204's explicit instruction not to promote a diagnostic hypothesis to an
+authoritative semantic without live-membership-transition evidence, the
+production contract therefore exposes a conservative, source-derived
+`on_interchange_list` field (see `docs/api_v1_interchange.md`) rather than
+a claimed `on_bench`/off-ground semantic. This should be revisited once a
+live round with observed membership transitions is reviewed -- whether
+newly captured, or already sitting in an existing deployment's diagnostic
+database and supplied for review (see the follow-up note above).
 
 *`benchReason`:* persisted and returned exactly as CFS supplies it (only
 `"ROTATION"` observed so far). Never inferred as injury, substitution,
