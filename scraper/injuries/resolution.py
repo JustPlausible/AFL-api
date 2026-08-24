@@ -6,7 +6,9 @@ from urllib.parse import unquote, urlsplit
 
 from merge.helpers import build_canonical_injury_player_resolver
 from utils.club_lookup import get_canonical_club, resolve_club_code
-from .models import InjuryParseResult, InjuryResolutionResult, ResolvedInjuryRecord
+from .models import (
+    InjuryParseResult, InjuryResolutionResult, ResolvedInjuryRecord, ResolvedTeamCoverage,
+)
 
 
 def resolve_source_club(image_src: str, alt_text: str = "") -> dict | None:
@@ -39,7 +41,7 @@ class InjuryResolver:
                 identity = self._player_resolver.resolve(source.player_name, club["code"])
                 result = ResolvedInjuryRecord(
                     source, identity.status, club["code"], identity.canonical_player_id,
-                    identity.afl_id, identity.reason,
+                    identity.afl_id, identity.reason, canonical_team_id=club["teamId"],
                 )
             records.append(result)
             if result.status != "resolved":
@@ -49,4 +51,26 @@ class InjuryResolver:
                     "status": result.status,
                     "reason": result.reason,
                 })
-        return InjuryResolutionResult(tuple(records), tuple(diagnostics))
+
+        observed_teams = []
+        for team in parsed.teams:
+            club = self._club_resolver(team.club_image_src, team.club_image_alt)
+            if club is None:
+                observed_teams.append(ResolvedTeamCoverage(
+                    team.team_index, "unresolved", row_count=team.row_count,
+                    reason="source club marker is not canonical",
+                ))
+                diagnostics.append({
+                    "player_name": None,
+                    "club": None,
+                    "status": "unresolved",
+                    "reason": (
+                        f"team block {team.team_index} club marker is not canonical; "
+                        "its coverage cannot safely scope persistence"
+                    ),
+                })
+            else:
+                observed_teams.append(ResolvedTeamCoverage(
+                    team.team_index, "resolved", club["code"], club["teamId"], team.row_count,
+                ))
+        return InjuryResolutionResult(tuple(records), tuple(diagnostics), tuple(observed_teams))

@@ -35,6 +35,8 @@ for the reusable release summary and upgrade cautions.
 - [Canonical v1 player lookup and search — consumer reference](api_v1_players.md) — resolve a canonical player ID to identity, provider crosswalks, and current-season team context; discover a `canonical_player_id` via `GET /api/v1/players?search=`; or navigate a player's season/team history via `GET /api/v1/players/{canonical_player_id}/seasons`
 - [Production CFS match-commentary persistence and consumer API design](architecture/api/commentary_api_design.md) — event-identity/dedup, canonical linking, score-review preservation, and production scheduler lifecycle for `commentaryFeed` (Issue #201)
 - [Canonical v1 match commentary — consumer reference](api_v1_commentary.md) — `GET /api/v1/matches/{match_id}/commentary`, chronological, canonically-linked commentary events
+- [Injury collector pipeline architecture](architecture/injury_collector_pipeline.md) — acquisition/parser/resolver/persistence/orchestration boundaries, observed-team-authority persistence semantics, and canonical identity persistence (Issue #213)
+- [Canonical v1 current injuries — consumer reference](api_v1_injuries.md) — `GET /api/v1/injuries`, filterable by `team_id`/`canonical_player_id` (Issue #213)
 - [JSON payload fixtures and offline contract regression tests](json_contract_fixtures.md)
 
 ## Reviews and planning
