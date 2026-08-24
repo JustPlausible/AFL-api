@@ -353,6 +353,120 @@ def test_filter_with_no_rows_has_no_source_timestamp(tmp_path, monkeypatch):
     assert response.json()["metadata"] == {"source_updated_at": None}
 
 
+def test_canonical_player_id_filter_narrows_to_one_player(tmp_path, monkeypatch):
+    db_path = _make_db(tmp_path, seed=_two_player_seed)
+    client = _client(db_path, monkeypatch)
+
+    response = _get(client, canonical_player_id=2)
+
+    assert response.status_code == 200
+    players = response.json()["players"]
+    assert len(players) == 1
+    assert players[0]["canonical_player_id"] == 2
+    assert players[0]["champion_data_player_id"] == "CD_I2"
+
+
+def test_canonical_player_id_with_no_stats_returns_empty_result(tmp_path, monkeypatch):
+    db_path = _make_db(tmp_path, seed=_two_player_seed)
+    client = _client(db_path, monkeypatch)
+
+    response = _get(client, canonical_player_id=999999)
+
+    assert response.status_code == 200
+    assert response.json()["players"] == []
+    assert response.json()["metadata"] == {"source_updated_at": None}
+
+
+def test_canonical_player_id_does_not_match_unresolved_row(tmp_path, monkeypatch):
+    def seed(conn):
+        _seed_match(conn)
+        _seed_stat_row(
+            conn, champion_data_player_id="CD_UNMAPPED", side="home",
+            snapshot_authority=2, canonical_player_id=None,
+        )
+
+    db_path = _make_db(tmp_path, seed=seed)
+    client = _client(db_path, monkeypatch)
+
+    canonical_response = _get(client, canonical_player_id=396)
+    assert canonical_response.status_code == 200
+    assert canonical_response.json()["players"] == []
+
+    champion_data_response = _get(client, champion_data_player_id="CD_UNMAPPED")
+    assert champion_data_response.status_code == 200
+    unresolved_players = champion_data_response.json()["players"]
+    assert len(unresolved_players) == 1
+    assert unresolved_players[0]["canonical_player_id"] is None
+    assert unresolved_players[0]["champion_data_player_id"] == "CD_UNMAPPED"
+
+
+def test_canonical_and_champion_data_ids_for_same_player_return_that_row(tmp_path, monkeypatch):
+    db_path = _make_db(tmp_path, seed=_two_player_seed)
+    client = _client(db_path, monkeypatch)
+
+    response = _get(client, canonical_player_id=2, champion_data_player_id="CD_I2")
+
+    assert response.status_code == 200
+    players = response.json()["players"]
+    assert len(players) == 1
+    assert players[0]["canonical_player_id"] == 2
+    assert players[0]["champion_data_player_id"] == "CD_I2"
+
+
+def test_conflicting_canonical_and_champion_data_ids_return_empty_result(tmp_path, monkeypatch):
+    db_path = _make_db(tmp_path, seed=_two_player_seed)
+    client = _client(db_path, monkeypatch)
+
+    response = _get(client, canonical_player_id=1, champion_data_player_id="CD_I2")
+
+    assert response.status_code == 200
+    assert response.json()["players"] == []
+    assert response.json()["metadata"] == {"source_updated_at": None}
+
+
+def test_canonical_player_id_composes_with_side_filter(tmp_path, monkeypatch):
+    db_path = _make_db(tmp_path, seed=_two_player_seed)
+    client = _client(db_path, monkeypatch)
+
+    matching = _get(client, canonical_player_id=2, side="away")
+    assert matching.status_code == 200
+    matching_players = matching.json()["players"]
+    assert len(matching_players) == 1
+    assert matching_players[0]["canonical_player_id"] == 2
+
+    mismatched = _get(client, canonical_player_id=2, side="home")
+    assert mismatched.status_code == 200
+    assert mismatched.json()["players"] == []
+
+
+def test_invalid_canonical_player_id_returns_422(tmp_path, monkeypatch):
+    db_path = _make_db(tmp_path, seed=lambda conn: _seed_match(conn))
+    client = _client(db_path, monkeypatch)
+
+    response = _get(client, canonical_player_id="abc")
+
+    assert response.status_code == 422
+
+
+def test_out_of_range_canonical_player_id_returns_422(tmp_path, monkeypatch):
+    db_path = _make_db(tmp_path, seed=lambda conn: _seed_match(conn))
+    client = _client(db_path, monkeypatch)
+
+    for value in (2**63, -(2**63) - 1):
+        response = _get(client, canonical_player_id=value)
+        assert response.status_code == 422
+
+
+def test_non_positive_canonical_player_id_is_a_normal_empty_result(tmp_path, monkeypatch):
+    db_path = _make_db(tmp_path, seed=_two_player_seed)
+    client = _client(db_path, monkeypatch)
+
+    for value in (0, -1):
+        response = _get(client, canonical_player_id=value)
+        assert response.status_code == 200
+        assert response.json()["players"] == []
+
+
 def test_invalid_side_returns_422(tmp_path, monkeypatch):
     db_path = _make_db(tmp_path, seed=lambda conn: _seed_match(conn))
     client = _client(db_path, monkeypatch)

@@ -23,8 +23,42 @@ missing or invalid API key receives `401` with
 | --- | --- | --- | --- | --- |
 | `match_id` | path | integer | Yes | Existing numeric match identifier. |
 | `side` | query | `home` \| `away` | No | Return only players on that match side. Other values receive FastAPI's normal `422`. |
-| `champion_data_player_id` | query | string | No | Return only the player with this opaque Champion Data ID. |
+| `canonical_player_id` | query | integer | No | Return only the player with this AFL-api canonical player ID, matched directly against the persisted stat row. The preferred consumer-facing identifier. A non-integer value, or one outside SQLite's signed 64-bit integer range (`-2^63` to `2^63-1`), receives FastAPI's normal `422`. |
+| `champion_data_player_id` | query | string | No | Return only the player with this opaque Champion Data ID. Provider-specific; retained for compatibility and explicit provider workflows. |
 | `advanced` | query | boolean | No | Add selected provenance. Defaults to `false` and requires the `advanced-read` capability when `true`. |
+
+### Choosing a player filter
+
+`canonical_player_id` is the preferred identifier for consumers navigating the
+canonical AFL-api graph: a canonical player resolved via `GET
+/api/v1/players/{canonical_player_id}` or `GET /api/v1/players?search=...`
+carries a `canonical_player_id` directly usable here, without needing to look
+up a Champion Data ID first:
+
+```text
+GET /api/v1/players?search=Smith
+  -> GET /api/v1/players/{canonical_player_id}/seasons   (season_id)
+  -> GET /api/v1/seasons/{season_id}/rounds               (round_id)
+  -> GET /api/v1/rounds/{round_id}/matches                (match_id)
+  -> GET /api/v1/matches/{match_id}/player-stats?canonical_player_id={canonical_player_id}
+```
+
+`champion_data_player_id` remains fully supported with unchanged semantics
+for provider-specific workflows, e.g. correlating against a CFS export:
+
+```text
+GET /api/v1/matches/{match_id}/player-stats?champion_data_player_id=CD_I1004321
+```
+
+Both filters match directly against the values persisted on the
+`cfs_player_stats` row; neither is resolved from the other. Supplying both is
+conjunctive (`AND`) -- the row must satisfy both predicates. For the same
+player this is a no-op that returns the same row; for two different players
+it deterministically returns `players: []`, the endpoint's normal
+no-match/empty-result outcome (see below), rather than a new error type. A
+row whose persisted `canonical_player_id` is `null` (an unresolved crosswalk)
+never matches `canonical_player_id` but remains reachable via
+`champion_data_player_id`, exactly as before this filter existed.
 
 ## Normal response
 
@@ -70,10 +104,13 @@ Raw provider JSON and unselected database columns are never exposed.
 `metadata.source_updated_at` is the newest authoritative source observation
 used to produce the returned resource, represented here by the maximum
 `collected_at` among the **returned player-stat rows**. It is not request serve
-time, current time, or scheduler-run time. Consequently, `side` and
-`champion_data_player_id` filters calculate freshness only from rows surviving
-the filter. A valid result with no returned rows has
-`"source_updated_at": null`; the API never fabricates freshness.
+time, current time, or scheduler-run time. Consequently, `side`,
+`canonical_player_id`, and `champion_data_player_id` filters calculate
+freshness only from rows surviving the filter. A valid result with no
+returned rows has `"source_updated_at": null`; the API never fabricates
+freshness. This includes a `canonical_player_id` that identifies a real
+canonical player with no persisted stat row for this match, and a
+`canonical_player_id` that conflicts with a supplied `champion_data_player_id`.
 
 ## Lifecycle and empty states
 
@@ -128,7 +165,7 @@ Application errors use this common `/api/v1` shape:
 | `403` | `advanced_access_required` when a valid key without `advanced-read` requests advanced mode. Message: `This API key does not permit access to advanced metadata.` |
 | `404` | `match_not_found` when the addressed match does not exist. |
 | `401` | Missing or invalid API key. Message: `Invalid or missing API Key`. |
-| `422` | Framework request or parameter validation, such as an invalid `side` value or parameter shape. |
+| `422` | Framework request or parameter validation, such as an invalid `side` value or a non-integer `canonical_player_id`. |
 
 Application errors do not expose SQL, table names, stack traces, secrets,
 provider URLs, or raw collector failures. Authentication failures use `401`;

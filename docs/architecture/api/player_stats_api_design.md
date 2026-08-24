@@ -215,8 +215,29 @@ GET /api/v1/matches/{match_id}/player-stats
 * `side` (query, optional, `home` or `away`) — filters returned players to one
   side. Invalid values return `422` (FastAPI's standard `Query` validation via
   an `Enum` or `Literal`).
+* `canonical_player_id` (query, optional, integer; Issue #209) — filters to a
+  single player by the AFL-api canonical identity persisted directly on
+  `cfs_player_stats.canonical_player_id` (§5). This is the preferred
+  consumer-facing filter, letting a consumer who already resolved a
+  `canonical_player_id` (e.g. via `GET /api/v1/players/{canonical_player_id}`
+  and `GET /api/v1/players/{canonical_player_id}/seasons`) reach match
+  player-stats without going through `champion_data_player_id`. It matches
+  the stored column as-is — no join back to `player_provider_ids` and no
+  inference for rows where the crosswalk is unresolved (`canonical_player_id
+  IS NULL`); such a row simply never matches this filter, consistent with §5's
+  no-inference rule. A non-integer value returns `422`.
 * `champion_data_player_id` (query, optional, string) — filters to a single
-  player already known by CFS ID.
+  player already known by CFS ID. Unchanged by Issue #209.
+* When both `canonical_player_id` and `champion_data_player_id` are supplied,
+  they compose conjunctively (`WHERE ... AND s.canonical_player_id = ? AND
+  s.champion_data_player_id = ?`) rather than one silently overriding the
+  other. For the same underlying player this is redundant and returns the
+  same row; for two different players no row can satisfy both predicates, so
+  the request deterministically falls into the same `players: []` empty-result
+  path as any other filter combination that matches nothing (§6.1, §10) — not
+  a distinct error type. This keeps the two identifiers orthogonal predicate
+  columns on the existing query rather than adding a separate
+  identity-reconciliation/crosswalk lookup.
 
 ### 6.1 Resolution and status codes
 
@@ -542,6 +563,14 @@ cover at least:
   `canonical_player_id` and `afl_player_id` both `null`, no error.
 * `side` filter narrows correctly; invalid `side` value → `422`.
 * `champion_data_player_id` filter narrows to one player.
+* `canonical_player_id` filter narrows to one player, matched directly against
+  the persisted stat row (Issue #209); a `canonical_player_id` with no
+  matching stat row → `200`, `players: []`; a stat row with
+  `canonical_player_id IS NULL` does not match the canonical filter but
+  remains reachable via `champion_data_player_id`; supplying both filters for
+  the same player returns that row, and supplying both for two different
+  players → `200`, `players: []` (§6.1); `canonical_player_id` composes with
+  `side`; a non-integer `canonical_player_id` → `422`.
 * Missing/invalid `X-Api-Key` → `401`, matching existing `verify_api_key`
   behaviour (no separate auth path introduced).
 * A response-shape regression test that asserts the exact top-level and
@@ -582,6 +611,14 @@ Scope, deliberately minimal:
 * Tests per §10, documentation per §11.
 * No pagination (a single match's roster is bounded — see `MIN_CONCLUDED_AUTHORITATIVE_PLAYER_ROWS`
   and typical AFL team-sheet sizes for scale expectations).
+
+**Issue #209 addendum:** added an optional `canonical_player_id` filter to
+this same Stage 1 route (§6) as an additive predicate alongside `side` and
+`champion_data_player_id`, rather than introducing the separate Stage 2
+`GET /api/v1/players/{canonical_player_id}/stats` resource. Stage 2 remains
+future work for cross-match, paginated, season-scoped history; this addendum
+only lets a consumer filter the existing single-match resource by canonical
+identity without a Champion Data ID.
 
 Acceptance for Stage 1: the endpoint returns exactly the response/status-code
 behaviour in §6 and §8 for a fixture DB covering every case in §10, with zero
