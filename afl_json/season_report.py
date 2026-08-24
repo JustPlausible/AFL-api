@@ -26,6 +26,37 @@ class ReportStatus(str, Enum):
     INVALID = "invalid"
 
 
+@dataclass(frozen=True, slots=True)
+class PersistedSeason:
+    """A persisted AFL season which can safely be offered to report consumers."""
+
+    season_id: int
+    year: int
+    name: str
+    provider_id: str | None
+    is_current: bool
+
+
+def list_persisted_afl_seasons(
+    conn: sqlite3.Connection, *, competition_code: str = "AFL",
+    competition_provider_id: str = "CD_C014",
+) -> list[PersistedSeason]:
+    """List reportable seasons without bootstrapping or otherwise changing data."""
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT s.afl_id,s.year,s.name,s.provider_id,s.is_current "
+        "FROM afl_seasons s JOIN afl_competitions c ON c.afl_id=s.competition_id "
+        "WHERE c.code=? AND c.provider_id=? AND s.year IS NOT NULL "
+        "ORDER BY s.year DESC,s.afl_id DESC",
+        (competition_code, competition_provider_id),
+    ).fetchall()
+    return [PersistedSeason(
+        season_id=row["afl_id"], year=row["year"],
+        name=row["name"] or str(row["year"]), provider_id=row["provider_id"],
+        is_current=bool(row["is_current"]),
+    ) for row in rows]
+
+
 INCOMPLETE_CODES = frozenset({
     "season.missing", "season.no_teams", "season.no_rounds", "season.no_matches",
     "match.final_without_authoritative_stats", "match.missing_provider_id",
@@ -154,6 +185,8 @@ class ReportMetadata:
     competition_id: int | None
     competition_season_id: int | None
     competition_season_provider_id: str | None
+    season_name: str | None
+    is_current_season: bool | None
     generated_at: str
     database: str | None
     filters: dict[str, str]
@@ -219,7 +252,7 @@ class SeasonCompletenessReporter:
                  and row["provider_id"] == competition_provider_id]
         competition = exact[0] if len(exact) == 1 else None
         seasons = [] if competition is None else self.conn.execute(
-            "SELECT afl_id,provider_id FROM afl_seasons WHERE competition_id=? AND year=? "
+            "SELECT afl_id,provider_id,name,is_current FROM afl_seasons WHERE competition_id=? AND year=? "
             "ORDER BY afl_id", (competition["afl_id"], year)
         ).fetchall()
         season = seasons[0] if len(seasons) == 1 else None
@@ -227,7 +260,10 @@ class SeasonCompletenessReporter:
             year, competition_code, competition_provider_id,
             competition["afl_id"] if competition else None,
             season["afl_id"] if season else None,
-            season["provider_id"] if season else None, generated, self.database,
+            season["provider_id"] if season else None,
+            season["name"] if season else None,
+            bool(season["is_current"]) if season else None,
+            generated, self.database,
             {"scope": "full_season"},
         )
         result = SeasonReport(metadata, self._empty_aggregates())

@@ -2,14 +2,19 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import base64
+import importlib
 from datetime import datetime, timezone
 
 import pytest
+from fastapi.testclient import TestClient
 
 import cli
 import cli_runtime
+import config
 from afl_json.season_report import (ReportStatus, SeasonCompletenessReporter,
-                                    calculate_status, exit_code, render_human)
+                                    calculate_status, exit_code,
+                                    list_persisted_afl_seasons, render_human)
 from db.migration_runner import migrate_database
 
 
@@ -354,6 +359,111 @@ def test_status_decision_table_uses_codes_not_only_severity(tmp_path):
     value = report(conn)
     assert calculate_status([]) is ReportStatus.COMPLETE
     assert value.status is ReportStatus.COMPLETE
+
+
+def test_admin_season_review_uses_shared_report_and_is_observational(
+        tmp_path, monkeypatch):
+    path, conn = database(tmp_path)
+    before = conn.serialize()
+    conn.close()
+    monkeypatch.setattr(config, "DB_PATH", str(path))
+    monkeypatch.setenv("ADMIN_USERNAME", "admin")
+    monkeypatch.setenv("ADMIN_PASSWORD", "password")
+    monkeypatch.setenv("SESSION_SECRET", "season-review-test")
+    import admin
+    admin = importlib.reload(admin)
+    called = []
+    shared_report = admin.SeasonCompletenessReporter.report
+
+    def observed_report(self, year, **kwargs):
+        called.append(year)
+        return shared_report(self, year, **kwargs)
+
+    monkeypatch.setattr(admin.SeasonCompletenessReporter, "report", observed_report)
+    monkeypatch.setattr(
+        admin.httpx, "get",
+        lambda *args, **kwargs: pytest.fail("Season Review made an HTTP request"),
+    )
+    token = base64.b64encode(b"admin:password").decode("ascii")
+    client = TestClient(admin.app)
+    headers = {"Authorization": f"Basic {token}"}
+
+    selector = client.get("/season-review", headers=headers)
+    response = client.get("/season-review?season=2026", headers=headers)
+    refreshed = client.get("/season-review?season=2026", headers=headers)
+
+    assert selector.status_code == 200
+    assert "2026 — 2026 (current)" in selector.text
+    assert response.status_code == refreshed.status_code == 200
+    assert called == [2026, 2026]
+    assert "complete" in response.text
+    assert "match.final_without_authoritative_stats" not in response.text
+    assert sqlite3.connect(path).serialize() == before
+
+
+def test_admin_season_review_preserves_finding_semantics_and_rejects_invalid_selection(
+        tmp_path, monkeypatch):
+    path, conn = database(tmp_path, stats=False)
+    conn.execute("DELETE FROM competition_season_players WHERE player_id=1")
+    conn.commit()
+    before = conn.serialize()
+    conn.close()
+    monkeypatch.setattr(config, "DB_PATH", str(path))
+    monkeypatch.setenv("ADMIN_USERNAME", "admin")
+    monkeypatch.setenv("ADMIN_PASSWORD", "password")
+    monkeypatch.setenv("SESSION_SECRET", "season-review-test")
+    import admin
+    admin = importlib.reload(admin)
+    token = base64.b64encode(b"admin:password").decode("ascii")
+    client = TestClient(admin.app)
+    headers = {"Authorization": f"Basic {token}"}
+
+    response = client.get("/season-review?season=2026", headers=headers)
+    invalid = client.get("/season-review?season=2099", headers=headers)
+
+    assert response.status_code == 200
+    assert "match.final_without_authoritative_stats" in response.text
+    assert "warning" in response.text and "matches" in response.text
+    assert "match=8001" in response.text
+    assert invalid.status_code == 400
+    assert "not persisted" in invalid.text
+    assert sqlite3.connect(path).serialize() == before
+
+
+def test_shared_persisted_season_selector_is_query_only(tmp_path):
+    _, conn = database(tmp_path)
+    conn.execute("PRAGMA query_only=ON")
+    seasons = list_persisted_afl_seasons(conn)
+    assert [(item.year, item.name, item.is_current) for item in seasons] == [
+        (2026, "2026", True)
+    ]
+
+
+def test_admin_season_review_rejects_oversized_numeric_selection_without_report_or_write(
+        tmp_path, monkeypatch):
+    path, conn = database(tmp_path)
+    before = conn.serialize()
+    conn.close()
+    monkeypatch.setattr(config, "DB_PATH", str(path))
+    monkeypatch.setenv("ADMIN_USERNAME", "admin")
+    monkeypatch.setenv("ADMIN_PASSWORD", "password")
+    monkeypatch.setenv("SESSION_SECRET", "season-review-test")
+    import admin
+    admin = importlib.reload(admin)
+    monkeypatch.setattr(
+        admin.SeasonCompletenessReporter, "report",
+        lambda *args, **kwargs: pytest.fail("Invalid selection invoked the report"),
+    )
+    token = base64.b64encode(b"admin:password").decode("ascii")
+
+    response = TestClient(admin.app).get(
+        "/season-review", params={"season": "9" * 10_000},
+        headers={"Authorization": f"Basic {token}"},
+    )
+
+    assert response.status_code == 400
+    assert "Select a valid persisted AFL season." in response.text
+    assert sqlite3.connect(path).serialize() == before
 
 
 def _reset_stats(conn, *, authority=2, rows=20, sides=("home", "away"), mixed=False):

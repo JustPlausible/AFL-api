@@ -17,7 +17,8 @@ import httpx
 from collections import defaultdict
 from api_key_security import api_key_prefix, generate_api_key, hash_api_key
 from db.init_db import create_api_keys_table
-from db.connection import get_db_path
+from db.connection import get_db_path, get_read_only_db_connection
+from afl_json.season_report import SeasonCompletenessReporter, list_persisted_afl_seasons
 from admin_csrf import csrf_input, require_csrf
 from logging_sources import (
     STATUS_AVAILABLE, STATUS_DISABLED, STATUS_NOT_CREATED, STATUS_UNAVAILABLE,
@@ -372,6 +373,40 @@ def show_tables(request: Request):
     tables = [row[0] for row in cur.fetchall()]
     conn.close()
     return templates.TemplateResponse(request=request, name="tables.html", context={"tables": tables})
+
+
+@app.get("/season-review", response_class=HTMLResponse)
+def season_review(request: Request, season: str | None = Query(None)):
+    """Render the shared season report through an explicitly read-only connection."""
+    conn = get_read_only_db_connection()
+    try:
+        seasons = list_persisted_afl_seasons(conn)
+        selected_year = None
+        report = None
+        error = None
+        if season is not None:
+            value = season.strip()
+            if not value or not value.isdecimal():
+                error = "Select a valid persisted AFL season."
+            else:
+                try:
+                    selected_year = int(value)
+                except ValueError:
+                    error = "Select a valid persisted AFL season."
+                if error is None and selected_year not in {item.year for item in seasons}:
+                    error = "The selected AFL season is not persisted."
+                elif error is None:
+                    report = SeasonCompletenessReporter(
+                        conn, database=get_db_path().name,
+                    ).report(selected_year)
+    finally:
+        conn.close()
+    return templates.TemplateResponse(
+        request=request, name="season_review.html",
+        context={"seasons": seasons, "selected_year": selected_year,
+                 "report": report, "error": error},
+        status_code=400 if error else 200,
+    )
 
 # Show table of player data
 @app.get("/table/{table_name}", response_class=HTMLResponse)

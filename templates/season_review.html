@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Season Review · Data · AFL API Admin{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <h1 class="h2">Season Review</h1>
+  <p class="text-muted mb-0">Read-only season completeness using the same report and semantics as <span class="technical">cli.py --report-afl-season</span>.</p>
+</div>
+
+<form method="get" class="card card-body mb-4" aria-label="Season selection">
+  <label for="season" class="form-label fw-semibold">Persisted AFL season</label>
+  <div class="d-flex gap-2 flex-wrap">
+    <select id="season" name="season" class="form-select" style="max-width: 28rem" required>
+      <option value="">Select a season</option>
+      {% for item in seasons %}
+      <option value="{{ item.year }}" {% if selected_year == item.year %}selected{% endif %}>{{ item.year }} — {{ item.name }}{% if item.is_current %} (current){% endif %}</option>
+      {% endfor %}
+    </select>
+    <button type="submit" class="btn btn-primary">Review</button>
+  </div>
+  {% if not seasons %}<div class="form-text">No persisted AFL seasons are available. This page never bootstraps one.</div>{% endif %}
+</form>
+
+{% if error %}<div class="alert alert-danger" role="alert">{{ error }}</div>{% endif %}
+{% if report %}
+<section aria-labelledby="summary-heading">
+  <div class="d-flex align-items-center gap-3 mb-3">
+    <h2 id="summary-heading" class="h4 mb-0">{{ report.metadata.season_name or report.metadata.requested_season_year }}</h2>
+    <span class="badge {% if report.status.value == 'complete' %}text-bg-success{% elif report.status.value == 'invalid' %}text-bg-danger{% else %}text-bg-warning{% endif %}">{{ report.status.value }}</span>
+    {% if report.metadata.is_current_season %}<span class="badge text-bg-primary">current season</span>{% endif %}
+  </div>
+  <dl class="row small">
+    <dt class="col-sm-3">Season identity</dt><dd class="col-sm-9 technical">{{ report.metadata.competition_season_id }} / {{ report.metadata.competition_season_provider_id }}</dd>
+    <dt class="col-sm-3">Generated</dt><dd class="col-sm-9">{{ report.metadata.generated_at }}</dd>
+  </dl>
+  <div class="row g-3 mb-4">
+    {% for severity, count in report.severity_counts.items() %}
+    <div class="col-6 col-md-3"><div class="card card-body"><div class="text-muted text-capitalize">{{ severity }} findings</div><div class="fs-3 fw-semibold">{{ count }}</div></div></div>
+    {% endfor %}
+    <div class="col-6 col-md-3"><div class="card card-body"><div class="text-muted">Total findings</div><div class="fs-3 fw-semibold">{{ report.findings|length }}</div></div></div>
+  </div>
+  <h3 class="h5">Report counts</h3>
+  <div class="table-responsive mb-4"><table class="table table-sm table-striped">
+    <tbody>{% for key, value in report.aggregates.items() %}<tr><th class="technical">{{ key }}</th><td>{% if value is mapping %}<span class="technical">{{ value|tojson }}</span>{% else %}{{ value }}{% endif %}</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+
+<section aria-labelledby="findings-heading">
+  <h2 id="findings-heading" class="h4">Findings</h2>
+  {% if report.findings %}
+  {% for domain, items in report.findings|groupby('domain') %}
+  <h3 class="h5 mt-4 text-capitalize">{{ domain }} <span class="badge text-bg-secondary">{{ items|length }}</span></h3>
+  <div class="table-responsive"><table class="table table-bordered bg-white">
+    <thead><tr><th>Severity</th><th>Check code</th><th>Identifiers</th><th>Finding</th><th>Evidence</th></tr></thead>
+    <tbody>{% for finding in items %}<tr>
+      <td><span class="badge {% if finding.severity.value == 'error' %}text-bg-danger{% elif finding.severity.value == 'warning' %}text-bg-warning{% else %}text-bg-info{% endif %}">{{ finding.severity.value }}</span></td>
+      <td class="technical">{{ finding.code }}</td>
+      <td class="technical">season={{ finding.season_id }}{% if finding.match_id is not none %}<br>match={{ finding.match_id }}{% endif %}{% if finding.team_id is not none %}<br>team={{ finding.team_id }}{% endif %}{% if finding.player_id is not none %}<br>player={{ finding.player_id }}{% endif %}</td>
+      <td>{{ finding.message }}{% if finding.expected is not none %}<div class="small"><strong>Expected:</strong> <span class="technical">{{ finding.expected|tojson }}</span></div>{% endif %}{% if finding.observed is not none %}<div class="small"><strong>Observed:</strong> <span class="technical">{{ finding.observed|tojson }}</span></div>{% endif %}</td>
+      <td class="technical">{{ finding.evidence_source or '—' }}</td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+  {% endfor %}
+  {% else %}<div class="alert alert-success">No findings. The shared report classifies this season as complete.</div>{% endif %}
+</section>
+{% else %}
+<div class="empty-state"><h2 class="h5">Choose a persisted season</h2><p class="text-muted mb-0">Reviewing is strictly observational: no collection, reconciliation, repair, or bootstrap runs.</p></div>
+{% endif %}
+{% endblock %}

@@ -17,6 +17,7 @@ for the reusable release summary and upgrade cautions.
 
 - [Administrator CSRF protection](admin_csrf.md)
 - [Admin manual scheduler triggers](admin_manual_triggers.md)
+- [Admin Season Review](admin_season_review.md)
 - [API key storage migration](api_key_migration.md)
 - [SQLite database migrations](database_migrations.md)
 - [Scheduler registry and restart recovery](scheduler_registry.md)

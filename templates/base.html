@@ -28,13 +28,19 @@
       <nav class="admin-nav nav flex-wrap gap-1" aria-label="Admin sections">
         <a class="nav-link {% if path == '/' %}active{% endif %}" href="/" {% if path == '/' %}aria-current="page"{% endif %}>Overview</a>
         <a class="nav-link {% if path.startswith('/schedule') or path.startswith('/scheduler') %}active{% endif %}" href="/schedule">Scheduling</a>
-        <a class="nav-link {% if path.startswith('/table') %}active{% endif %}" href="/tables">Data</a>
+        <a class="nav-link {% if path.startswith('/table') or path.startswith('/season-review') %}active{% endif %}" href="/tables">Data</a>
         <a class="nav-link {% if path.startswith('/logs') %}active{% endif %}" href="/logs">Logs &amp; diagnostics</a>
         <a class="nav-link {% if path.startswith('/setup') or path.startswith('/clubs-diff') %}active{% endif %}" href="/setup">System</a>
       </nav>
     </div>
   </header>
   <main class="container py-4">
+    {% if path.startswith('/table') or path.startswith('/season-review') %}
+    <nav class="nav nav-pills gap-2 mb-4" aria-label="Data views">
+      <a class="nav-link {% if path.startswith('/table') %}active{% endif %}" href="/tables">Tables</a>
+      <a class="nav-link {% if path.startswith('/season-review') %}active{% endif %}" href="/season-review">Season Review</a>
+    </nav>
+    {% endif %}
     {% block content %}{% endblock %}
   </main>
 </body>
