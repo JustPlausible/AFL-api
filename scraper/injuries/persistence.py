@@ -24,6 +24,21 @@ class InjuryPersistenceAdapter:
                 rows_resolved += 1
                 current_ids.add(record.afl_id)
                 source = record.source
+                # A changed source `updated` value inserts a new (afl_id, updated)
+                # row rather than updating one in place (see the ON CONFLICT
+                # below), so an earlier current row for this same, just-resolved
+                # player must be retired explicitly here -- otherwise both the
+                # stale and fresh row stay current=1, since the team/page-wide
+                # expiry below only ever looks at whole afl_id membership, not
+                # per-(afl_id, updated) rows. This is unconditional (not gated by
+                # the page-wide unresolved/ambiguous safety rule below) because
+                # it only ever touches this exact, just-resolved player's own
+                # prior rows, never another player's.
+                self._conn.execute(
+                    "UPDATE injuries SET current=0 WHERE afl_id=? AND current=1 "
+                    "AND (updated IS NULL OR updated<>?)",
+                    (record.afl_id, source.updated),
+                )
                 self._conn.execute("""
                     INSERT INTO injuries (
                         afl_id, club, player_name, injury, return_info, updated,

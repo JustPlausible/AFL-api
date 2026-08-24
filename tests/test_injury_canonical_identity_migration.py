@@ -135,3 +135,28 @@ def test_backfill_leaves_afl_provider_crosswalk_intact_when_only_club_resolves(t
     ).fetchone()
     assert row == (None, 12)
     conn.close()
+
+
+def test_backfill_does_not_fail_when_afl_teams_has_no_matching_row(tmp_path):
+    """A legacy database can have injury rows before afl_teams is bootstrapped.
+    canonical_team_id has a REFERENCES afl_teams(afl_id) foreign key and the
+    migration runner enables PRAGMA foreign_keys=ON, so backfilling a seeded
+    team id that afl_teams doesn't have yet must be skipped (left null)
+    rather than raising a FOREIGN KEY constraint failure (PR #214 review
+    finding)."""
+    db = tmp_path / "legacy.db"
+    _migrate_up_to_0021(tmp_path, db)
+    conn = sqlite3.connect(db)
+    conn.execute("PRAGMA foreign_keys=ON")
+    # Deliberately no afl_teams rows at all.
+    _insert_legacy_injury(conn, 777, "ADE", "No Team Row Yet")
+    conn.commit()
+
+    _run_0022(conn)  # must not raise sqlite3.IntegrityError
+    conn.commit()
+
+    row = conn.execute(
+        "SELECT canonical_player_id, canonical_team_id FROM injuries WHERE afl_id=777"
+    ).fetchone()
+    assert row == (None, None)
+    conn.close()

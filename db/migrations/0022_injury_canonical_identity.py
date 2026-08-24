@@ -17,7 +17,13 @@ Backfill is deliberately conservative and deterministic only:
 * ``canonical_team_id`` is backfilled from the persisted ``club`` code
   (already the canonical club code assigned by the resolver) using the
   committed club seed's ``teamId``, the same identifier space as
-  ``afl_teams.afl_id``. An unresolvable code is left ``NULL``.
+  ``afl_teams.afl_id``. An unresolvable code is left ``NULL``, and so is a
+  code whose seeded ``teamId`` has no matching ``afl_teams`` row yet -- the
+  column has a ``REFERENCES afl_teams(afl_id)`` foreign key and the
+  migration runner enables ``PRAGMA foreign_keys = ON``, so backfilling a
+  team id the database hasn't bootstrapped yet would fail the migration
+  outright on a database that has legacy injury rows without a populated
+  ``afl_teams`` table.
 
 Both lookups use only pure, already-validated data (``player_provider_ids``
 already in this connection's transaction, and the static committed club
@@ -51,6 +57,7 @@ def migrate(conn):
           ) = 1
     """)
 
+    existing_team_ids = {row[0] for row in conn.execute("SELECT afl_id FROM afl_teams").fetchall()}
     team_id_by_code = {club["code"]: club["teamId"] for club in load_club_seed()}
     club_codes = [
         row[0] for row in conn.execute(
@@ -59,7 +66,7 @@ def migrate(conn):
     ]
     for code in club_codes:
         team_id = team_id_by_code.get(code)
-        if team_id is None:
+        if team_id is None or team_id not in existing_team_ids:
             continue
         conn.execute(
             "UPDATE injuries SET canonical_team_id = ? WHERE club = ? AND canonical_team_id IS NULL",

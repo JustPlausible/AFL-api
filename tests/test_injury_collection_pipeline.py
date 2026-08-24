@@ -208,8 +208,11 @@ def test_observed_team_with_zero_rows_is_authoritative_empty(tmp_path):
 
 def test_observed_team_expires_player_no_longer_listed_but_keeps_others_current(tmp_path):
     conn = _database(tmp_path)
-    _seed_current(conn, 902, "Still Injured", "ADE", 1, 902)
-    _seed_current(conn, 903, "Now Fit", "ADE", 1, 903)
+    # Same `updated` text as the incoming resolved record below: this test is
+    # about roster-membership expiry, not the separate changed-updated-text
+    # behaviour covered by test_changed_updated_text_retires_the_stale_row_...
+    _seed_current(conn, 902, "Still Injured", "ADE", 1, 902, updated="Today")
+    _seed_current(conn, 903, "Now Fit", "ADE", 1, 903, updated="Today")
     resolved = InjuryResolutionResult(
         (_player_row("Still Injured", 902, "ADE", 1),),
         observed_teams=(ResolvedTeamCoverage(0, "resolved", "ADE", 1, 1),),
@@ -264,6 +267,26 @@ def test_ambiguous_identity_anywhere_blocks_all_expiry_even_for_observed_teams(t
     result = InjuryPersistenceAdapter(conn).persist(resolved, _document())
     assert result.status == "partial"
     assert conn.execute("SELECT current FROM injuries WHERE afl_id=910").fetchone() == (1,)
+    conn.close()
+
+
+def test_changed_updated_text_retires_the_stale_row_for_the_same_player(tmp_path):
+    """A player still listed but whose source `Updated:` text changed must not
+    leave two current=1 rows for the same afl_id (PR #214 review finding)."""
+    conn = _database(tmp_path)
+    _seed_current(conn, 913, "Still Injured", "ADE", 1, 913, updated="July 28, 2026")
+    resolved = InjuryResolutionResult(
+        (ResolvedInjuryRecord(
+            ParsedInjuryRecord("Still Injured", "Knee", "1 week", "August 18, 2026", "x", "ADE"),
+            "resolved", "ADE", 913, 913, canonical_team_id=1,
+        ),),
+        observed_teams=(ResolvedTeamCoverage(0, "resolved", "ADE", 1, 1),),
+    )
+    InjuryPersistenceAdapter(conn).persist(resolved, _document())
+    rows = conn.execute(
+        "SELECT updated, current FROM injuries WHERE afl_id=913 ORDER BY updated"
+    ).fetchall()
+    assert rows == [("August 18, 2026", 1), ("July 28, 2026", 0)]
     conn.close()
 
 
