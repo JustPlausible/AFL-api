@@ -3,6 +3,19 @@
 **Attempted:** 2026-08-24<br>
 **Outcome:** Live capture blocked; no new fixture added.
 
+**Superseded 2026-08-25:** an operator with unrestricted network access
+captured the exact evidence the "Required follow-up" section below asked
+for -- a paired plain HTTP + browser-rendered capture of the same 10-team
+finals page -- and added it directly to PR #214 at
+`docs/investigation/afl-json/samples/injuries/`. Running the unchanged
+`parse_injuries_html()` over both showed they are materially equivalent, and
+injury acquisition now uses plain HTTP (Playwright removed). See
+`docs/architecture/injury_collector_pipeline.md`'s "Acquisition decision:
+Playwright replaced by plain HTTP" section for the full analysis. This
+document is retained unmodified below as the historical record of why the
+comparison could not be completed from this repository's own execution
+environment.
+
 ## Why this capture was attempted
 
 As of 2026-08-24, `https://www.afl.com.au/matches/injury-list` is reported to

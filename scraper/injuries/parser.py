@@ -28,11 +28,26 @@ def parse_injuries_html(html: str) -> InjuryParseResult:
         if not image or not image.get("src"):
             raise ValueError(f"Injury team block {index} is missing its commented promo image")
         wrapper = block.find_next_sibling()
-        if wrapper and "table" not in wrapper.get("class", []):
-            wrapper = None
-        table = wrapper.find("table") if wrapper else None
+        if wrapper is not None and wrapper.name == "table":
+            table = wrapper
+        elif wrapper is not None and "table" in wrapper.get("class", []):
+            table = wrapper.find("table")
+        else:
+            table = None
         if table is None:
-            raise ValueError(f"Injury team block {index} is missing its table")
+            # Real production pages have been observed to append a trailing,
+            # non-team promotional widget that reuses this same team-block
+            # markup (commented promo image included) but has no following
+            # table at all -- e.g. a "Play Pack & Play" house ad appended
+            # after the last real team section. Treat a block with no table
+            # as non-team content rather than a structural break, since every
+            # genuine team block observed live does have one.
+            diagnostics.append(InjuryParserDiagnostic(
+                "non_team_widget_skipped",
+                "Team block has no following table; treated as non-team content",
+                index,
+            ))
+            continue
         updated = ""
         player_rows = []
         for row_index, row in enumerate(table.find_all("tr")[1:], start=1):
@@ -72,4 +87,4 @@ def parse_injuries_html(html: str) -> InjuryParseResult:
                 club_image_src=image["src"],
                 club_image_alt=image.get("alt", "").strip(),
             ))
-    return InjuryParseResult(tuple(records), len(blocks), tuple(diagnostics), tuple(teams))
+    return InjuryParseResult(tuple(records), len(teams), tuple(diagnostics), tuple(teams))

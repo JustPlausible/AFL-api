@@ -2,15 +2,25 @@
 
 **Repository revision investigated:** `6c738e6`<br>
 **Last verified:** 2026-08-01<br>
-**Injuries domain re-attempted:** 2026-08-24 (Issue #213) -- live capture and
-the requested plain-HTTP-vs-Playwright comparison were blocked by this
-environment's egress policy before any origin response, identically to the
-2026-07-28 finding below. No conclusion in this document changed as a result;
-see `docs/investigation/afl_injury_finals_evidence_capture_2026-08-24.md` for
-the full record and required live-network follow-up. Separately, Issue #213
-also fixed the injuries persistence layer so that a team omitted from the
-page is no longer treated as "confirmed zero injuries" -- see
-`docs/architecture/injury_collector_pipeline.md`.<br>
+**Injuries domain updated:** 2026-08-25 (Issue #213) -- this document's
+Injuries conclusions below (marked "Playwright HTML required / Further
+investigation required") are now **superseded**. A repeat live-capture
+attempt from this repository's own execution environment on 2026-08-24 was
+blocked by its own egress policy before any origin response, identically to
+the 2026-07-28 finding recorded below (see
+`docs/investigation/afl_injury_finals_evidence_capture_2026-08-24.md`). A
+paired live capture obtained the following day (2026-08-25) from an
+unrestricted network -- one plain HTTP response, one browser-rendered DOM of
+the same 10-team finals page, added to PR #214 under
+`docs/investigation/afl-json/samples/injuries/` -- showed the unchanged
+injury parser produces materially identical output from both, with no
+JavaScript execution required. **Injury acquisition now uses plain HTTP;
+Playwright has been removed from `scraper/injuries/acquisition.py`.** See
+`docs/architecture/injury_collector_pipeline.md`'s "Acquisition decision:
+Playwright replaced by plain HTTP" section for the full evidence and the two
+real-markup parser fixes it also revealed. Separately, Issue #213 fixed the
+injuries persistence layer so that a team omitted from the page is no longer
+treated as "confirmed zero injuries" -- see the same architecture doc.<br>
 **Scope:** documentation and investigation only; no runtime scraper, selector,
 model, schema, scheduler, Admin action, or acquisition-routing change is made here.
 
@@ -201,13 +211,18 @@ the downstream database necessarily accepts every shape.
   `scraper/scrape_afl_injuries.py` remain compatibility entry points.
 * **URL/example:** fixed
   `https://www.afl.com.au/matches/injury-list`.
-* **Fetch/parser:** `InjuryAcquirer` alone uses Playwright and returns raw HTML
-  plus metadata. Pure `scraper.injuries.parser.parse_injuries_html` uses
-  Beautiful Soup over supplied content; identity matching occurs later.
+* **Fetch/parser:** `InjuryAcquirer` uses plain HTTP (`utils.http_utils.ScraperHttpClient`;
+  Playwright removed 2026-08-25, see below) and returns raw HTML plus metadata.
+  Pure `scraper.injuries.parser.parse_injuries_html` uses Beautiful Soup over
+  supplied content; identity matching occurs later.
 * **Selectors/data:** `INJURY_SELECTORS.ARTICLE_BODY`, `.TEAM_BLOCKS`, and
   `.PROMO_IMAGE_CLASS`; additionally, the parser contract uses a commented promo
-  image, its `src`/`alt`, the following sibling `div.table`, `table`, header row,
-  and rows of at least three `td` cells. No JSON/hydration is consumed.
+  image, its `src`/`alt`, the following sibling table -- either a bare `<table>`
+  (the plain-HTTP shape) or a wrapping `div.table` (the rendered-DOM shape) --
+  header row, and rows of at least three `td` cells. A trailing
+  `articleWidget full-width` block with no following table (observed live as a
+  non-team house-ad widget) is recognised and excluded rather than raised as a
+  structural break. No JSON/hydration is consumed.
 * **Output:** typed acquisition, parse, resolution, persistence and collection
   results preserve raw source values and report parsed, resolved, persisted,
   unresolved and ambiguous counts.
@@ -215,15 +230,22 @@ the downstream database necessarily accepts every shape.
   one-cell row supplies optional update text. Missing/unmatched club image,
   missing sibling/table, short row, or unmatched player produces partial output,
   not a whole-page exception.
-* **Requirements/coverage:** Playwright is the safest current method because the
-  parser waits for rendered `ARTICLE_BODY` and no maintained structured injury
-  endpoint exists. No auth. Acquisition is mock-tested; parsing uses offline
-  rendered fixtures; resolution/persistence and unified CLI/Scheduler/Admin
-  policy dispatch are deterministic tests. Orchestration owns audit state.
-* **Fragility/risk/verified:** club identity hidden in an HTML comment/image,
-  sibling adjacency, unvalidated headings/order (`name`, injury description,
-  return estimate), Indigenous Round names/logos, and editorial redesign.
-  Repository verified 2026-07-28; live HTML blocked.
+* **Requirements/coverage:** plain HTTP is now the acquisition method
+  (Playwright removed 2026-08-25); a paired live capture of the same page
+  (`docs/investigation/afl-json/samples/injuries/`) proved the plain HTTP
+  response already contains the complete parser contract, with no maintained
+  structured injury endpoint still needed as an alternative. No auth.
+  Acquisition is mock-tested against an injectable HTTP client; parsing uses
+  offline rendered fixtures plus the real 2026-08-25 capture pair;
+  resolution/persistence and unified CLI/Scheduler/Admin policy dispatch are
+  deterministic tests. Orchestration owns audit state.
+* **Fragility/risk/verified:** club identity hidden in an HTML comment/image
+  (and, per the 2026-08-25 capture, `alt` text is now empty in practice --
+  identity resolves from the image filename), sibling adjacency (two accepted
+  shapes, see above), unvalidated headings/order (`name`, injury description,
+  return estimate), a trailing non-team promotional widget sharing team-block
+  markup, Indigenous Round names/logos, and editorial redesign. Repository
+  verified 2026-07-28 (blocked); re-verified live 2026-08-25 (see above).
 
 #### Clubs / club squads and players
 
@@ -408,13 +430,15 @@ be captured.
   `teamPlayers` relationships, and late-change timing remain marked unverified in
   `ENDPOINTS`; HTML and CFS outputs also use different identifiers/position
   semantics. Therefore migration/fallback eligibility needs parity work first.
-* **Injuries:** **Investigation incomplete.** Checked: maintained endpoint
-  contracts, all `afl_json` collectors, repository docs/tests, and attempted
-  initial HTML. No public AFL JSON, CFS collector, REST, embedded JSON, hydration
-  or GraphQL injury contract is maintained in the repository; external HTML was
-  proxy-blocked before inspection. Unknown: whether the live page calls a stable,
-  documented structured service or delivers usable initial HTML. Safest current
-  method is the existing Playwright HTML path.
+* **Injuries:** **Resolved 2026-08-25.** A paired live capture (plain HTTP +
+  browser-rendered DOM) of the same finals-window page proved the plain HTTP
+  response alone satisfies the full parser contract -- see
+  `docs/architecture/injury_collector_pipeline.md`. Acquisition now uses
+  plain HTTP; Playwright has been removed from `scraper/injuries/acquisition.py`.
+  No public AFL JSON, CFS collector, REST, embedded JSON, hydration or GraphQL
+  injury contract is maintained in the repository, and the initial editorial
+  HTML remains the source -- the resolution was about acquisition method
+  (HTTP vs. browser), not about switching to a different source.
 * **Club squads/players:** CFS season players plus public player ID map provide a
   stronger maintained structured identity/season-listing source; public teams
   cover club/team metadata. Squad HTML may still provide editorial name, jumper,
@@ -450,7 +474,7 @@ to the recommendation; the current method column separately records reality.
 | Match metadata/details | Public JSON | Plain HTTP JSON | Public matches/match detail | **Public JSON** | Fixture HTML | Explicit legacy diagnostics only; no automatic fallback | No | No | High | `SOURCE_POLICY`, normalisers, bootstrap and fixtures/tests | Compare start/status/score and special-round behavior |
 | Match status | Public match-detail JSON | Plain HTTP JSON | Public match detail | **Public JSON** | Fixture HTML | Explicit manual diagnostic only; no automatic fallback | No | No | High | `SOURCE_POLICY`, monotonic status reconciler and tests | Unify HTML vocabulary including postponed/cancelled |
 | Operational lineups/team selections | Team-lineups HTML | Interactive Playwright HTML | Authenticated CFS match rosters | **Playwright HTML intentionally selected for persistence** | None | Not a fallback; CFS roster collection is a separate read-only CLI path | No for operational HTML; yes for CFS diagnostic | Yes for operational path | Medium | `SOURCE_POLICY`, scheduler/Admin routing and persistence tests | Map IDs, positions and late changes before canonical CFS persistence |
-| Injuries | Injury-list article | Playwright HTML | None maintained | **Playwright HTML required** / **Further investigation required** | None identified | Not applicable | No known | Yes, safest current | Medium-low | Only active implementation waits for rendered article; live inspection blocked | Capture safe network evidence and add empty/partial fixtures |
+| Injuries | Injury-list article | Plain HTTP (Playwright removed 2026-08-25) | None maintained | **Plain HTTP** | None | Not applicable | No known | No, disproven 2026-08-25 | High | Real paired live capture: `docs/investigation/afl-json/samples/injuries/`, parsed identically by `parse_injuries_html()` | 10-team finals-window fixture pair now captured; further live capture only needed if the page's markup contract changes again |
 | Season players / player IDs | CFS season players + public ID map during CLI bootstrap | Plain authenticated/public JSON | Same implemented sources | **CFS season players plus public ID map** | Squad/leader HTML | Separate enrichment/historical-gap tools only; no automatic fallback | Yes for season list | No for canonical bootstrap | High for identity; medium enrichment | Persistence adapter, bootstrap and crosswalk tests | Keep enrichment parity distinct from canonical persistence |
 | Leaderboard totals/averages export | Stats leaders HTML (manual only) | Interactive Playwright HTML | None with proven field parity | **Playwright HTML required** / **Further investigation required** | None | Manual diagnostic/export only | No known | Yes currently | Low | Repository parser only; no fixture/live response | Investigate maintained stats endpoint; add heading fixture |
 | Operational match player statistics | Authenticated CFS player stats | Plain authenticated JSON | Same implemented source | **Authenticated CFS JSON** | None | No automatic fallback; persists `cfs_player_stats` | Yes | No | High | `SOURCE_POLICY`, Scheduler/Admin/CLI routing and persistence tests | Reconcile the parallel models separately |

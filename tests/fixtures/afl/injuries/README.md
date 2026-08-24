@@ -8,22 +8,33 @@ temporary but important real-world evidence for partial source coverage: a
 team's absence from the page must never be treated as "that team has zero
 injuries" (see `docs/architecture/injury_collector_pipeline.md`).
 
-**No fixture for this specific 10-team finals state is committed here.** A
-live capture was attempted on 2026-08-24 and was blocked by this execution
-environment's own network policy before any origin response -- see
-`docs/investigation/afl_injury_finals_evidence_capture_2026-08-24.md` for the
-full record. Per repository policy, fixture structure for a state that could
-not actually be observed was not fabricated. An operator with unrestricted
-network access should still capture this state (rendered + plain HTTP, per
-that investigation doc) before the finals conclude and the page reverts to an
-18-team state.
+**Update (2026-08-25):** a live capture of this exact 10-team finals state
+was obtained by an operator with unrestricted network access and added to
+this PR at
+`docs/investigation/afl-json/samples/injuries/injury_list_2026_finals_10teams_http_2026-08-25.html`
+and `..._rendered_2026-08-25.html` (with its own `README.md` recording the
+10 manually-observed teams: Adelaide, Brisbane, Carlton, Collingwood,
+Fremantle, Geelong, Hawthorn, Melbourne, Sydney and Western Bulldogs). This
+supersedes the note below about a live capture attempt from this
+repository's own execution environment being blocked on 2026-08-24 (see
+`docs/investigation/afl_injury_finals_evidence_capture_2026-08-24.md` for
+that record) -- that attempt's conclusion no longer holds now that real
+evidence exists. `tests/test_injury_collection_pipeline.py`'s
+`test_real_2026_finals_capture_pair_parses_identically_from_http_and_rendered`
+exercises the real captures directly, and
+`injuries_2026_finals_bare_table_and_trailing_widget.html` (in
+`tests/fixtures/afl_sources/html_rendered/`) is a small fixture derived from
+them for fast, standalone regression coverage of the two real-markup shapes
+that capture revealed (a bare `<table>` sibling with no `div.table` wrapper,
+and a trailing non-team promotional widget). See
+`docs/architecture/injury_collector_pipeline.md`'s "Acquisition decision:
+Playwright replaced by plain HTTP" section for the full analysis --
+acquisition now uses plain HTTP, not Playwright.
 
-The closest committed evidence for the "team present with zero rows" half of
-this boundary case is
+The pre-existing committed evidence for the "team present with zero rows"
+half of this boundary case remains
 `tests/fixtures/afl_sources/html_rendered/injuries_round_21_populated.html`,
-which already has one team with a listed row and one team with a table but no
-rows. It does not, however, demonstrate a team missing from the page
-entirely -- only a live finals-window capture can.
+which has one team with a listed row and one team with a table but no rows.
 
 ## Purpose
 

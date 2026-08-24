@@ -15,52 +15,47 @@ from scraper.injuries.models import (
 from scraper.injuries.orchestration import collect_injuries
 from scraper.injuries.parser import parse_injuries_html
 from scraper.injuries.persistence import InjuryPersistenceAdapter
-from scraper.injuries.resolution import InjuryResolver
+from scraper.injuries.resolution import InjuryResolver, resolve_source_club
 
 FIXTURE = Path("tests/fixtures/afl_sources/html_rendered/injuries_round_21_populated.html")
 
 
-class _Page:
-    def __init__(self, html, error=None): self.html, self.error = html, error
-    def goto(self, url, timeout):
-        assert (url, timeout) == (INJURY_URL, 60_000)
-        if self.error: raise self.error
-    def wait_for_selector(self, selector, timeout): assert timeout == 15_000
-    def content(self): return self.html
+class _Response:
+    def __init__(self, text): self.text = text
 
 
-class _Browser:
-    def __init__(self, page): self.page, self.closed = page, False
-    def new_page(self): return self.page
-    def close(self): self.closed = True
+class _HttpClient:
+    """Stub for utils.http_utils.ScraperHttpClient's relevant surface."""
+
+    def __init__(self, response=None, error=None):
+        self.response, self.error = response, error
+        self.calls = []
+
+    def get(self, url, timeout=None):
+        self.calls.append((url, timeout))
+        if self.error:
+            raise self.error
+        return self.response
 
 
-class _Playwright:
-    def __init__(self, browser):
-        self.chromium = type("Chromium", (), {"launch": lambda _, **kwargs: browser})()
-    def __enter__(self): return self
-    def __exit__(self, *_): pass
-
-
-def test_acquisition_returns_document_and_closes_browser_without_downstream_work():
-    browser = _Browser(_Page(FIXTURE.read_text()))
-    document = InjuryAcquirer(lambda: _Playwright(browser)).acquire()
+def test_acquisition_returns_document_over_plain_http_without_a_browser():
+    client = _HttpClient(_Response(FIXTURE.read_text()))
+    document = InjuryAcquirer(client).acquire()
     assert document.source_url == INJURY_URL
     assert "Jordan Example" in document.html
     assert document.acquired_at and document.elapsed_ms >= 0
-    assert browser.closed
+    assert client.calls == [(INJURY_URL, None)]
 
 
-def test_acquisition_navigation_failure_closes_browser():
-    browser = _Browser(_Page("", RuntimeError("navigation failed")))
-    with pytest.raises(RuntimeError, match="navigation failed"):
-        InjuryAcquirer(lambda: _Playwright(browser)).acquire()
-    assert browser.closed
+def test_acquisition_propagates_http_failure():
+    client = _HttpClient(error=RuntimeError("request failed"))
+    with pytest.raises(RuntimeError, match="request failed"):
+        InjuryAcquirer(client).acquire()
 
 
 def test_acquisition_rejects_missing_required_content():
     with pytest.raises(ValueError, match="required article content"):
-        InjuryAcquirer(lambda: _Playwright(_Browser(_Page("<html/>")))).acquire()
+        InjuryAcquirer(_HttpClient(_Response("<html/>"))).acquire()
 
 
 def test_pure_parser_reports_counts_raw_markers_and_optional_diagnostic():
@@ -84,6 +79,69 @@ def test_pure_parser_records_team_coverage_including_zero_row_block():
     adelaide, carlton = parsed.teams
     assert (adelaide.team_index, adelaide.row_count, adelaide.club_image_alt) == (0, 1, "Adelaide Crows")
     assert (carlton.team_index, carlton.row_count, carlton.club_image_alt) == (1, 0, "Carlton")
+
+
+FINALS_STRUCTURE_FIXTURE = Path(
+    "tests/fixtures/afl_sources/html_rendered/injuries_2026_finals_bare_table_and_trailing_widget.html"
+)
+
+
+def test_pure_parser_accepts_a_bare_table_sibling_and_skips_a_trailing_non_team_widget():
+    """Derived from the real 2026-08-25 finals-window capture pair (Issue #213):
+
+    the live page's plain-HTTP table sibling is a bare ``<table>`` (no
+    wrapping ``div.table``, unlike the earlier golden fixture), and the page
+    appends one trailing non-team promotional widget sharing the exact same
+    ``articleWidget full-width`` + commented-image markup as a real team
+    block, but with no following table at all. The parser must accept the
+    bare-table shape and treat the untabled trailing widget as non-team
+    content rather than raising.
+    """
+    parsed = parse_injuries_html(FINALS_STRUCTURE_FIXTURE.read_text())
+    assert parsed.team_count == 2
+    assert len(parsed.teams) == 2
+    assert [team.row_count for team in parsed.teams] == [1, 0]
+    assert parsed.records[0].player_name == "Hugh Bond"
+    assert [(d.code, d.team_index) for d in parsed.diagnostics] == [
+        ("missing_optional_updated", 1), ("non_team_widget_skipped", 2),
+    ]
+
+
+REAL_CAPTURE_DIR = Path("docs/investigation/afl-json/samples/injuries")
+REAL_CAPTURE_HTTP = REAL_CAPTURE_DIR / "injury_list_2026_finals_10teams_http_2026-08-25.html"
+REAL_CAPTURE_RENDERED = REAL_CAPTURE_DIR / "injury_list_2026_finals_10teams_rendered_2026-08-25.html"
+FINALS_OBSERVED_TEAMS = [
+    "ADE", "BRI", "CAR", "COL", "FRE", "GEE", "HAW", "MEL", "SYD", "WBD",
+]
+
+
+def test_real_2026_finals_capture_pair_parses_identically_from_http_and_rendered():
+    """Direct evidence for the acquisition decision (Issue #213): the parser,
+    unchanged between acquisition methods, produces materially identical
+    output from the plain-HTTP and browser-rendered captures of the same
+    live 10-team finals page -- proving plain HTTP alone satisfies the full
+    parser contract with no browser execution required."""
+    http_parsed = parse_injuries_html(REAL_CAPTURE_HTTP.read_text(encoding="utf-8"))
+    rendered_parsed = parse_injuries_html(REAL_CAPTURE_RENDERED.read_text(encoding="utf-8"))
+
+    for parsed in (http_parsed, rendered_parsed):
+        assert parsed.team_count == 10
+        assert [d.code for d in parsed.diagnostics] == ["non_team_widget_skipped"]
+        resolved_codes = [
+            resolve_source_club(team.club_image_src, team.club_image_alt)["code"]
+            for team in parsed.teams
+        ]
+        assert resolved_codes == FINALS_OBSERVED_TEAMS
+
+    def normalised(records):
+        return [
+            (r.player_name, r.injury, r.estimated_return, r.updated,
+             r.club_image_src.rsplit("/", 1)[-1].split("?", 1)[0])
+            for r in records
+        ]
+
+    assert len(http_parsed.records) == len(rendered_parsed.records) == 80
+    assert normalised(http_parsed.records) == normalised(rendered_parsed.records)
 
 
 def _club_stub(mapping):

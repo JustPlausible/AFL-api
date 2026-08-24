@@ -12,7 +12,7 @@ InjuryAcquirer -> parse_injuries_html -> InjuryResolver
 
 | Stage | Module | Input | Output and responsibility |
 | --- | --- | --- | --- |
-| Acquisition | `scraper/injuries/acquisition.py` | URL/selectors and timeout configuration | `InjurySourceDocument`: raw HTML, source URL, UTC acquisition time and elapsed milliseconds. This adapter alone imports Playwright and owns browser startup, navigation, waiting and cleanup. |
+| Acquisition | `scraper/injuries/acquisition.py` | URL and an injectable `utils.http_utils.ScraperHttpClient` | `InjurySourceDocument`: raw HTML, source URL, UTC acquisition time and elapsed milliseconds. Plain HTTP only (Playwright removed 2026-08-25; see below) -- this adapter owns the request/retry policy already shared by `utils/http_utils.py` and no other stage performs I/O. |
 | Parsing | `scraper/injuries/parser.py` | Caller-supplied raw HTML | `InjuryParseResult` containing raw `ParsedInjuryRecord` values, team count, parser diagnostics, and `teams`: one `ParsedTeamBlock` per recognised team block, **including blocks with zero player rows**. This is what makes a team's observed coverage explicit and independent of whether it happened to have any rows. It performs no I/O or identity lookup. |
 | Resolution | `scraper/injuries/resolution.py` | Parsed records plus the canonical repository connection | `InjuryResolutionResult` with explicit resolved, unresolved or ambiguous records and diagnostics, plus `observed_teams`: one `ResolvedTeamCoverage` per parsed team block, each carrying the resolved canonical `team_id` (from the same canonical club seed used elsewhere) when its club marker itself resolves, or `status="unresolved"` when it does not. Club artwork/alt markers use shared canonical club data; players use the existing club-scoped `CanonicalInjuryPlayerResolver`, which also supplies `canonical_player_id` on each resolved record. |
 | Persistence | `scraper/injuries/persistence.py` | Resolved records, observed-team coverage, and source metadata | `InjuryPersistenceResult` counts, status, and `teams_observed`. It owns commit/rollback, skips unsafe identities, persists `canonical_player_id`/`canonical_team_id` on every resolved row, and scopes expiry to observed-team authority (see below) rather than whole-page authority. |
@@ -102,26 +102,91 @@ operator later distinguish "this team had zero injuries this run" from "this
 team was not on the page at all" without re-deriving it from the `injuries`
 table's `current` flags alone.
 
-## Acquisition decision: Playwright retained (re-affirmed 2026-08-24)
+## Acquisition decision: Playwright replaced by plain HTTP (2026-08-25)
 
-The maintained contract is the rendered `article__body` and its editorial
-tables. Repository investigation has not identified a maintained public AFL or
-CFS JSON injury resource with equivalent data, so changing to plain HTTP would
-risk incomplete markup. Playwright remains isolated in a replaceable adapter.
+**Playwright has been removed from injury acquisition.** `InjuryAcquirer`
+(`scraper/injuries/acquisition.py`) now fetches the page with the
+repository's existing `utils.http_utils.ScraperHttpClient` -- ordinary HTTP,
+no browser.
 
-Issue #213 asked that this decision be re-tested by fetching the live page
-directly (plain HTTP vs. Playwright vs. any structured source) before
-concluding. That comparison was attempted on 2026-08-24 and was blocked
-identically to the prior 2026-07-28 investigation: this execution
-environment's own network egress policy refuses `www.afl.com.au` outright
-(`403`/`EGRESS_BLOCKED`) before any origin response -- HTTP or
-browser-rendered -- can be observed. See
-`docs/investigation/afl_injury_finals_evidence_capture_2026-08-24.md` for the
-full record of that attempt. Because no live response was obtainable by
-either method, this decision is **unchanged, not re-confirmed**: Playwright
-is retained because parity could not be tested, not because it was proven
-necessary. Re-running the comparison from an unrestricted network remains
-required follow-up work before this conclusion can be revisited.
+This reverses the acquisition decision recorded here and in
+`docs/scraper_source_inventory.md` as of 2026-08-24, on direct fixture-backed
+evidence. Two attempts preceded this:
+
+1. **2026-07-28 investigation:** live inspection was blocked before any
+   origin response.
+2. **2026-08-24 (this repository's own execution environment):** a repeat
+   attempt was blocked identically by this sandbox's own egress policy
+   (`403`/`EGRESS_BLOCKED`) -- see
+   `docs/investigation/afl_injury_finals_evidence_capture_2026-08-24.md`.
+   Playwright was retained at that point because parity could not be tested,
+   not because it had been proven necessary.
+3. **2026-08-25 (operator capture, outside this sandbox):** a paired live
+   capture of the same finals-window page -- one plain HTTP response, one
+   browser-rendered DOM, both dated 2026-08-25 -- was added directly to this
+   PR (`docs/investigation/afl-json/samples/injuries/`, with its own
+   `README.md` recording the 10 manually-observed teams: Adelaide, Brisbane,
+   Carlton, Collingwood, Fremantle, Geelong, Hawthorn, Melbourne, Sydney and
+   Western Bulldogs).
+
+Running the unchanged `parse_injuries_html()` over both 2026-08-25 captures
+(`tests/test_injury_collection_pipeline.py::test_real_2026_finals_capture_pair_parses_identically_from_http_and_rendered`)
+shows they are materially equivalent:
+
+* both recognise exactly 10 team blocks, resolving to exactly the 10 clubs
+  the README records (independently, via the parser + `resolve_source_club`,
+  with no reference to the README's list);
+* both yield exactly 80 player rows with identical `player_name`, `injury`,
+  `estimated_return` and `updated` values per row, and matching club image
+  identity (only the responsive-image `width=` query parameter differs);
+* both correctly produce a `non_team_widget_skipped` diagnostic for one
+  trailing non-team promotional widget (see below) -- not a data gap.
+
+The plain HTTP response therefore already contains the complete parser
+contract -- every team block, club marker, player/injury/return row, and
+`Updated:` text -- with no JavaScript execution. The only structural
+difference between the two captures is cosmetic: the browser-rendered DOM
+wraps each team's `<table>` in a `<div class="table">`, while the raw HTTP
+response's table is a bare sibling `<table>` with no wrapper. The parser was
+updated to accept both shapes (see below), which is what made this
+comparison possible in the first place.
+
+### Real-evidence-driven parser fixes (Issue #213)
+
+The 2026-08-25 captures also exposed two genuine parser contract gaps,
+present identically in both acquisition methods (not an HTTP-vs-Playwright
+difference):
+
+1. **Bare `<table>` sibling.** The parser previously required the team
+   block's next sibling to be a `<div class="table">` wrapper containing the
+   table. The plain HTTP response's sibling is the `<table>` element itself.
+   The parser now accepts either shape.
+2. **Trailing non-team widget.** The live page appends one additional
+   `div.articleWidget.full-width` after the last real team block -- a house
+   ad ("Play Pack & Play") that reuses the identical commented-promo-image
+   markup as a team block, but has no following table at all. The parser
+   previously raised `ValueError` for any matched block with no table,
+   which would have made the entire page unparseable. It now records a
+   `non_team_widget_skipped` diagnostic and excludes that block from
+   `teams`/`team_count`, rather than treating it as a structural break.
+   Every genuine team block observed live does have a table, so a missing
+   table is now treated as "this matched element is not a team block", not
+   as evidence of a broken contract elsewhere on the page.
+
+Both are covered by a small derived fixture,
+`tests/fixtures/afl_sources/html_rendered/injuries_2026_finals_bare_table_and_trailing_widget.html`,
+independent of the large real captures, plus the real-capture-pair test
+above.
+
+### What was not changed
+
+The parser and resolver remain acquisition-technology-independent, as
+before -- `InjuryAcquirer`'s replacement required no change to
+`parse_injuries_html`'s public contract (only bug fixes to match real
+markup), `InjuryResolver`, `InjuryPersistenceAdapter`, or
+`collect_injuries()`'s orchestration. `requirements.txt`'s `playwright`
+dependency is unchanged: other collectors (fixtures, matches, lineups,
+player stats) still use it and are out of scope for this issue.
 
 ## Reference pattern for future collectors
 
