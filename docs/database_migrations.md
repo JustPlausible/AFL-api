@@ -80,6 +80,20 @@ The tables are deliberately not migrated into one another. Their distinct keys,
 provenance, authority, and future-migration requirements are defined by the
 [player-stat storage contract](architecture/player_stats_storage_contract.md).
 
+`persist_player_seasons` (`afl_json/player_persistence.py`) is the sole write
+path for `competition_season_players`, used identically by season bootstrap
+and season refresh/sync (`afl_json/season_sync.py`). An update remains scoped
+to one `(player_id, competition_season_id)` row and never touches another
+season. Within that row, an incoming snapshot whose team cannot be resolved
+(missing field, or a provider team identifier not yet mapped through
+`afl_team_seasons`/`afl_teams`) preserves the row's existing `team_id` rather
+than overwriting it with `NULL`, since Champion Data's season-player listing
+has no explicit team-removal signal distinguishable from an incomplete
+observation (Issue #210). A snapshot that resolves to a different canonical
+team still replaces the stored `team_id`. See
+[the canonical player API doc](api_v1_players.md#same-season-membership-update-semantics-issue-210)
+for the full rule and its documented limitation.
+
 ## Creating a migration
 
 1. Add `db/migrations/NNNN_short_description.py` with the next identifier.

@@ -315,3 +315,38 @@ that season is simply absent from `seasons` — it is not synthesised, and it
 is not distinguishable from "the player did not exist yet" beyond the season
 itself already being listed (or not) on `GET /api/v1/seasons`. This endpoint
 never infers a membership that collection did not observe.
+
+### Same-season membership update semantics (Issue #210)
+
+`competition_season_players` has one row per `(player_id, competition_season_id)`
+(the isolation behaviour above, unchanged since PR #207/#182). Within that
+one row, a later collection pass for the *same* season can still change
+`team_id`. `persist_player_seasons` (`afl_json/player_persistence.py`)
+applies this update rule:
+
+* an incoming snapshot whose team **resolves** to a canonical team (whether
+  matching the stored team or a different one) always replaces the stored
+  `team_id` — a legitimate same-season club change is not blocked;
+* an incoming snapshot whose team is **unresolved** — the provider's `team`
+  field was absent, or its team identifier does not (yet) map through
+  `afl_team_seasons`/`afl_teams` — preserves the row's existing `team_id`
+  instead of clearing it to `null`. Champion Data's season-player listing has
+  no explicit removal/lifecycle field, so an unresolved observation is
+  treated as "this pass carries no team information", not as evidence the
+  player lost their team;
+* when there is no existing row (or its `team_id` is already `null`), an
+  unresolved incoming snapshot still persists as `team_id: null` — there is
+  nothing to preserve.
+
+A provider team identifier that is present but fails canonical resolution is
+still counted separately from a fully absent field via the persistence
+summary's `missing_team_links` counter, so that data-quality reporting is
+not hidden by this behaviour even when the stored `team_id` is unaffected.
+
+**Known limitation:** the source has no distinct signal for "the player was
+explicitly removed from this team" versus "this snapshot's team could not be
+resolved". AFL-api cannot currently distinguish those two cases, so it does
+not clear an existing `team_id` in either one. If Champion Data or the AFL
+public API is later found to expose such a signal, clearing on genuine
+removal can be added as a follow-up without revisiting this document's other
+guarantees.
