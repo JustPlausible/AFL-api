@@ -88,17 +88,20 @@ subsequently reviewed and **confirm** that `homeInterchange[]`/
 `awayInterchange[]` array membership genuinely changes during LIVE play,
 tightly correlated with each team's own `totalInterchangeCount`
 incrementing -- see `docs/architecture/api/interchange_api_design.md` §2.1
-for the full evidence. The production contract exposes `on_bench`,
-confirmed for LIVE play; POSTGAME/CONCLUDED behaviour and a full
-individual-player round-trip citation from raw payloads remain the two open
-questions -- see `docs/api_v1_interchange.md` for the exact caveat exposed
+for the full evidence. A follow-up full per-poll export for one match
+(`CD_M20260142409`, supplied on Issue #204) individually confirmed a named
+player's repeated appear/disappear/reappear cycle and confirmed the state
+freezes byte-for-byte across 40 real `POSTGAME` polls. The production
+contract exposes `on_bench`, confirmed for LIVE play and confirmed to
+freeze through POSTGAME; only `CONCLUDED` behaviour remains the open
+question -- see `docs/api_v1_interchange.md` for the exact caveat exposed
 to consumers. This `interchange` diagnostic profile itself is
 **unchanged** -- it still runs opt-in exactly as described below, writes
 only to `match_interchange_evidence_observations`, and is still never read
 by the production collector, the scheduler, or `/api/v1`. It remains
 genuinely useful after production promotion for exactly the reason
 commentary's does above, plus specifically for gathering further evidence
-toward the two residual open questions. See
+toward the one residual open question (`CONCLUDED` behaviour). See
 `docs/investigation/afl-json/ENDPOINT_CATALOG.md` §5
 "Update (Issue #204)" and `docs/architecture/api/interchange_api_design.md`
 for the full production design.

@@ -9,17 +9,18 @@ and keeps running independently for evidence/debugging purposes (see
 scheduler read only the tables defined here.
 
 Real evidence reviewed for this promotion includes a single captured
-CONCLUDED-match snapshot (``tests/fixtures/afl/interchange/match_interchange_8216_concluded.json``)
-plus real Round 24 live diagnostic observations across 7 matches
+concluded-match snapshot (``tests/fixtures/afl/interchange/match_interchange_8216_concluded.json``),
+real Round 24 live diagnostic observations across 7 matches
 (``scripts/report_interchange_evidence.py`` output reviewed during PR #206)
-that confirm ``homeInterchange[]``/``awayInterchange[]`` array membership
-genuinely changes during LIVE play, tightly correlated with each team's own
-``totalInterchangeCount`` incrementing -- see ``afl_json/match_interchange.py``
-module docstring "Array-membership semantics: confirmed by real Round 24
-live evidence" for the full evidence and its residual caveats (POSTGAME/
-CONCLUDED behaviour and full individual-player round-trip citation remain
-unverified). Persistence here therefore stores the membership signal as
-``on_bench``.
+confirming ``homeInterchange[]``/``awayInterchange[]`` array membership
+genuinely changes during LIVE play, and a follow-up full per-poll export
+for one match individually confirming a named player's repeated
+appear/disappear/reappear cycle and a byte-for-byte state freeze across 40
+real POSTGAME polls -- see ``afl_json/match_interchange.py`` module
+docstring "Array-membership semantics: confirmed by real Round 24 live
+evidence" for the full evidence. Persistence here therefore stores the
+membership signal as ``on_bench``, confirmed for LIVE play and POSTGAME;
+only CONCLUDED behaviour remains unverified.
 
 Three tables, mirroring the shape already proven for commentary (migration
 ``0019``) but adapted for interchange's "current per-player state" shape

@@ -1,0 +1,30 @@
+{
+  "domain": "match_interchange",
+  "fixture_set": "CD_M20260142409_round_trip_and_postgame_freeze",
+  "season": 2026,
+  "round_number": 24,
+  "match": {
+    "match_provider_id": "CD_M20260142409",
+    "status": "LIVE polls captured throughout, transitioning to POSTGAME at poll_sequence 654"
+  },
+  "files": {
+    "match_interchange_CD_M20260142409_poll002_appeared.json": "Verbatim raw matchInterchange response for poll_sequence=2 (observed_at=2026-08-23T09:20:29.030394+00:00, LIVE), taken unedited from the raw_match_interchange_json column of match_interchange_evidence_observations (the diagnostic module retains the full raw payload on every is_transition=true poll). Champion Data player CD_I1028561 (Tom Gross, home side, CD_T150) is present in homeInterchange[] here.",
+    "match_interchange_CD_M20260142409_poll048_disappeared.json": "Verbatim raw matchInterchange response for poll_sequence=48 (observed_at=2026-08-23T09:31:59.008947+00:00, LIVE). CD_I1028561 is absent from homeInterchange[] here -- the diagnostic evidence recorded player_disappeared_home_interchange at this exact poll.",
+    "match_interchange_CD_M20260142409_poll100_reappeared.json": "Verbatim raw matchInterchange response for poll_sequence=100 (observed_at=2026-08-23T09:44:59.008233+00:00, LIVE). CD_I1028561 is present in homeInterchange[] again here -- the diagnostic evidence recorded player_appeared_home_interchange at this exact poll, ~13 minutes after the poll048 disappearance.",
+    "match_interchange_CD_M20260142409_postgame_poll654.json": "Reconstructed (not verbatim raw payload) matchInterchange response for poll_sequence=654, the FIRST POSTGAME poll (observed_at=2026-08-23T12:03:59.018988+00:00). The diagnostic module only retains the full raw HTTP payload on is_transition=true polls; this poll had zero transition flags, so raw_match_interchange_json was null for it. This file is assembled from the same row's home_interchange/away_interchange/home_counts/away_counts columns (which do carry the exact real per-poll field values, just already parsed rather than the original HTTP response bytes) wrapped in the standard {matchId, homeInterchange, awayInterchange, homeInterchangeCounts, awayInterchangeCounts} envelope. Every field value in it is real and unedited.",
+    "match_interchange_CD_M20260142409_postgame_poll693.json": "Same reconstruction approach as poll654, for poll_sequence=693 -- the LAST POSTGAME poll captured for this match (observed_at=2026-08-23T12:13:44.011925+00:00, ~10 minutes after poll654). Field-for-field identical to poll654's homeInterchange/awayInterchange/homeInterchangeCounts/awayInterchangeCounts -- see notes below."
+  },
+  "capture": {
+    "capture_tool": "collection/match_interchange_evidence.py (Issue #193 interchange diagnostic profile), queried via a full (non-transitions-only) JSON export of match_interchange_evidence_observations for this match",
+    "supplied_by": "repository owner, attached to Issue #204 (GitHub issue attachment interchange_CD_M20260142409.json, 693 rows, plus a companion interchange-transitions_CD_M20260142409.txt), for review during PR #206",
+    "response": {"http_status": 200, "content_type": "application/json"}
+  },
+  "notes": [
+    "This is the first genuinely per-poll, individually player-ID-cited real evidence available for the interchange promotion (Issue #204) -- prior evidence was either a single concluded-match snapshot or an aggregate transition-count report with no player identities. It resolves the two residual caveats originally documented in afl_json/match_interchange.py's module docstring and docs/architecture/api/interchange_api_design.md §2.1.",
+    "Champion Data player CD_I1028561 (Tom Gross) appeared/disappeared from CD_M20260142409's homeInterchange[] 5 separate times across the full match (poll_sequence pairs (2,48), (100,149), (230,254), (445,482), (556,590) -- appeared/disappeared respectively), confirming genuine individual round-trip bench rotation, not just aggregate set churn. Only the first round trip (polls 2/48/100) is included as fixtures here to keep the fixture set minimal per Issue #204's instruction not to commit an enormous raw capture; the remaining four round trips are documented here for provenance but not checked in as additional fixture files.",
+    "23 distinct Champion Data player IDs were observed in CD_M20260142409's homeInterchange[] at some point across the match, all of them appearing and disappearing multiple times (>=3 recorded transitions each) -- consistent with a small, fixed interchange-eligible player pool rotating continuously, not a one-off substitution list.",
+    "POSTGAME freeze: this match's diagnostic capture recorded 40 POSTGAME polls (poll_sequence 654-693, spanning exactly the diagnostic profile's configured 600s post-live grace window). Every single field across every one of those 40 polls -- home_interchange, away_interchange (including each entry's interchangeCount/benchReason/timeOnGround/timeOnBench/powerRating), home_counts and away_counts -- is byte-identical to the first POSTGAME poll (654). Zero transition flags of any kind were recorded during POSTGAME. This is the first evidence resolving the previously-open 'POSTGAME/CONCLUDED behaviour' question for POSTGAME specifically: matchInterchange state freezes exactly at the LIVE->POSTGAME transition and does not continue updating, at least through this ~10 minute captured window.",
+    "CONCLUDED remains unverified: this match's diagnostic capture ends at poll_sequence=693 (still POSTGAME) -- no CONCLUDED row was ever captured for this match, consistent with the diagnostic profile's post-live grace window (600s) elapsing before matches.status advanced to CONCLUDED. This specific residual question is NOT resolved by this fixture set.",
+    "Used by tests/test_interchange_round24_real_sequence.py to exercise afl_json.match_interchange.parse_match_interchange/persist_match_interchange against real (not synthetic) multi-poll CFS responses, demonstrating a real appear->disappear->reappear cycle and real POSTGAME idempotent freeze."
+  ]
+}

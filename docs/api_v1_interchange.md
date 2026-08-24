@@ -33,18 +33,23 @@ originally had to leave open (a fixed, always-listed bench pool that never
 actually changes). See the design doc §2.1 for the full evidence and
 citations.
 
-Two things remain **not** independently confirmed, and `on_bench` should be
-read with this in mind:
+A follow-up, individually-cited real evidence set (a full per-poll export
+for `CD_M20260142409`) confirmed two more things directly: Champion Data
+player `CD_I1028561` ("Tom Gross") genuinely appears, disappears, and
+reappears in `homeInterchange[]` five separate times across that one match
+— a real, named round trip, not just an aggregate set-membership change —
+and `matchInterchange` state (every field, not just membership) freezes
+byte-for-byte across 40 real `POSTGAME` polls spanning ~10 minutes after
+full-time, with zero further transitions.
 
-* **POSTGAME/CONCLUDED behaviour.** The reviewed evidence covers LIVE play
-  only; whether membership keeps changing, freezes, or reflects a final
-  settled bench once a match leaves LIVE is unverified. `on_bench` always
-  reflects the most recently observed state, which may be stale once a
-  match reaches POSTGAME/CONCLUDED.
-* **Full individual player round-trip citation.** The evidence proves the
-  player-id set changes; citing a specific Champion Data id as "appeared,
-  left, then came back" from the raw per-poll payloads has not been done
-  (only the aggregate transition report was reviewed).
+One thing remains **not** confirmed, and `on_bench` should be read with
+this in mind:
+
+* **`CONCLUDED` behaviour.** The reviewed evidence confirms `on_bench`
+  through `LIVE` and at least 10 minutes of `POSTGAME` (frozen, not stale —
+  see above); no match's capture has yet reached `CONCLUDED`, so whether
+  the endpoint stays queryable/frozen or becomes unavailable at that point
+  is still unverified.
 
 ## `GET /api/v1/matches/{match_id}/interchanges`
 
@@ -178,9 +183,9 @@ Application errors use the common `/api/v1` shape:
 
 ## What this endpoint is not
 
-* **Not verified for POSTGAME/CONCLUDED.** `on_bench` is confirmed against
-  real LIVE-play evidence; see the evidence section above for what remains
-  open once a match leaves LIVE.
+* **Not verified for CONCLUDED.** `on_bench` is confirmed against real
+  LIVE-play and POSTGAME evidence; see the evidence section above for the
+  one residual open question once a match reaches CONCLUDED.
 * **Not authoritative for match finality, lifecycle, or player
   statistics.** Match state comes from `matches.status`; player statistics
   come from [`GET /api/v1/matches/{match_id}/player-stats`](api_v1_player_stats.md).

@@ -983,10 +983,11 @@ class InterchangeStatus(BaseModel):
     """Current per-player CFS matchInterchange state (Issue #204).
 
     Promotion of the Issue #193 diagnostic investigation, confirmed against
-    real Round 24 live diagnostic evidence (7 matches) reviewed on PR #206 --
+    real Round 24 live diagnostic evidence (7 matches, plus an
+    individually-cited per-poll export for one match) reviewed on PR #206 --
     see ``on_bench``'s description and ``afl_json.match_interchange`` module
-    docstring for the evidence and its residual caveats (POSTGAME/CONCLUDED
-    behaviour, full individual-player round-trip citation).
+    docstring for the evidence and its one residual caveat (CONCLUDED
+    behaviour).
     """
 
     champion_data_player_id: str = Field(description="Source Champion Data player identifier. Always present.")
@@ -1001,12 +1002,14 @@ class InterchangeStatus(BaseModel):
         description=(
             "Whether this player is currently on the interchange bench (off the ground), as of the most "
             "recent poll -- i.e. their Champion Data id is present in the source homeInterchange[]/"
-            "awayInterchange[] array. Confirmed against real Round 24 live diagnostic evidence across 7 "
-            "matches: array membership changes continuously during LIVE play (hundreds of paired "
-            "appear/disappear events per match), tightly correlated with each team's own "
-            "totalInterchangeCount incrementing. Not yet independently verified for POSTGAME/CONCLUDED "
-            "behaviour, where this reflects the most recently observed state rather than a confirmed "
-            "live signal."
+            "awayInterchange[] array. Confirmed against real Round 24 live diagnostic evidence: array "
+            "membership changes continuously during LIVE play (hundreds of paired appear/disappear "
+            "events per match across 7 matches, tightly correlated with each team's own "
+            "totalInterchangeCount incrementing; individually cited for a named player's repeated "
+            "appear/disappear/reappear cycle in one match), and confirmed to freeze byte-for-byte across "
+            "40 real POSTGAME polls (~10 minutes) with zero further transitions. Not yet independently "
+            "verified for CONCLUDED, where this reflects the most recently observed state rather than a "
+            "confirmed signal."
         )
     )
     interchange_count: int | None = Field(description="CFS interchangeCount, persisted exactly as supplied.")
@@ -1110,7 +1113,7 @@ def _interchange_status_from_row(row: dict, player_names: dict) -> InterchangeSt
         "in the match, so a player who has since left the array is still returned with "
         "on_bench=false and their last known field values, rather than disappearing from the response. "
         "See on_bench's field description for the real Round 24 live evidence confirming this semantic "
-        "for LIVE play, and the residual POSTGAME/CONCLUDED caveat. bench_reason, interchange_count, "
+        "for LIVE play and POSTGAME, and the residual CONCLUDED caveat. bench_reason, interchange_count, "
         "time_on_ground_seconds, time_on_bench_seconds and power_rating are persisted and returned "
         "exactly as supplied by CFS; none are inferred. Not authoritative for match finality, lifecycle, "
         "or player statistics. A valid match with no interchange data yet returns an empty collection."

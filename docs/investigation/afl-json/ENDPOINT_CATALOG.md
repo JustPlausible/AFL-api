@@ -493,13 +493,20 @@ with same-poll appear+disappear pairing holding each side's listed count
 at a steady 5 (self-correcting after a handful of transient 4/6 blips --
 e.g. `CD_M20260142403` seq 349, `CD_M20260142409` seq 329-332). This rules
 out the "fixed, always-listed pool" reading this promotion originally could
-not exclude. See `docs/architecture/api/interchange_api_design.md` §2.1 for
-the full evidence. Two things remain unverified: POSTGAME/CONCLUDED
-behaviour (the reviewed evidence is LIVE-only), and a full individual
-player round-trip citation from raw per-poll payloads (only the aggregate
-transition report was reviewed). The production contract accordingly
-exposes **`on_bench`** (see `docs/api_v1_interchange.md`), documented with
-both of these residual caveats.
+not exclude. A subsequent full per-poll export for `CD_M20260142409`
+(Issue #204 comment) closed the two remaining gaps: Champion Data player
+`CD_I1028561` ("Tom Gross") is individually cited appearing/disappearing
+from `homeInterchange[]` five separate times across the match (real raw
+payloads checked in at `tests/fixtures/afl/interchange/match_interchange_CD_M20260142409_poll{002,048,100}_*.json`),
+and 40 captured `POSTGAME` polls (poll_sequence 654-693) show every field
+byte-identical throughout with zero transitions -- `matchInterchange` state
+freezes exactly at the `LIVE` -> `POSTGAME` transition. See
+`docs/architecture/api/interchange_api_design.md` §2.1 for the full
+evidence. **CONCLUDED remains the one open question**: this match's
+capture never reached it. The production contract accordingly exposes
+**`on_bench`** (see `docs/api_v1_interchange.md`), confirmed for LIVE play
+and confirmed to freeze through POSTGAME, documented with that one residual
+caveat.
 
 *`benchReason`:* persisted and returned exactly as CFS supplies it (only
 `"ROTATION"` observed so far). Never inferred as injury, substitution,

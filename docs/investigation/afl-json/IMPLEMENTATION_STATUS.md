@@ -314,10 +314,14 @@ across 7 matches were subsequently supplied and reviewed on PR #206,
 confirming that array membership genuinely changes during LIVE play,
 tightly correlated with each team's own `totalInterchangeCount`
 incrementing (see `docs/architecture/api/interchange_api_design.md` §2.1
-for the full evidence). The production contract exposes **`on_bench`**,
-confirmed for LIVE play; POSTGAME/CONCLUDED behaviour and a full
-individual-player round-trip citation from raw payloads remain unverified
--- see `docs/api_v1_interchange.md` for the exact caveat. Interchange state
+for the full evidence). A follow-up full per-poll export for one match
+(`CD_M20260142409`, Issue #204 comment) individually confirmed a named
+player's repeated appear/disappear/reappear cycle and confirmed that
+`matchInterchange` state freezes byte-for-byte across 40 real `POSTGAME`
+polls. The production contract exposes **`on_bench`**, confirmed for LIVE
+play and confirmed to freeze through POSTGAME; only `CONCLUDED` behaviour
+remains unverified (this match's capture never reached it) -- see
+`docs/api_v1_interchange.md` for the exact caveat. Interchange state
 remains non-authoritative for match finality, lifecycle, or player
 statistics.
 
@@ -328,13 +332,12 @@ profile from Issue #193 (`collection/match_interchange_evidence.py`,
 and keeps running independently, opt-in via `AFL_DIAGNOSTICS_ENABLED=true` +
 `AFL_DIAGNOSTIC_PROFILES` including `interchange`. It remains useful for
 parser-regression evidence and for gathering further evidence toward the
-two residual open questions above (POSTGAME/CONCLUDED behaviour;
-individual-player round-trip confirmation). It is not read by the
-production collector, the scheduler, or `/api/v1`.
+one residual open question above (`CONCLUDED` behaviour). It is not read by
+the production collector, the scheduler, or `/api/v1`.
 
 **Recommendation:** production-ready for consumer use, including the
-confirmed `on_bench` semantic for LIVE play; revisit once POSTGAME/CONCLUDED
-behaviour has been reviewed from further live evidence.
+confirmed `on_bench` semantic for LIVE play and POSTGAME; revisit once
+`CONCLUDED` behaviour has been reviewed from further live evidence.
 
 ### CFS `commentaryFeed/{matchProviderId}`
 
@@ -584,9 +587,10 @@ route) -- see §4's "CFS `commentaryFeed/{matchProviderId}`" and
 `matchInterchange`'s promotion initially had a materially weaker evidence
 basis than commentary's, before real Round 24 live diagnostic observations
 were supplied and reviewed on PR #206, confirming the array-membership
-semantic (`on_bench`) for LIVE play -- see `docs/api_v1_interchange.md` for
-the confirmed semantic and its two residual caveats (POSTGAME/CONCLUDED
-behaviour; individual-player round-trip confirmation from raw payloads).
+semantic (`on_bench`) for LIVE play and, from a follow-up individually-cited
+per-poll export, confirming it freezes through POSTGAME too -- see
+`docs/api_v1_interchange.md` for the confirmed semantic and its one
+residual caveat (`CONCLUDED` behaviour).
 Both endpoints' diagnostic evidence-capture
 profiles (Issues #196 and #193) remain separately available for
 debugging/replay, but are no longer the only pathway for either.

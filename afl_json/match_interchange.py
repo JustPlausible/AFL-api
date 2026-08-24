@@ -89,35 +89,57 @@ interchange/rotation event just happened" would look like from this data,
 and is very hard to explain under the alternative "fixed, always-listed
 pool" reading this promotion originally could not rule out.
 
-Two things this real evidence does **not** establish, and which remain
-open:
+**Update: individual round-trip and POSTGAME behaviour now confirmed too.**
+A full per-poll (not aggregate-only) evidence export for ``CD_M20260142409``
+-- 693 rows including every non-transition poll and the raw payload on
+every transition poll -- was subsequently reviewed (Issue #204 comment,
+PR #206). Two specific real fixtures now back this:
 
-* **POSTGAME/CONCLUDED behaviour.** The supplied report's captured windows
-  end with the match still ``LIVE`` in every one of the 7 matches, with no
-  ``POSTGAME``/``CONCLUDED`` rows visible in that report format -- whether
-  membership continues to change, freezes, or reflects a final settled
-  bench once a match leaves ``LIVE`` remains unverified from this evidence.
-  ``current_state_rows``/the consumer API make no claim about this beyond
-  "the most recently observed state," and polling continues through
-  ``POSTGAME`` and a bounded grace period regardless (see
-  ``scheduler.match_interchange_production``).
-* **Full individual player round-trip citation.** The evidence conclusively
-  proves the *player-id set* changes (see above); it does not, by itself,
-  let a specific Champion Data id be cited as "appeared at poll A,
-  disappeared at poll B, reappeared at poll C" without the underlying raw
-  per-poll payloads (only the aggregate transition report was reviewed, not
-  ``raw_match_interchange_json``). Given AFL's small, fixed interchange
-  bench, repeated round-trips for the same handful of individuals across a
-  ~3 hour match are the natural implication of the aggregate pattern above,
-  but this specific claim has not been independently verified against raw
-  per-player data.
+* **Individual player round-trip: confirmed.** Champion Data player
+  ``CD_I1028561`` ("Tom Gross", home side) appears/disappears from
+  ``CD_M20260142409``'s ``homeInterchange[]`` **five separate times** across
+  the match (poll_sequence pairs (2,48), (100,149), (230,254), (445,482),
+  (556,590) -- appear/disappear respectively); 23 distinct home-side
+  Champion Data ids show the same repeated-round-trip pattern across the
+  full match. The first round trip is checked in as real, verbatim raw
+  ``matchInterchange`` responses:
+  ``tests/fixtures/afl/interchange/match_interchange_CD_M20260142409_poll002_appeared.json``,
+  ``..._poll048_disappeared.json``, ``..._poll100_reappeared.json`` -- see
+  ``tests/test_interchange_round24_real_sequence.py``, which exercises
+  ``parse_match_interchange``/``persist_match_interchange`` directly against
+  them.
+* **POSTGAME behaviour: confirmed to freeze.** The same match's evidence
+  export includes 40 ``POSTGAME`` polls (poll_sequence 654-693, spanning the
+  diagnostic profile's configured 600s post-live grace window). Every field
+  -- not just array membership, but each entry's ``interchangeCount``/
+  ``benchReason``/``timeOnGround``/``timeOnBench``/``powerRating``, and the
+  team-level counts -- is byte-identical across all 40 polls, with zero
+  transition flags recorded throughout. ``matchInterchange`` state freezes
+  exactly at the ``LIVE`` -> ``POSTGAME`` transition and does not continue
+  updating, at least through this ~10 minute captured window. Checked in as
+  ``tests/fixtures/afl/interchange/match_interchange_CD_M20260142409_postgame_poll654.json``
+  and ``..._postgame_poll693.json`` (reconstructed from this match's stored
+  parsed field values rather than a verbatim raw payload, since the
+  diagnostic module only retains the raw HTTP response on polls with a
+  recorded transition -- POSTGAME had none; every field value in them is
+  still real, see the fixture directory's metadata sidecar), exercised by
+  the same test module to show persisting both produces zero new events.
 
-On the strength of the confirmed finding above, this module and the
+**CONCLUDED remains unverified**: this match's capture ends at
+poll_sequence 693, still ``POSTGAME`` -- no ``CONCLUDED`` row was ever
+captured for it, consistent with the diagnostic profile's post-live grace
+window elapsing before ``matches.status`` advanced further. Whether
+``matchInterchange`` stays queryable/frozen, or becomes unavailable, once a
+match reaches ``CONCLUDED`` remains an open question for a future capture.
+
+On the strength of the confirmed findings above, this module and the
 consumer API expose ``on_bench`` -- a per-player boolean reflecting current
 ``homeInterchange``/``awayInterchange`` array membership as of the most
-recent poll. See ``docs/investigation/afl-json/ENDPOINT_CATALOG.md`` and
+recent poll, confirmed for LIVE play and confirmed to freeze (not
+necessarily to remain available) through at least 10 minutes of POSTGAME.
+See ``docs/investigation/afl-json/ENDPOINT_CATALOG.md`` and
 ``docs/api_v1_interchange.md`` for the consumer-facing documentation of
-this finding and its residual caveats.
+these findings and the one residual caveat (CONCLUDED).
 
 ## Do not infer bench_reason
 
@@ -197,9 +219,9 @@ MATCH_INTERCHANGE_ENDPOINT = EndpointDefinition(
     required_path_parameters=("match_provider_id",),
     verified=True,
     unverified_fields=(
-        "matchInterchange behaviour once a match leaves LIVE (POSTGAME/CONCLUDED): whether "
-        "array membership continues to change, freezes, or reflects a final settled bench "
-        "(issue #204; see afl_json.match_interchange module docstring)",
+        "matchInterchange behaviour once a match reaches CONCLUDED: whether the endpoint "
+        "stays queryable/frozen or becomes unavailable (issue #204; POSTGAME is confirmed to "
+        "freeze -- see afl_json.match_interchange module docstring)",
         "the complete set of benchReason enum values beyond the single observed ROTATION",
         "timeOnGround/timeOnBench update cadence and precision beyond what polling can observe",
     ),

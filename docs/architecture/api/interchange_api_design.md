@@ -94,33 +94,53 @@ change is a genuine interchange/rotation event, and hard to explain under
 the "fixed, always-listed pool" reading this promotion originally could not
 rule out.
 
-Two things this real evidence does **not** establish, and which remain open:
+**Update: individual round-trip and POSTGAME behaviour now confirmed too.**
+A full per-poll (not aggregate-only) evidence export for `CD_M20260142409`
+-- all 693 rows, including the raw payload retained on every transition
+poll -- was subsequently reviewed (Issue #204 comment, PR #206):
 
-* **POSTGAME/CONCLUDED behaviour.** The supplied report's captured windows
-  end with the match still `LIVE` in every one of the 7 matches (no
-  `POSTGAME`/`CONCLUDED` rows are visible in that report format); whether
-  membership continues to change, freezes, or reflects a final settled
-  bench once a match leaves `LIVE` remains unverified. The consumer API
-  makes no claim beyond "the most recently observed state" (see §8.1), and
-  polling continues through `POSTGAME` and a bounded grace period
-  regardless (§7).
-* **Full individual player round-trip citation.** The evidence conclusively
-  proves the *player-id set* changes (above); it does not, by itself, let a
-  specific Champion Data id be cited as "appeared at poll A, disappeared at
-  poll B, reappeared at poll C" without the underlying raw per-poll
-  payloads (only the aggregate transition report was reviewed, not
-  `raw_match_interchange_json`). Given AFL's small, fixed interchange
-  bench, repeated round-trips for the same handful of individuals across a
-  ~3 hour match are the natural implication of the aggregate pattern above,
-  but this specific claim has not been independently verified against raw
-  per-player data.
+* **Individual player round-trip: confirmed.** Champion Data player
+  `CD_I1028561` ("Tom Gross", home side) appears in and disappears from
+  `homeInterchange[]` **five separate times** across this one match (poll
+  pairs (2,48), (100,149), (230,254), (445,482), (556,590)); 23 distinct
+  home-side player ids show the same repeated pattern. The first round trip
+  is checked in as real, verbatim raw responses --
+  `tests/fixtures/afl/interchange/match_interchange_CD_M20260142409_poll002_appeared.json`,
+  `..._poll048_disappeared.json`, `..._poll100_reappeared.json` --
+  exercised directly against `parse_match_interchange`/
+  `persist_match_interchange` by `tests/test_interchange_round24_real_sequence.py`.
+* **POSTGAME behaviour: confirmed to freeze.** The same match's export
+  includes 40 `POSTGAME` polls (poll_sequence 654-693, the diagnostic
+  profile's full 600s post-live grace window). Every field -- not just
+  membership, but each entry's `interchangeCount`/`benchReason`/
+  `timeOnGround`/`timeOnBench`/`powerRating`, and the team-level counts --
+  is byte-identical across all 40 polls, with zero transition flags
+  recorded. `matchInterchange` state freezes exactly at the
+  `LIVE` -> `POSTGAME` transition and does not continue updating, at least
+  through this ~10 minute window. Checked in as
+  `tests/fixtures/afl/interchange/match_interchange_CD_M20260142409_postgame_poll654.json`
+  / `..._postgame_poll693.json` (reconstructed from this match's stored
+  parsed field values, since the diagnostic module only retains the raw
+  HTTP payload on polls with a recorded transition and POSTGAME had none --
+  every value in them is still real; see the fixture directory's metadata
+  sidecar), exercised by the same test module to confirm persisting both
+  produces zero new events.
 
-On the strength of the confirmed finding, the production contract exposes
+**One thing remains open: CONCLUDED behaviour.** This match's capture ends
+at poll_sequence 693, still `POSTGAME` -- no `CONCLUDED` row was ever
+captured, consistent with the post-live grace window elapsing first.
+Whether `matchInterchange` stays queryable/frozen or becomes unavailable
+once a match reaches `CONCLUDED` remains unverified. The consumer API makes
+no claim beyond "the most recently observed state" (§8.1), and polling
+continues through `POSTGAME` and a bounded grace period regardless (§7).
+
+On the strength of the confirmed findings, the production contract exposes
 **`on_bench`** -- a per-player boolean reflecting current
 `homeInterchange`/`awayInterchange` array membership as of the most recent
-poll -- documented with the evidence above and its two residual caveats
-everywhere the field appears (schema comments, the OpenAPI description,
-`docs/api_v1_interchange.md`).
+poll, confirmed for LIVE play and confirmed to freeze through at least 10
+minutes of POSTGAME -- documented with the evidence above and the one
+residual caveat (CONCLUDED) everywhere the field appears (schema comments,
+the OpenAPI description, `docs/api_v1_interchange.md`).
 
 ### 2.2 `benchReason`
 
@@ -321,18 +341,29 @@ plus small synthetic payloads for scenarios the single real capture cannot
 demonstrate (multi-poll transitions, disappearance, restart replay).
 
 `tests/test_interchange_round24_live_evidence.py` is a separate regression
-check over the real Round 24 live evidence behind §2.1's confirmed
+check over the real Round 24 live evidence behind §2.1's confirmed LIVE-play
 semantic: it parses
 `tests/fixtures/afl/interchange/round24_live_membership_evidence_excerpt.txt`
-(a reduced, real excerpt of `scripts/report_interchange_evidence.py`
-output, with full provenance in the companion `.metadata.json`) and asserts
-the specific claims cited above (paired appear/disappear, steady-state-5
-with self-correcting transient blips, correlation with
-`totalInterchangeCount` incrementing, no `POSTGAME`/`CONCLUDED` row
-observed) -- so a future edit to either the fixture or the claim is caught
-rather than silently drifting apart. It does not exercise any production
-persistence/parsing code path; it exists purely to make the evidence
-durable and checkable within the repository.
+(a reduced, real excerpt of `scripts/report_interchange_evidence.py`'s
+*transitions-only* report mode, across 7 matches, with full provenance in
+the companion `.metadata.json`) and asserts the specific claims cited above
+(paired appear/disappear, steady-state-5 with self-correcting transient
+blips, correlation with `totalInterchangeCount` incrementing). Its "no
+`POSTGAME`/`CONCLUDED` row observed" claim describes that specific
+transitions-only report -- POSTGAME polls generally have zero transition
+flags and so are invisible to that report mode, not evidence that no
+POSTGAME polls exist; see the module docstring for how this was
+subsequently resolved for POSTGAME specifically. It does not exercise any
+production persistence/parsing code path; it exists purely to make the
+aggregate LIVE-play evidence durable and checkable within the repository.
+
+`tests/test_interchange_round24_real_sequence.py` exercises production
+`parse_match_interchange`/`persist_match_interchange` directly against the
+individual-player-cited, POSTGAME-freeze fixture set described in §2.1
+above (a full, non-transitions-only per-poll export for `CD_M20260142409`,
+supplied on Issue #204) -- confirming, with real production code and real
+data, both a genuine appear/disappear/reappear cycle for one named player
+and the field-for-field POSTGAME freeze across a real ~10 minute window.
 
 ## 10. Architectural boundaries preserved
 
