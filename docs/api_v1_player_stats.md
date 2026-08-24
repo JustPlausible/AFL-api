@@ -23,7 +23,7 @@ missing or invalid API key receives `401` with
 | --- | --- | --- | --- | --- |
 | `match_id` | path | integer | Yes | Existing numeric match identifier. |
 | `side` | query | `home` \| `away` | No | Return only players on that match side. Other values receive FastAPI's normal `422`. |
-| `canonical_player_id` | query | integer | No | Return only the player with this AFL-api canonical player ID, matched directly against the persisted stat row. The preferred consumer-facing identifier. A non-integer value receives FastAPI's normal `422`. |
+| `canonical_player_id` | query | integer | No | Return only the player with this AFL-api canonical player ID, matched directly against the persisted stat row. The preferred consumer-facing identifier. A non-integer value, or one outside SQLite's signed 64-bit integer range (`-2^63` to `2^63-1`), receives FastAPI's normal `422`. |
 | `champion_data_player_id` | query | string | No | Return only the player with this opaque Champion Data ID. Provider-specific; retained for compatibility and explicit provider workflows. |
 | `advanced` | query | boolean | No | Add selected provenance. Defaults to `false` and requires the `advanced-read` capability when `true`. |
 

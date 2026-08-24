@@ -27,6 +27,12 @@ from version import __version__
 
 router = APIRouter()
 
+# SQLite integers are signed 64-bit; a value outside this range raises
+# OverflowError when bound as a query parameter, so query filters against an
+# INTEGER column must be rejected with a standard 422 before reaching the DB.
+_SQLITE_INTEGER_MIN = -(2**63)
+_SQLITE_INTEGER_MAX = 2**63 - 1
+
 
 class ApiDiscoveryResponse(BaseModel):
     """Stable, deliberately minimal entry point for consumer discovery."""
@@ -507,6 +513,8 @@ def get_match_player_stats(
     side: MatchSide | None = Query(None, description="Filter players by side (home or away)"),
     canonical_player_id: int | None = Query(
         None,
+        ge=_SQLITE_INTEGER_MIN,
+        le=_SQLITE_INTEGER_MAX,
         description=(
             "Filter to a single player by canonical AFL-api player ID "
             "(cfs_player_stats.canonical_player_id). Matches only rows with that "

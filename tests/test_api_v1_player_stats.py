@@ -448,6 +448,15 @@ def test_invalid_canonical_player_id_returns_422(tmp_path, monkeypatch):
     assert response.status_code == 422
 
 
+def test_out_of_range_canonical_player_id_returns_422(tmp_path, monkeypatch):
+    db_path = _make_db(tmp_path, seed=lambda conn: _seed_match(conn))
+    client = _client(db_path, monkeypatch)
+
+    for value in (2**63, -(2**63) - 1):
+        response = _get(client, canonical_player_id=value)
+        assert response.status_code == 422
+
+
 def test_non_positive_canonical_player_id_is_a_normal_empty_result(tmp_path, monkeypatch):
     db_path = _make_db(tmp_path, seed=_two_player_seed)
     client = _client(db_path, monkeypatch)
