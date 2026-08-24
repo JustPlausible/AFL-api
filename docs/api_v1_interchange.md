@@ -17,33 +17,41 @@ persistence (Issue #204, promoted from the Issue #193 diagnostic
 investigation), not the separate diagnostic evidence table. Send an API key
 in `X-Api-Key`; auth behaves identically to every other `/api/v1` route.
 
-## Important: read this before using `on_interchange_list`
+## Evidence behind `on_bench`
 
-The only real evidence checked into this repository and reviewed when this
-endpoint was promoted to production is a single captured **concluded**-match
-snapshot — no live poll-to-poll sequence is checked in showing array
-membership actually change as a player rotates on and off the ground during
-a match. (This describes what was reviewable during promotion, not a claim
-that the `interchange` diagnostic profile never observed a live match: any
-observations it wrote during an actual live deployment run live only in
-that deployment's own local `match_interchange_evidence_observations` table
--- `.gitignore`'d SQLite state, never committed to this repository -- and
-were not available for review here. See the design doc §2.1.1 for the
-specific questions such evidence would need to answer, and how to supply it
-for re-review.) `on_interchange_list` is therefore a **conservative,
-source-derived fact** ("this player's Champion Data id appeared in the
-source `homeInterchange[]`/`awayInterchange[]` array as of the most recent
-poll"), **not a confirmed "this player is currently off the ground"
-signal**. Treat it as best-effort pending further live-match verification,
-and do not build logic that assumes it is an authoritative bench/on-ground
-state.
+`on_bench` means the player is currently on the interchange bench (off the
+ground), as of the most recent poll. This is confirmed, not a guess: real
+Round 24 live diagnostic observations across **7 matches**
+(`CD_M20260142401`, `CD_M20260142403`–`CD_M20260142406`, `CD_M20260142408`,
+`CD_M20260142409`), polled roughly every 15 seconds through each match's
+full LIVE window, show `homeInterchange[]`/`awayInterchange[]` membership
+(an exact Champion Data `playerId` set, not an inference) changing
+continuously and repeatedly — hundreds of paired appear/disappear events
+per match — tightly correlated with each team's own `totalInterchangeCount`
+incrementing. This rules out the alternative reading this endpoint
+originally had to leave open (a fixed, always-listed bench pool that never
+actually changes). See the design doc §2.1 for the full evidence and
+citations.
+
+Two things remain **not** independently confirmed, and `on_bench` should be
+read with this in mind:
+
+* **POSTGAME/CONCLUDED behaviour.** The reviewed evidence covers LIVE play
+  only; whether membership keeps changing, freezes, or reflects a final
+  settled bench once a match leaves LIVE is unverified. `on_bench` always
+  reflects the most recently observed state, which may be stale once a
+  match reaches POSTGAME/CONCLUDED.
+* **Full individual player round-trip citation.** The evidence proves the
+  player-id set changes; citing a specific Champion Data id as "appeared,
+  left, then came back" from the raw per-poll payloads has not been done
+  (only the aggregate transition report was reviewed).
 
 ## `GET /api/v1/matches/{match_id}/interchanges`
 
 Current state for every player observed in either interchange array at any
 point in the match, including players who have since left the array — they
-remain in the response with `on_interchange_list: false` and their last
-known field values, rather than disappearing.
+remain in the response with `on_bench: false` and their last known field
+values, rather than disappearing.
 
 ### Parameters
 
@@ -52,7 +60,7 @@ known field values, rather than disappearing.
 | `match_id` | path | integer | Yes | Canonical `matches.match_id` — the same identifier accepted by [`GET /api/v1/matches/{match_id}/player-stats`](api_v1_player_stats.md) and [`GET /api/v1/matches/{match_id}/commentary`](api_v1_commentary.md). Consumers never need a Champion Data match id. |
 | `side` | query | string | No | Filter to one side (`home` or `away`). |
 | `player_id` | query | integer | No | Filter to one canonical player identifier (the same `canonical_player_id` used by [`GET /api/v1/players/{canonical_player_id}`](api_v1_players.md)). |
-| `on_interchange_list_only` | query | boolean | No | When `true`, return only players currently present in an interchange array. Defaults to `false`. |
+| `on_bench_only` | query | boolean | No | When `true`, return only players currently on the interchange bench. Defaults to `false`. |
 
 ### Response
 
@@ -73,7 +81,7 @@ known field values, rather than disappearing.
       "side": "home",
       "team_id": 10,
       "champion_data_team_id": "CD_T10",
-      "on_interchange_list": true,
+      "on_bench": true,
       "interchange_count": 8,
       "bench_reason": "ROTATION",
       "time_on_ground_seconds": 4697,
@@ -89,7 +97,7 @@ known field values, rather than disappearing.
 Field notes:
 
 * **`champion_data_player_id`** is always present (source fact); **`canonical_player_id`**/**`display_name`** are `null` when that Champion Data id has no known crosswalk yet — never guessed from name or jumper number.
-* **`on_interchange_list`** — see the callout above. Refreshed every poll.
+* **`on_bench`** — see the evidence section above. Refreshed every poll.
 * **`interchange_count`**, **`bench_reason`**, **`time_on_ground_seconds`**, **`time_on_bench_seconds`**, **`power_rating`** are persisted and returned exactly as supplied by CFS. `bench_reason` is never inferred (e.g. never turned into "injury" or "substitution") — it is either the source's literal string (`"ROTATION"` is the only value observed to date) or `null` when CFS did not supply one.
 * **`first_observed_at`**/**`observed_at`** are UTC poll-observation timestamps, not exact game-clock instants — `matchInterchange` supplies no `periodNumber`/`periodSeconds` to build one from.
 * A valid `match_id` with no interchange data yet (or ever) returns `200` with an empty `interchanges` collection — this is not an error.
@@ -170,9 +178,9 @@ Application errors use the common `/api/v1` shape:
 
 ## What this endpoint is not
 
-* **Not a confirmed on-ground/off-ground signal.** See the callout above —
-  `on_interchange_list` is a conservative source-membership fact, pending
-  further live-match verification.
+* **Not verified for POSTGAME/CONCLUDED.** `on_bench` is confirmed against
+  real LIVE-play evidence; see the evidence section above for what remains
+  open once a match leaves LIVE.
 * **Not authoritative for match finality, lifecycle, or player
   statistics.** Match state comes from `matches.status`; player statistics
   come from [`GET /api/v1/matches/{match_id}/player-stats`](api_v1_player_stats.md).

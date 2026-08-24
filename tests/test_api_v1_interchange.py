@@ -172,7 +172,7 @@ def test_current_state_response_shape_and_resolved_identity(tmp_path, monkeypatc
     assert entry["side"] == "home"
     assert entry["team_id"] == HOME_TEAM_ID
     assert entry["champion_data_team_id"] == "CD_T10"
-    assert entry["on_interchange_list"] is True
+    assert entry["on_bench"] is True
     assert entry["interchange_count"] == 8
     assert entry["bench_reason"] == "ROTATION"
     assert entry["time_on_ground_seconds"] == 4697
@@ -192,10 +192,10 @@ def test_player_who_left_the_list_still_returned_with_flag_false(tmp_path, monke
     client = _client(db_path, monkeypatch)
     interchanges = _get_interchanges(client).json()["interchanges"]
     assert len(interchanges) == 1
-    assert interchanges[0]["on_interchange_list"] is False
+    assert interchanges[0]["on_bench"] is False
 
 
-def test_on_interchange_list_only_filter(tmp_path, monkeypatch):
+def test_on_bench_only_filter(tmp_path, monkeypatch):
     def seed(conn):
         _seed_base(conn)
         _seed_interchange(conn, home=[_entry("CD_I1")], observed_at=NOW)
@@ -203,7 +203,7 @@ def test_on_interchange_list_only_filter(tmp_path, monkeypatch):
 
     db_path = _make_db(tmp_path, seed=seed)
     client = _client(db_path, monkeypatch)
-    filtered = _get_interchanges(client, params={"on_interchange_list_only": "true"}).json()["interchanges"]
+    filtered = _get_interchanges(client, params={"on_bench_only": "true"}).json()["interchanges"]
     assert filtered == []
 
 

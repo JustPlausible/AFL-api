@@ -982,9 +982,11 @@ InterchangeSide = Literal["home", "away"]
 class InterchangeStatus(BaseModel):
     """Current per-player CFS matchInterchange state (Issue #204).
 
-    Promotion of the Issue #193 diagnostic investigation. See
-    ``on_interchange_list``'s description for why this stops short of
-    claiming a confirmed on/off-ground semantic.
+    Promotion of the Issue #193 diagnostic investigation, confirmed against
+    real Round 24 live diagnostic evidence (7 matches) reviewed on PR #206 --
+    see ``on_bench``'s description and ``afl_json.match_interchange`` module
+    docstring for the evidence and its residual caveats (POSTGAME/CONCLUDED
+    behaviour, full individual-player round-trip citation).
     """
 
     champion_data_player_id: str = Field(description="Source Champion Data player identifier. Always present.")
@@ -995,14 +997,16 @@ class InterchangeStatus(BaseModel):
     side: InterchangeSide = Field(description="Which team's interchange array this player was last observed in.")
     team_id: int | None = Field(description="Canonical AFL-api team id, or null when unresolved.")
     champion_data_team_id: str | None = Field(description="Source Champion Data team identifier.")
-    on_interchange_list: bool = Field(
+    on_bench: bool = Field(
         description=(
-            "Whether this player's entry is present in the source homeInterchange[]/awayInterchange[] "
-            "array as of the most recent poll. This is a conservative, source-derived membership fact, "
-            "not a confirmed 'currently off the ground' signal: the only evidence captured at "
-            "implementation time is a single concluded-match snapshot, with no live poll-to-poll "
-            "sequence demonstrating that membership actually changes as players rotate during play. "
-            "Treat as best-effort until further live-match verification confirms the semantic either way."
+            "Whether this player is currently on the interchange bench (off the ground), as of the most "
+            "recent poll -- i.e. their Champion Data id is present in the source homeInterchange[]/"
+            "awayInterchange[] array. Confirmed against real Round 24 live diagnostic evidence across 7 "
+            "matches: array membership changes continuously during LIVE play (hundreds of paired "
+            "appear/disappear events per match), tightly correlated with each team's own "
+            "totalInterchangeCount incrementing. Not yet independently verified for POSTGAME/CONCLUDED "
+            "behaviour, where this reflects the most recently observed state rather than a confirmed "
+            "live signal."
         )
     )
     interchange_count: int | None = Field(description="CFS interchangeCount, persisted exactly as supplied.")
@@ -1083,7 +1087,7 @@ def _interchange_status_from_row(row: dict, player_names: dict) -> InterchangeSt
         side=row["side"],
         team_id=row["canonical_team_id"],
         champion_data_team_id=row["team_provider_id"],
-        on_interchange_list=row["on_interchange_list"],
+        on_bench=row["on_bench"],
         interchange_count=row["interchange_count"],
         bench_reason=row["bench_reason"],
         time_on_ground_seconds=row["time_on_ground"],
@@ -1104,9 +1108,9 @@ def _interchange_status_from_row(row: dict, player_names: dict) -> InterchangeSt
         "production persistence (Issue #204) rather than the separate interchange diagnostic evidence "
         "tables (Issue #193). Includes every player observed in either interchange array at any point "
         "in the match, so a player who has since left the array is still returned with "
-        "on_interchange_list=false and their last known field values, rather than disappearing from the "
-        "response. See on_interchange_list's field description for the documented, still-open question "
-        "about what array membership actually means. bench_reason, interchange_count, "
+        "on_bench=false and their last known field values, rather than disappearing from the response. "
+        "See on_bench's field description for the real Round 24 live evidence confirming this semantic "
+        "for LIVE play, and the residual POSTGAME/CONCLUDED caveat. bench_reason, interchange_count, "
         "time_on_ground_seconds, time_on_bench_seconds and power_rating are persisted and returned "
         "exactly as supplied by CFS; none are inferred. Not authoritative for match finality, lifecycle, "
         "or player statistics. A valid match with no interchange data yet returns an empty collection."
@@ -1116,8 +1120,8 @@ def get_match_interchanges(
     match_id: int,
     side: InterchangeSide | None = Query(None, description="Filter to one side (home or away)."),
     player_id: int | None = Query(None, description="Filter to one canonical player identifier."),
-    on_interchange_list_only: bool = Query(
-        False, description="When true, return only players currently present in an interchange array."
+    on_bench_only: bool = Query(
+        False, description="When true, return only players currently on the interchange bench."
     ),
     credential: AuthenticatedCredential = Depends(authenticate_api_key),
 ) -> MatchInterchangesResponse | JSONResponse:
@@ -1135,7 +1139,7 @@ def get_match_interchanges(
 
         rows = current_state_rows(
             conn, match_id=match_id, side=side, canonical_player_id=player_id,
-            on_interchange_list_only=on_interchange_list_only,
+            on_bench_only=on_bench_only,
         )
         player_names = _interchange_name_lookups(conn, rows)
     finally:

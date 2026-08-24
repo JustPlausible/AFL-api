@@ -8,17 +8,18 @@ and keeps running independently for evidence/debugging purposes (see
 ``docs/diagnostics_framework.md``). The consumer API and the production
 scheduler read only the tables defined here.
 
-Real evidence available at promotion time is limited to a single captured
-CONCLUDED-match snapshot (``tests/fixtures/afl/interchange/match_interchange_8216_concluded.json``,
-five players per side with cumulative match totals) -- there is no captured
-live poll-to-poll sequence showing array membership actually changing during
-play. Unlike Issue #201's commentary promotion, this evidence does **not**
-conclusively confirm that ``homeInterchange[]``/``awayInterchange[]``
-membership means "currently off the ground right now" -- see
-``afl_json/match_interchange.py`` module docstring for the full reasoning.
-Persistence here therefore stores the source-derived membership signal
-conservatively (``on_interchange_list``), not an authoritative ``on_bench``
-semantic.
+Real evidence reviewed for this promotion includes a single captured
+CONCLUDED-match snapshot (``tests/fixtures/afl/interchange/match_interchange_8216_concluded.json``)
+plus real Round 24 live diagnostic observations across 7 matches
+(``scripts/report_interchange_evidence.py`` output reviewed during PR #206)
+that confirm ``homeInterchange[]``/``awayInterchange[]`` array membership
+genuinely changes during LIVE play, tightly correlated with each team's own
+``totalInterchangeCount`` incrementing -- see ``afl_json/match_interchange.py``
+module docstring "Array-membership semantics: confirmed by real Round 24
+live evidence" for the full evidence and its residual caveats (POSTGAME/
+CONCLUDED behaviour and full individual-player round-trip citation remain
+unverified). Persistence here therefore stores the membership signal as
+``on_bench``.
 
 Three tables, mirroring the shape already proven for commentary (migration
 ``0019``) but adapted for interchange's "current per-player state" shape
@@ -28,7 +29,7 @@ rather than an append-only event stream:
   player_provider_id)`` pair observed in either interchange array, holding
   the latest known field values (``interchange_count``, ``bench_reason``,
   ``time_on_ground``, ``time_on_bench``, ``power_rating``) and the current
-  ``on_interchange_list`` membership flag. This is the table the consumer
+  ``on_bench`` membership flag. This is the table the consumer
   API's current-state route reads. Carries both the source Champion Data
   ``playerId``/``teamId`` and, where resolvable, the linked canonical
   AFL-api identity -- re-resolved on every update (unlike commentary's
@@ -59,7 +60,7 @@ def migrate(conn):
             team_provider_id TEXT,
             canonical_team_id INTEGER,
             side TEXT NOT NULL CHECK(side IN ('home','away')),
-            on_interchange_list INTEGER NOT NULL CHECK(on_interchange_list IN (0,1)),
+            on_bench INTEGER NOT NULL CHECK(on_bench IN (0,1)),
             interchange_count INTEGER,
             bench_reason TEXT,
             time_on_ground INTEGER,
@@ -81,7 +82,7 @@ def migrate(conn):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_match_interchange_state_match ON match_interchange_state(match_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_match_interchange_state_provider ON match_interchange_state(match_provider_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_match_interchange_state_player ON match_interchange_state(match_id, canonical_player_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_match_interchange_state_on_list ON match_interchange_state(match_id, on_interchange_list)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_match_interchange_state_on_bench ON match_interchange_state(match_id, on_bench)")
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS match_interchange_events (

@@ -212,7 +212,7 @@ def test_first_successful_observation_persists_state_and_appeared_events(db):
     home_row = next(r for r in rows if r["side"] == "home")
     assert home_row["player_provider_id"] == "CD_I1"
     assert home_row["canonical_player_id"] == 501
-    assert home_row["on_interchange_list"] is True
+    assert home_row["on_bench"] is True
     assert home_row["interchange_count"] == 1
 
     events = event_rows(conn, match_id=MATCH_ID)
@@ -265,10 +265,10 @@ def test_player_disappearing_from_home_interchange(db):
     assert result["disappeared"][0]["player_provider_id"] == "CD_I3"
 
     rows = {row["player_provider_id"]: row for row in current_state_rows(conn, match_id=MATCH_ID)}
-    assert rows["CD_I3"]["on_interchange_list"] is False
+    assert rows["CD_I3"]["on_bench"] is False
     # Last known values are preserved, not zeroed, on disappearance.
     assert rows["CD_I3"]["interchange_count"] == 1
-    assert rows["CD_I1"]["on_interchange_list"] is True
+    assert rows["CD_I1"]["on_bench"] is True
 
 
 def test_disappearance_not_inferred_when_side_array_missing_this_poll(db):
@@ -290,7 +290,7 @@ def test_disappearance_not_inferred_when_side_array_missing_this_poll(db):
     conn.commit()
     assert result["disappeared"] == []
     row = current_state_rows(conn, match_id=MATCH_ID)[0]
-    assert row["on_interchange_list"] is True
+    assert row["on_bench"] is True
 
 
 def test_disappearance_not_inferred_when_side_array_has_a_malformed_entry(db):
@@ -323,8 +323,8 @@ def test_disappearance_not_inferred_when_side_array_has_a_malformed_entry(db):
     assert result["changed"][0]["player_provider_id"] == "CD_I1"
 
     rows = {row["player_provider_id"]: row for row in current_state_rows(conn, match_id=MATCH_ID)}
-    assert rows["CD_I3"]["on_interchange_list"] is True
-    assert rows["CD_I1"]["on_interchange_list"] is True
+    assert rows["CD_I3"]["on_bench"] is True
+    assert rows["CD_I1"]["on_bench"] is True
 
 
 def test_canonical_identity_re_resolved_when_recording_disappearance(db):
@@ -360,7 +360,7 @@ def test_canonical_identity_re_resolved_when_recording_disappearance(db):
     assert len(result["disappeared"]) == 1
 
     row = current_state_rows(conn, match_id=MATCH_ID)[0]
-    assert row["on_interchange_list"] is False
+    assert row["on_bench"] is False
     assert row["canonical_player_id"] == 888
 
     event = event_rows(conn, match_id=MATCH_ID, event_type=EVENT_DISAPPEARED)[0]
@@ -384,7 +384,7 @@ def test_player_reappearing_after_disappearance_is_appeared_again(db):
     conn.commit()
     assert len(result["appeared"]) == 1
     rows = current_state_rows(conn, match_id=MATCH_ID)
-    assert rows[0]["on_interchange_list"] is True
+    assert rows[0]["on_bench"] is True
 
 
 # --- Persistence: field changes -------------------------------------------------
@@ -633,5 +633,5 @@ def test_current_state_rows_filters(db):
     conn.commit()
     assert len(current_state_rows(conn, match_id=MATCH_ID)) == 2
     assert len(current_state_rows(conn, match_id=MATCH_ID, side="away")) == 1
-    assert len(current_state_rows(conn, match_id=MATCH_ID, on_interchange_list_only=True)) == 1
+    assert len(current_state_rows(conn, match_id=MATCH_ID, on_bench_only=True)) == 1
     assert len(current_state_rows(conn, match_id=MATCH_ID, canonical_player_id=501)) == 1

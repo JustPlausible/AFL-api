@@ -449,9 +449,12 @@ for the full production/consumer design.
 
 **Update (Issue #204): `matchInterchange/{matchProviderId}` is now a
 production-supported endpoint contract for per-player interchange state**,
-promoted from the Issue #193 diagnostic investigation -- but with a
-materially weaker evidence basis than Issue #201's commentary promotion
-above, which this section documents explicitly.
+promoted from the Issue #193 diagnostic investigation. This PR's initial
+draft had only a single CONCLUDED-match fixture to promote against
+(materially weaker than Issue #201's commentary promotion); real Round 24
+live diagnostic observations across 7 matches were subsequently supplied
+and reviewed on PR #206, confirming the array-membership semantic for LIVE
+play -- see below.
 
 *Endpoint:* `GET {CFS root}/matchInterchange/{match_provider_id}` -- under
 the standard `/cfs/afl` root, unlike `commentaryFeed`.
@@ -469,44 +472,34 @@ profile) and are deliberately out of scope for the narrower production
 contract, which answers one consumer question: is this canonical player
 currently on the interchange list, and what does CFS say about them.
 
-*What promotion evidence exists:* a single real captured response
-(`tests/fixtures/afl/interchange/match_interchange_8216_concluded.json`) --
-a CONCLUDED match with five entries per side, each carrying substantial
-cumulative `timeOnGround`/`timeOnBench`/`interchangeCount` values and
-`benchReason="ROTATION"` throughout. This confirms the entry-level field
-shape above. **No live poll-to-poll sequence for interchange is checked
-into this repository** -- unlike commentary's `CD_M20260142409` live-poll
-capture plus the confirmed `CD_M20260142406` same-slot scoring-outcome
-change, no Round 24 fixture in `tests/fixtures/afl/interchange/` demonstrates
-`homeInterchange[]`/`awayInterchange[]` membership actually changing as a
-player rotates on and off the ground during play. This is a statement about
-what is present in this repository and was reviewable during this
-promotion, not a claim that no such evidence was ever captured anywhere:
-the `interchange` diagnostic profile ran opt-in against real matches and
-would have written any live observations into a deployment's own
-`match_interchange_evidence_observations` table (queryable via
-`scripts/report_interchange_evidence.py`), which is `.gitignore`'d local
-SQLite state, never committed. If that data exists on a deployment this
-promotion did not have access to, it was not reviewed here and remains
-open follow-up work -- see the note at the end of this update.
+*What promotion evidence exists:* a single real captured concluded-match
+response (`tests/fixtures/afl/interchange/match_interchange_8216_concluded.json`,
+five entries per side, `benchReason="ROTATION"` throughout) confirming the
+entry-level field shape, plus real Round 24 live diagnostic observations
+across **7 matches** (`CD_M20260142401`, `CD_M20260142403`-`CD_M20260142406`,
+`CD_M20260142408`, `CD_M20260142409` -- the `scripts/report_interchange_evidence.py`
+output reviewed on PR #206), each polled roughly every 15 seconds through
+its full ~3 hour LIVE window.
 
-*Array-membership semantics: still open, not resolved by this promotion.*
-Issue #204 asked this promotion to establish, from evidence, whether
-membership means "the player is currently off the ground". Based on the
-evidence available to and reviewed by this promotion, it does not establish
-this. The single concluded-match snapshot is *consistent with* either: (a)
-these are the players who happened to be sitting on the bench right at
-full-time, each carrying their whole-match rotation tally, or (b) this is
-simply the team's fixed interchange/bench player pool for the entire
-match, always listed, with only its per-entry counters changing. Per Issue
-#204's explicit instruction not to promote a diagnostic hypothesis to an
-authoritative semantic without live-membership-transition evidence, the
-production contract therefore exposes a conservative, source-derived
-`on_interchange_list` field (see `docs/api_v1_interchange.md`) rather than
-a claimed `on_bench`/off-ground semantic. This should be revisited once a
-live round with observed membership transitions is reviewed -- whether
-newly captured, or already sitting in an existing deployment's diagnostic
-database and supplied for review (see the follow-up note above).
+*Array-membership semantics: confirmed for LIVE play.* Issue #204 asked
+this promotion to establish, from evidence, whether membership means "the
+player is currently off the ground". The Round 24 live evidence confirms
+this for LIVE play: the diagnostic module's `appeared`/`disappeared` flags
+are an exact Champion Data `playerId` set difference (not an inference),
+and across the 7 matches membership changed hundreds of times per match
+(442/435 home appear/disappear events, 435/428 away), tightly
+time-correlated with each team's own `totalInterchangeCount` incrementing,
+with same-poll appear+disappear pairing holding each side's listed count
+at a steady 5 (self-correcting after a handful of transient 4/6 blips --
+e.g. `CD_M20260142403` seq 349, `CD_M20260142409` seq 329-332). This rules
+out the "fixed, always-listed pool" reading this promotion originally could
+not exclude. See `docs/architecture/api/interchange_api_design.md` §2.1 for
+the full evidence. Two things remain unverified: POSTGAME/CONCLUDED
+behaviour (the reviewed evidence is LIVE-only), and a full individual
+player round-trip citation from raw per-poll payloads (only the aggregate
+transition report was reviewed). The production contract accordingly
+exposes **`on_bench`** (see `docs/api_v1_interchange.md`), documented with
+both of these residual caveats.
 
 *`benchReason`:* persisted and returned exactly as CFS supplies it (only
 `"ROTATION"` observed so far). Never inferred as injury, substitution,

@@ -42,46 +42,82 @@ per-player production contract, which exists to answer one consumer
 question: "is this canonical player currently on the interchange bench, and
 what does CFS say about it?"
 
-## Array-membership semantics: genuine, documented ambiguity
+## Array-membership semantics: confirmed by real Round 24 live evidence
 
 Issue #204 asks this module to establish, from captured evidence, whether
 membership of ``homeInterchange[]``/``awayInterchange[]`` can safely be
-documented as meaning "the player is currently off the ground". **It
-cannot, yet, from what is checked into this repository.** The only real
-evidence present in ``tests/fixtures/afl/interchange/`` at implementation
-time is a single CONCLUDED-match snapshot -- no live poll-to-poll sequence
-is checked in demonstrating that a player's entry actually appears/
-disappears as they rotate on and off the ground during play (contrast
-Issue #201's commentary promotion, which had a genuine live poll sequence
-plus a confirmed real scoring-outcome change to promote against).
-The Issue #193 ``interchange`` diagnostic profile may have captured
-additional live-match observations directly into a deployment's own
-``match_interchange_evidence_observations`` table (via
-``scripts/report_interchange_evidence.py``) that were not supplied to, or
-reachable from, this implementation session -- that data, if it exists, has
-not been reviewed here and would need to be supplied (e.g. as a database
-export or a report run against it) before the semantic below can be
-strengthened or the open questions in this docstring resolved. The
-five-entries-per-side shape in the
-concluded snapshot, each carrying substantial cumulative
-``timeOnGround``/``timeOnBench``/``interchangeCount`` values, is *consistent
-with* "these are the players who ended the match sitting on the bench,
-each carrying their whole-match rotation tally" -- but is equally
-consistent with "this is simply the team's fixed interchange/bench player
-pool for the whole match, always listed, with cumulative counters updating
-in place" (i.e. list membership itself never actually changes during a
-match, only the counters on each entry do).
+documented as meaning "the player is currently off the ground". **It now
+can be, for LIVE play**, on the strength of real Round 24 live diagnostic
+observations reviewed after this promotion's initial draft (supplied as the
+human-readable output of ``scripts/report_interchange_evidence.py`` against
+a deployment's populated ``match_interchange_evidence_observations`` table
+-- not available to, or reviewable from, this implementation session on its
+own; see the module's earlier revision history / PR #206 discussion for
+why the semantic below was initially left conservative).
 
-Per Issue #204's explicit instruction to expose source-derived state
-conservatively rather than promote a diagnostic hypothesis to an
-authoritative semantic, this module and the consumer API therefore expose
-``on_interchange_list`` (a plain source-array-membership fact, refreshed
-every poll) rather than a claimed ``on_bench``/off-ground semantic. See
-``docs/investigation/afl-json/ENDPOINT_CATALOG.md`` and
-``docs/api_v1_interchange.md`` for the full, explicit caveat consumers see.
-This should be revisited (and the field/semantics promoted, with a
-migration if the contract needs to change) once a live Round with actual
-membership transitions has been observed in production.
+That report covers **7 real Round 24 matches**
+(``CD_M20260142401``, ``CD_M20260142403``, ``CD_M20260142404``,
+``CD_M20260142405``, ``CD_M20260142406``, ``CD_M20260142408``,
+``CD_M20260142409``), each polled roughly every 15 seconds across its full
+~3 hour LIVE window. The diagnostic module's ``appeared``/``disappeared``
+transition flags are computed as an exact Champion Data ``playerId`` set
+difference between successive polls (``collection.match_interchange_evidence._player_set_transitions``,
+``set(current) - set(previous)`` over indexed ``player.playerId`` values) --
+so their presence in this real data is not an inference, it is direct proof
+that the specific set of players listed in ``homeInterchange``/
+``awayInterchange`` actually changes during LIVE play. Across the 7
+matches: 442 ``player_appeared_home_interchange`` and 435
+``player_disappeared_home_interchange`` events, 435
+``player_appeared_away_interchange`` and 428
+``player_disappeared_away_interchange`` events -- i.e. membership changed on
+a large fraction of the ~700 polls per match. Appearances and
+disappearances are near-perfectly paired within the same poll (a same-poll
+appear+disappear on one side, not just growth), holding each side's listed
+count at a fixed steady state of 5 throughout; the handful of polls that
+briefly showed 4 or 6 listed players (e.g. ``CD_M20260142403`` seq 349,
+``CD_M20260142404`` seq 196 and seq 479, ``CD_M20260142408`` seq 364,
+``CD_M20260142409`` seq 329-332) self-corrected back to 5 on the very next
+poll(s) -- consistent with catching an in-progress swap mid-transition at
+the 15s polling granularity, never with a genuinely resized or reordered
+pool. Membership changes are also tightly time-correlated with each team's
+own ``totalInterchangeCount``/quarter count incrementing
+(``home_total_interchange_count_changed``/``away_total_interchange_count_changed``
+co-occur with, or immediately follow, the great majority of appear/
+disappear events) -- i.e. CFS's own aggregate rotation counter moves in
+lockstep with array membership changing, which is exactly what "a genuine
+interchange/rotation event just happened" would look like from this data,
+and is very hard to explain under the alternative "fixed, always-listed
+pool" reading this promotion originally could not rule out.
+
+Two things this real evidence does **not** establish, and which remain
+open:
+
+* **POSTGAME/CONCLUDED behaviour.** The supplied report's captured windows
+  end with the match still ``LIVE`` in every one of the 7 matches, with no
+  ``POSTGAME``/``CONCLUDED`` rows visible in that report format -- whether
+  membership continues to change, freezes, or reflects a final settled
+  bench once a match leaves ``LIVE`` remains unverified from this evidence.
+  ``current_state_rows``/the consumer API make no claim about this beyond
+  "the most recently observed state," and polling continues through
+  ``POSTGAME`` and a bounded grace period regardless (see
+  ``scheduler.match_interchange_production``).
+* **Full individual player round-trip citation.** The evidence conclusively
+  proves the *player-id set* changes (see above); it does not, by itself,
+  let a specific Champion Data id be cited as "appeared at poll A,
+  disappeared at poll B, reappeared at poll C" without the underlying raw
+  per-poll payloads (only the aggregate transition report was reviewed, not
+  ``raw_match_interchange_json``). Given AFL's small, fixed interchange
+  bench, repeated round-trips for the same handful of individuals across a
+  ~3 hour match are the natural implication of the aggregate pattern above,
+  but this specific claim has not been independently verified against raw
+  per-player data.
+
+On the strength of the confirmed finding above, this module and the
+consumer API expose ``on_bench`` -- a per-player boolean reflecting current
+``homeInterchange``/``awayInterchange`` array membership as of the most
+recent poll. See ``docs/investigation/afl-json/ENDPOINT_CATALOG.md`` and
+``docs/api_v1_interchange.md`` for the consumer-facing documentation of
+this finding and its residual caveats.
 
 ## Do not infer bench_reason
 
@@ -161,10 +197,9 @@ MATCH_INTERCHANGE_ENDPOINT = EndpointDefinition(
     required_path_parameters=("match_provider_id",),
     verified=True,
     unverified_fields=(
-        "whether homeInterchange[]/awayInterchange[] array membership means the player is "
-        "currently off the ground, or is instead a fixed team interchange-pool listing with "
-        "only its counters changing -- no live poll-to-poll capture exists yet to confirm "
-        "either way (issue #204; see afl_json.match_interchange module docstring)",
+        "matchInterchange behaviour once a match leaves LIVE (POSTGAME/CONCLUDED): whether "
+        "array membership continues to change, freezes, or reflects a final settled bench "
+        "(issue #204; see afl_json.match_interchange module docstring)",
         "the complete set of benchReason enum values beyond the single observed ROTATION",
         "timeOnGround/timeOnBench update cadence and precision beyond what polling can observe",
     ),
@@ -464,7 +499,7 @@ def persist_match_interchange(conn: sqlite3.Connection, parsed: ParsedMatchInter
                 conn.execute(
                     """INSERT INTO match_interchange_state(
                            match_id, match_provider_id, player_provider_id, canonical_player_id, team_provider_id,
-                           canonical_team_id, side, on_interchange_list, interchange_count, bench_reason,
+                           canonical_team_id, side, on_bench, interchange_count, bench_reason,
                            time_on_ground, time_on_bench, power_rating, first_observed_at, last_observed_at,
                            last_transition_at, match_status_at_last_observation, collector_version, updated_at
                        ) VALUES (?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?)""",
@@ -488,7 +523,7 @@ def persist_match_interchange(conn: sqlite3.Connection, parsed: ParsedMatchInter
                 appeared.append({"id": event_id, "player_provider_id": entry.player_provider_id, "side": entry.side})
                 continue
 
-            was_on_list = bool(existing_row["on_interchange_list"])
+            was_on_list = bool(existing_row["on_bench"])
             prev_count = existing_row["interchange_count"]
             prev_reason = existing_row["bench_reason"]
             transitioned = not was_on_list
@@ -497,7 +532,7 @@ def persist_match_interchange(conn: sqlite3.Connection, parsed: ParsedMatchInter
             conn.execute(
                 """UPDATE match_interchange_state SET
                        canonical_player_id=?, team_provider_id=?, canonical_team_id=?, side=?,
-                       on_interchange_list=1, interchange_count=?, bench_reason=?, time_on_ground=?,
+                       on_bench=1, interchange_count=?, bench_reason=?, time_on_ground=?,
                        time_on_bench=?, power_rating=?, last_observed_at=?, last_transition_at=?,
                        match_status_at_last_observation=?, collector_version=?, updated_at=?
                    WHERE id=?""",
@@ -562,7 +597,7 @@ def persist_match_interchange(conn: sqlite3.Connection, parsed: ParsedMatchInter
     for player_provider_id, row in existing.items():
         if player_provider_id in seen_this_poll:
             continue
-        if not bool(row["on_interchange_list"]):
+        if not bool(row["on_bench"]):
             continue
         if row["side"] not in known_sides:
             continue
@@ -576,7 +611,7 @@ def persist_match_interchange(conn: sqlite3.Connection, parsed: ParsedMatchInter
         canonical_team_id = resolve_canonical_team(conn, row["team_provider_id"])
         conn.execute(
             "UPDATE match_interchange_state SET canonical_player_id=?, canonical_team_id=?, "
-            "on_interchange_list=0, last_transition_at=?, match_status_at_last_observation=?, "
+            "on_bench=0, last_transition_at=?, match_status_at_last_observation=?, "
             "collector_version=?, updated_at=? WHERE id=?",
             (canonical_player_id, canonical_team_id, parsed.observed_at, parsed.match_status_at_poll,
              collector_version, parsed.observed_at, row["id"]),
@@ -639,13 +674,13 @@ def recently_active_match_provider_ids(conn: sqlite3.Connection, *, now: datetim
 
 def _state_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     data = dict(row)
-    data["on_interchange_list"] = bool(data["on_interchange_list"])
+    data["on_bench"] = bool(data["on_bench"])
     return data
 
 
 def current_state_rows(conn: sqlite3.Connection, *, match_id: int, side: str | None = None,
                        canonical_player_id: int | None = None,
-                       on_interchange_list_only: bool = False) -> list[dict[str, Any]]:
+                       on_bench_only: bool = False) -> list[dict[str, Any]]:
     """Current per-player interchange state for one match. Backs the consumer API."""
     clauses = ["match_id=?"]
     params: list[Any] = [match_id]
@@ -655,8 +690,8 @@ def current_state_rows(conn: sqlite3.Connection, *, match_id: int, side: str | N
     if canonical_player_id is not None:
         clauses.append("canonical_player_id=?")
         params.append(canonical_player_id)
-    if on_interchange_list_only:
-        clauses.append("on_interchange_list=1")
+    if on_bench_only:
+        clauses.append("on_bench=1")
     sql = (
         "SELECT * FROM match_interchange_state WHERE " + " AND ".join(clauses) +
         " ORDER BY side, player_provider_id"

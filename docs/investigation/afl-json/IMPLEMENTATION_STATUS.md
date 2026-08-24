@@ -307,21 +307,19 @@ for the full detail). Production ingestion runs unconditionally via the
 normal scheduler (`scheduler/scheduled_tasks.py`), independent of
 `AFL_DIAGNOSTICS_ENABLED`/`AFL_DIAGNOSTIC_PROFILES` entirely, and persists
 canonically-linked current per-player state plus meaningful transition
-history. **Unlike** the Issue #201 commentary promotion, the evidence
-basis reviewed for this promotion is materially weaker: only a single
-concluded-match snapshot was checked into `tests/fixtures/afl/interchange/`
-and available for review, with no live poll-to-poll sequence in the
-repository demonstrating array membership actually changing during play.
-This reflects what was reviewable during this promotion, not a claim that
-no `interchange` diagnostic profile ran against live Round 24 matches
-elsewhere -- any such deployment-local `match_interchange_evidence_observations`
-data is `.gitignore`'d SQLite state that was not supplied to or reachable
-from this promotion; see `docs/api_v1_interchange.md` for how to supply it
-for a future re-review. The production contract therefore exposes a
-conservative `on_interchange_list` field rather than a claimed "on the
-bench right now" semantic -- see `docs/api_v1_interchange.md` for the full
-caveat. Interchange state remains non-authoritative for match finality,
-lifecycle, or player statistics.
+history. The initial promotion draft had only a single concluded-match
+snapshot to review, materially weaker than the Issue #201 commentary
+promotion's evidence basis; real Round 24 live diagnostic observations
+across 7 matches were subsequently supplied and reviewed on PR #206,
+confirming that array membership genuinely changes during LIVE play,
+tightly correlated with each team's own `totalInterchangeCount`
+incrementing (see `docs/architecture/api/interchange_api_design.md` §2.1
+for the full evidence). The production contract exposes **`on_bench`**,
+confirmed for LIVE play; POSTGAME/CONCLUDED behaviour and a full
+individual-player round-trip citation from raw payloads remain unverified
+-- see `docs/api_v1_interchange.md` for the exact caveat. Interchange state
+remains non-authoritative for match finality, lifecycle, or player
+statistics.
 
 **Diagnostic evidence capture unchanged:** the `interchange` diagnostic
 profile from Issue #193 (`collection/match_interchange_evidence.py`,
@@ -329,16 +327,14 @@ profile from Issue #193 (`collection/match_interchange_evidence.py`,
 `match_interchange_evidence_observations`, migration `0017`) is untouched
 and keeps running independently, opt-in via `AFL_DIAGNOSTICS_ENABLED=true` +
 `AFL_DIAGNOSTIC_PROFILES` including `interchange`. It remains useful for
-parser-regression evidence and, in particular, for gathering the
-still-missing live-membership-transition evidence needed to resolve the
-open semantic question above. It is not read by the production collector,
-the scheduler, or `/api/v1`.
+parser-regression evidence and for gathering further evidence toward the
+two residual open questions above (POSTGAME/CONCLUDED behaviour;
+individual-player round-trip confirmation). It is not read by the
+production collector, the scheduler, or `/api/v1`.
 
-**Recommendation:** production-ready for consumer use for current
-bench-membership/count/reason/timer state; the array-membership semantic
-should be revisited (and `on_interchange_list` potentially promoted to a
-stronger semantic, with a migration if the contract needs to change) once a
-live round with observed membership transitions has been captured.
+**Recommendation:** production-ready for consumer use, including the
+confirmed `on_bench` semantic for LIVE play; revisit once POSTGAME/CONCLUDED
+behaviour has been reviewed from further live evidence.
 
 ### CFS `commentaryFeed/{matchProviderId}`
 
@@ -585,10 +581,12 @@ endpoints, not maintained collector capabilities.
 endpoint contracts (production collector, persistence and a consumer
 route) -- see §4's "CFS `commentaryFeed/{matchProviderId}`" and
 "CFS `matchInterchange/{matchProviderId}`" entries above.
-`matchInterchange`'s promotion carries a materially weaker evidence basis
-than commentary's (no live membership-transition sequence was checked in
-or otherwise available for review during this promotion), so its consumer
-contract stays deliberately conservative -- see `docs/api_v1_interchange.md`.
+`matchInterchange`'s promotion initially had a materially weaker evidence
+basis than commentary's, before real Round 24 live diagnostic observations
+were supplied and reviewed on PR #206, confirming the array-membership
+semantic (`on_bench`) for LIVE play -- see `docs/api_v1_interchange.md` for
+the confirmed semantic and its two residual caveats (POSTGAME/CONCLUDED
+behaviour; individual-player round-trip confirmation from raw payloads).
 Both endpoints' diagnostic evidence-capture
 profiles (Issues #196 and #193) remain separately available for
 debugging/replay, but are no longer the only pathway for either.

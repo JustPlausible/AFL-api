@@ -79,31 +79,27 @@ was similarly used to design and ship a **separate, new production path**:
 `afl_json/match_interchange.py`, `scheduler/match_interchange_production.py`,
 `match_interchange_state`/`match_interchange_events`/`match_interchange_polls`
 (migration `0021`), and `GET /api/v1/matches/{match_id}/interchanges` +
-`/interchanges/events`. Unlike commentary's promotion, the evidence basis
-reviewed for this promotion was materially thinner -- only a single
-concluded-match snapshot was checked into the repository and reviewable,
-with no live poll-to-poll sequence in the repository demonstrating array
-membership actually changing during play -- so the production consumer
-contract deliberately stops short of claiming the array-membership
-semantic (`homeInterchange[]`/`awayInterchange[]` = "currently off the
-ground") is confirmed; see `docs/api_v1_interchange.md` for the exact
-caveat exposed to consumers. This describes what was checked into the
-repository and reviewable during this promotion, not a claim that the
-`interchange` diagnostic profile never captured live-match observations
-anywhere: any observations it wrote during an actual live deployment run
-live only in that deployment's own local, `.gitignore`'d SQLite database
-(`match_interchange_evidence_observations`, queryable via
-`scripts/report_interchange_evidence.py`) and were not supplied to or
-reachable from this promotion. If that data exists, supplying it (a
-database export, or the report script's `--json` output) would let this
-semantic be re-reviewed against it. This `interchange` diagnostic profile itself is **unchanged** --
-it still runs opt-in exactly as described below, writes only to
-`match_interchange_evidence_observations`, and is still never read by the
-production collector, the scheduler, or `/api/v1`. It remains genuinely
-useful after production promotion for exactly the reason commentary's does
-above, plus specifically for gathering the still-missing live
-membership-transition evidence needed to eventually resolve the open
-semantic question. See `docs/investigation/afl-json/ENDPOINT_CATALOG.md` §5
+`/interchanges/events`. This promotion's initial draft had only a single
+concluded-match snapshot checked into the repository to review -- materially
+thinner than commentary's evidence basis. Real Round 24 live diagnostic
+observations across 7 matches (the `interchange` diagnostic profile's own
+output, supplied and reviewed on PR #206 after that initial draft) were
+subsequently reviewed and **confirm** that `homeInterchange[]`/
+`awayInterchange[]` array membership genuinely changes during LIVE play,
+tightly correlated with each team's own `totalInterchangeCount`
+incrementing -- see `docs/architecture/api/interchange_api_design.md` §2.1
+for the full evidence. The production contract exposes `on_bench`,
+confirmed for LIVE play; POSTGAME/CONCLUDED behaviour and a full
+individual-player round-trip citation from raw payloads remain the two open
+questions -- see `docs/api_v1_interchange.md` for the exact caveat exposed
+to consumers. This `interchange` diagnostic profile itself is
+**unchanged** -- it still runs opt-in exactly as described below, writes
+only to `match_interchange_evidence_observations`, and is still never read
+by the production collector, the scheduler, or `/api/v1`. It remains
+genuinely useful after production promotion for exactly the reason
+commentary's does above, plus specifically for gathering further evidence
+toward the two residual open questions. See
+`docs/investigation/afl-json/ENDPOINT_CATALOG.md` §5
 "Update (Issue #204)" and `docs/architecture/api/interchange_api_design.md`
 for the full production design.
 
