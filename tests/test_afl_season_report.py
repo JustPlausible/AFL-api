@@ -439,6 +439,33 @@ def test_shared_persisted_season_selector_is_query_only(tmp_path):
     ]
 
 
+def test_admin_season_review_rejects_oversized_numeric_selection_without_report_or_write(
+        tmp_path, monkeypatch):
+    path, conn = database(tmp_path)
+    before = conn.serialize()
+    conn.close()
+    monkeypatch.setattr(config, "DB_PATH", str(path))
+    monkeypatch.setenv("ADMIN_USERNAME", "admin")
+    monkeypatch.setenv("ADMIN_PASSWORD", "password")
+    monkeypatch.setenv("SESSION_SECRET", "season-review-test")
+    import admin
+    admin = importlib.reload(admin)
+    monkeypatch.setattr(
+        admin.SeasonCompletenessReporter, "report",
+        lambda *args, **kwargs: pytest.fail("Invalid selection invoked the report"),
+    )
+    token = base64.b64encode(b"admin:password").decode("ascii")
+
+    response = TestClient(admin.app).get(
+        "/season-review", params={"season": "9" * 10_000},
+        headers={"Authorization": f"Basic {token}"},
+    )
+
+    assert response.status_code == 400
+    assert "Select a valid persisted AFL season." in response.text
+    assert sqlite3.connect(path).serialize() == before
+
+
 def _reset_stats(conn, *, authority=2, rows=20, sides=("home", "away"), mixed=False):
     conn.execute("DELETE FROM cfs_player_stats")
     for idx in range(1, rows + 1):

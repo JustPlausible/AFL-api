@@ -389,10 +389,13 @@ def season_review(request: Request, season: str | None = Query(None)):
             if not value or not value.isdecimal():
                 error = "Select a valid persisted AFL season."
             else:
-                selected_year = int(value)
-                if selected_year not in {item.year for item in seasons}:
+                try:
+                    selected_year = int(value)
+                except ValueError:
+                    error = "Select a valid persisted AFL season."
+                if error is None and selected_year not in {item.year for item in seasons}:
                     error = "The selected AFL season is not persisted."
-                else:
+                elif error is None:
                     report = SeasonCompletenessReporter(
                         conn, database=get_db_path().name,
                     ).report(selected_year)
