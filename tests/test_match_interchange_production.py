@@ -293,6 +293,80 @@ def test_disappearance_not_inferred_when_side_array_missing_this_poll(db):
     assert row["on_interchange_list"] is True
 
 
+def test_disappearance_not_inferred_when_side_array_has_a_malformed_entry(db):
+    """A side array that is present but contains one unidentifiable entry
+    (e.g. a transiently corrupted player block) must not cause every
+    *other* known player on that side to be read as having disappeared --
+    the "missing" player could simply be the one behind the malformed
+    entry. Regression test for a Codex review finding on PR #206."""
+    conn, _ = db
+    first = parse_match_interchange(
+        interchange_payload(home=[_entry("CD_I1"), _entry("CD_I3")]), match_id=MATCH_ID,
+        match_provider_id=MATCH_PROVIDER_ID, observed_at=_iso(),
+    )
+    persist_match_interchange(conn, first)
+    conn.commit()
+
+    # CD_I1's entry is intact; CD_I3's entry is now malformed (no playerId),
+    # so the side is incomplete this poll -- CD_I3 must not be marked
+    # disappeared, even though CD_I3 is absent from the successfully parsed
+    # entries.
+    second = parse_match_interchange(
+        interchange_payload(home=[_entry("CD_I1", count=2), {"teamId": "CD_T10", "interchangeCount": 1}]),
+        match_id=MATCH_ID, match_provider_id=MATCH_PROVIDER_ID, observed_at=_iso(15),
+    )
+    result = persist_match_interchange(conn, second)
+    conn.commit()
+    assert result["disappeared"] == []
+    # CD_I1's own update is still processed normally.
+    assert len(result["changed"]) == 1
+    assert result["changed"][0]["player_provider_id"] == "CD_I1"
+
+    rows = {row["player_provider_id"]: row for row in current_state_rows(conn, match_id=MATCH_ID)}
+    assert rows["CD_I3"]["on_interchange_list"] is True
+    assert rows["CD_I1"]["on_interchange_list"] is True
+
+
+def test_canonical_identity_re_resolved_when_recording_disappearance(db):
+    """Current-state self-healing (module docstring §"Canonical identity
+    linking") must also cover the disappearance write path, not only
+    appear/update -- otherwise a player whose crosswalk is added only after
+    they leave the interchange list would stay unresolved forever. Regression
+    test for a Codex review finding on PR #206."""
+    conn, _ = db
+    persist_match_interchange(conn, parse_match_interchange(
+        interchange_payload(home=[_entry("CD_I_LATE")]), match_id=MATCH_ID,
+        match_provider_id=MATCH_PROVIDER_ID, observed_at=_iso(),
+    ))
+    conn.commit()
+    assert current_state_rows(conn, match_id=MATCH_ID)[0]["canonical_player_id"] is None
+
+    # Crosswalk added only after the player has left the list.
+    conn.execute(
+        "INSERT INTO canonical_players VALUES(888,'Late Crosswalk','Late','Crosswalk',?,?)",
+        (NOW.isoformat(), NOW.isoformat()),
+    )
+    conn.execute(
+        "INSERT INTO player_provider_ids(player_id,provider,provider_player_id,created_at,updated_at) "
+        "VALUES(888,'champion_data','CD_I_LATE',?,?)", (NOW.isoformat(), NOW.isoformat()),
+    )
+    conn.commit()
+
+    result = persist_match_interchange(conn, parse_match_interchange(
+        interchange_payload(home=[]), match_id=MATCH_ID, match_provider_id=MATCH_PROVIDER_ID,
+        observed_at=_iso(15),
+    ))
+    conn.commit()
+    assert len(result["disappeared"]) == 1
+
+    row = current_state_rows(conn, match_id=MATCH_ID)[0]
+    assert row["on_interchange_list"] is False
+    assert row["canonical_player_id"] == 888
+
+    event = event_rows(conn, match_id=MATCH_ID, event_type=EVENT_DISAPPEARED)[0]
+    assert event["canonical_player_id"] == 888
+
+
 def test_player_reappearing_after_disappearance_is_appeared_again(db):
     conn, _ = db
     persist_match_interchange(conn, parse_match_interchange(

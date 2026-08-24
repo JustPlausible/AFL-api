@@ -217,18 +217,40 @@ class ParsedMatchInterchange:
     # never treat it as "everyone disappeared" -- see persist_match_interchange().
     home_entries: list[ParsedInterchangeEntry] | None
     away_entries: list[ParsedInterchangeEntry] | None
+    # False when at least one entry on that side could not be identified
+    # (see _parse_side_entries) -- disappearance inference must be skipped
+    # for such a side this poll, even though its identifiable entries are
+    # still processed normally. Vacuously True when the corresponding
+    # *_entries is None (disappearance inference is already skipped via that).
+    home_entries_complete: bool
+    away_entries_complete: bool
 
 
-def _parse_side_entries(raw: Any, *, side: Literal["home", "away"]) -> list[ParsedInterchangeEntry] | None:
+def _parse_side_entries(raw: Any, *, side: Literal["home", "away"],
+                        ) -> tuple[list[ParsedInterchangeEntry] | None, bool]:
+    """Parse one side's array; also reports whether every entry was identifiable.
+
+    The second element is ``False`` when at least one entry could not be
+    mapped to a player (not an object, or missing a usable ``player.playerId``)
+    -- meaning this side's *complete* current membership cannot be trusted
+    this poll, even though the entries that *did* parse are still good
+    observations. Callers must not infer a previously-tracked player's
+    disappearance from a side where this is ``False``: the "missing" player
+    could simply be the one whose entry was malformed this poll, not someone
+    who has genuinely left the list. See ``persist_match_interchange``.
+    """
     if not isinstance(raw, list):
-        return None
+        return None, True
     entries: list[ParsedInterchangeEntry] = []
+    fully_identified = True
     for item in raw:
         if not isinstance(item, dict):
+            fully_identified = False
             continue
         player = item.get("player")
         player_provider_id = player.get("playerId") if isinstance(player, dict) else None
         if not isinstance(player_provider_id, str) or not player_provider_id:
+            fully_identified = False
             continue
         entries.append(ParsedInterchangeEntry(
             side=side,
@@ -240,7 +262,7 @@ def _parse_side_entries(raw: Any, *, side: Literal["home", "away"]) -> list[Pars
             time_on_bench=_coerce_int(item.get("timeOnBench")),
             power_rating=_coerce_int(item.get("powerRating")),
         ))
-    return entries
+    return entries, fully_identified
 
 
 def parse_match_interchange(payload: Any, *, match_id: int, match_provider_id: str, observed_at: str,
@@ -267,11 +289,13 @@ def parse_match_interchange(payload: Any, *, match_id: int, match_provider_id: s
             f"matchInterchange payload matchId {payload_match_id!r} does not match requested "
             f"match_provider_id {match_provider_id!r}"
         )
+    home_entries, home_complete = _parse_side_entries(payload.get("homeInterchange"), side="home")
+    away_entries, away_complete = _parse_side_entries(payload.get("awayInterchange"), side="away")
     return ParsedMatchInterchange(
         observed_at=observed_at, match_id=match_id, match_provider_id=match_provider_id,
         match_status_at_poll=match_status_at_poll,
-        home_entries=_parse_side_entries(payload.get("homeInterchange"), side="home"),
-        away_entries=_parse_side_entries(payload.get("awayInterchange"), side="away"),
+        home_entries=home_entries, away_entries=away_entries,
+        home_entries_complete=home_complete, away_entries_complete=away_complete,
     )
 
 
@@ -367,7 +391,12 @@ def persist_match_interchange(conn: sqlite3.Connection, parsed: ParsedMatchInter
     (``parsed.home_entries``/``away_entries`` is ``None``) is skipped
     entirely for both state updates and disappearance detection for players
     on that side -- a transient upstream hiccup must never be read as
-    "everyone on this side left the interchange list".
+    "everyone on this side left the interchange list". A side whose array
+    was present but contained at least one unidentifiable entry (``parsed.
+    home_entries_complete``/``away_entries_complete`` is ``False``) still has
+    its identifiable entries processed normally, but is excluded from
+    disappearance detection for the same reason -- the player "missing"
+    from this poll could simply be the one behind the malformed entry.
 
     Meaningful transitions only (Issue #204): a player's row being newly
     created or transitioning from off-list to on-list is ``appeared``; a
@@ -508,10 +537,17 @@ def persist_match_interchange(conn: sqlite3.Connection, parsed: ParsedMatchInter
                 changed.append({"id": event_id, "player_provider_id": entry.player_provider_id, "event_type": EVENT_BENCH_REASON_CHANGED})
 
     # Disappearance: an existing on-list player, on a side whose array was
-    # known this poll, who was not seen in this poll's (known) entries.
+    # both known this poll and fully identified (see _parse_side_entries),
+    # who was not seen in this poll's (known) entries. A side with even one
+    # malformed/unidentifiable entry is excluded here -- the "missing"
+    # player could simply be the one behind that malformed entry, not
+    # someone who genuinely left the list; treating that as a confirmed
+    # disappearance would write a false event and a false state flip.
     known_sides = {
-        side for side, known in (("home", parsed.home_entries is not None), ("away", parsed.away_entries is not None))
-        if known
+        side for side, known in (
+            ("home", parsed.home_entries is not None and parsed.home_entries_complete),
+            ("away", parsed.away_entries is not None and parsed.away_entries_complete),
+        ) if known
     }
     for player_provider_id, row in existing.items():
         if player_provider_id in seen_this_poll:
@@ -520,15 +556,25 @@ def persist_match_interchange(conn: sqlite3.Connection, parsed: ParsedMatchInter
             continue
         if row["side"] not in known_sides:
             continue
+        # Re-resolve canonical identity here too, not just on the appear/
+        # update paths above -- otherwise a player who disappears before a
+        # crosswalk is added for them would stay unresolved forever, since
+        # no further appear/update event would touch this row unless they
+        # reappear. This keeps current-state self-healing uniform across
+        # every write path (see module docstring "Canonical identity linking").
+        canonical_player_id = resolve_canonical_player(conn, player_provider_id)
+        canonical_team_id = resolve_canonical_team(conn, row["team_provider_id"])
         conn.execute(
-            "UPDATE match_interchange_state SET on_interchange_list=0, last_transition_at=?, "
-            "match_status_at_last_observation=?, collector_version=?, updated_at=? WHERE id=?",
-            (parsed.observed_at, parsed.match_status_at_poll, collector_version, parsed.observed_at, row["id"]),
+            "UPDATE match_interchange_state SET canonical_player_id=?, canonical_team_id=?, "
+            "on_interchange_list=0, last_transition_at=?, match_status_at_last_observation=?, "
+            "collector_version=?, updated_at=? WHERE id=?",
+            (canonical_player_id, canonical_team_id, parsed.observed_at, parsed.match_status_at_poll,
+             collector_version, parsed.observed_at, row["id"]),
         )
         event_id = _record_event(
             side=row["side"], player_provider_id=player_provider_id,
-            canonical_player_id=row["canonical_player_id"], team_provider_id=row["team_provider_id"],
-            canonical_team_id=row["canonical_team_id"], event_type=EVENT_DISAPPEARED,
+            canonical_player_id=canonical_player_id, team_provider_id=row["team_provider_id"],
+            canonical_team_id=canonical_team_id, event_type=EVENT_DISAPPEARED,
             interchange_count=row["interchange_count"], previous_interchange_count=row["interchange_count"],
             bench_reason=row["bench_reason"], previous_bench_reason=row["bench_reason"],
             time_on_ground=row["time_on_ground"], time_on_bench=row["time_on_bench"],
