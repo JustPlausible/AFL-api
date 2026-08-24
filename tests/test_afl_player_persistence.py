@@ -70,6 +70,150 @@ def test_optional_or_unknown_team_is_non_destructive_diagnostic(database):
     assert database.execute("SELECT team_id FROM competition_season_players").fetchone() == (None,)
 
 
+def test_resolved_team_preserved_when_later_snapshot_is_unresolved(database):
+    """Issue #210: a missing ``team`` field must not downgrade a resolved team_id.
+
+    Champion Data's season-player listing has no explicit removal signal, so a
+    later snapshot that simply omits team data is "no new information", not
+    evidence the player lost their team.
+    """
+    persist_player_seasons(database, result("CD_S1"), provider_season_id="CD_S1")
+    assert database.execute(
+        "SELECT team_id FROM competition_season_players WHERE competition_season_id=85"
+    ).fetchone() == (10,)
+
+    update = persist_player_seasons(database, result("CD_S1", team=None), provider_season_id="CD_S1")
+
+    assert database.execute(
+        "SELECT team_id FROM competition_season_players WHERE competition_season_id=85"
+    ).fetchone() == (10,)
+    assert update.missing_team_links == 0
+    assert update.unchanged == 1 and update.associations_updated == 0
+
+
+def test_unresolvable_provider_team_identity_preserves_existing_and_flags_diagnostic(database):
+    """A provider team id present but not (yet) canonically mapped is also non-destructive.
+
+    Unlike a missing field, this case is distinguishable and is still counted
+    via ``missing_team_links`` so it remains visible in data-quality
+    reporting, even though the persisted team_id is unaffected.
+    """
+    persist_player_seasons(database, result("CD_S1", team="CD_T1"), provider_season_id="CD_S1")
+
+    update = persist_player_seasons(database, result("CD_S1", team="CD_UNKNOWN"), provider_season_id="CD_S1")
+
+    assert update.missing_team_links == 1
+    assert database.execute(
+        "SELECT team_id FROM competition_season_players WHERE competition_season_id=85"
+    ).fetchone() == (10,)
+
+
+def test_resolved_team_idempotent_on_repeat(database):
+    first = persist_player_seasons(database, result("CD_S1", team="CD_T1"), provider_season_id="CD_S1")
+    repeat = persist_player_seasons(database, result("CD_S1", team="CD_T1"), provider_season_id="CD_S1")
+
+    assert first.associations_inserted == 1
+    assert repeat.unchanged == 1 and repeat.associations_updated == 0
+    assert database.execute(
+        "SELECT team_id FROM competition_season_players WHERE competition_season_id=85"
+    ).fetchone() == (10,)
+
+
+def test_unresolved_then_resolved_populates_team(database):
+    persist_player_seasons(database, result("CD_S1", team=None), provider_season_id="CD_S1")
+    assert database.execute(
+        "SELECT team_id FROM competition_season_players WHERE competition_season_id=85"
+    ).fetchone() == (None,)
+
+    persist_player_seasons(database, result("CD_S1", team="CD_T1"), provider_season_id="CD_S1")
+    assert database.execute(
+        "SELECT team_id FROM competition_season_players WHERE competition_season_id=85"
+    ).fetchone() == (10,)
+
+
+def test_legitimate_same_season_team_change_replaces_stale_team(database):
+    """A later snapshot resolving to a *different* team is a real change, not a downgrade.
+
+    The hardening for #210 must not amount to "once non-null, never change":
+    Team B here is itself a resolved, source-backed observation.
+    """
+    database.execute(
+        "INSERT INTO afl_teams(afl_id,provider_id,season_id,name,updated_at) VALUES (11,'CD_T2',86,'Dogs','now')"
+    )
+    database.execute("INSERT INTO afl_team_seasons VALUES (85,11,'now','now')")
+    database.commit()
+
+    persist_player_seasons(database, result("CD_S1", team="CD_T1"), provider_season_id="CD_S1")
+    update = persist_player_seasons(database, result("CD_S1", team="CD_T2"), provider_season_id="CD_S1")
+
+    assert update.associations_updated == 1
+    assert database.execute(
+        "SELECT team_id FROM competition_season_players WHERE competition_season_id=85"
+    ).fetchone() == (11,)
+
+
+def test_repeated_unresolved_snapshots_do_not_progressively_degrade_team(database):
+    """Repeated bootstrap/refresh calls (the only production persistence path,
+    shared by both ``bootstrap_afl_season`` and ``SeasonSynchronizer.run``)
+    must not erode a resolved membership over successive passes.
+    """
+    persist_player_seasons(database, result("CD_S1", team="CD_T1"), provider_season_id="CD_S1")
+    for _ in range(3):
+        persist_player_seasons(database, result("CD_S1", team=None), provider_season_id="CD_S1")
+
+    assert database.execute(
+        "SELECT team_id FROM competition_season_players WHERE competition_season_id=85"
+    ).fetchone() == (10,)
+
+
+def test_historical_seasons_isolated_from_same_season_team_refresh(database):
+    """Refreshing one season's membership with an unresolved snapshot must not
+    touch another season's row -- the update remains scoped by
+    (player_id, competition_season_id), unchanged from PR #207."""
+    database.execute(
+        "INSERT INTO afl_seasons(afl_id,provider_id,competition_id,year,updated_at) "
+        "VALUES (87,'CD_S3',1,2027,'now')"
+    )
+    database.execute(
+        "INSERT INTO afl_teams(afl_id,provider_id,season_id,name,updated_at) VALUES (11,'CD_T2',87,'Dogs','now')"
+    )
+    database.executemany(
+        "INSERT INTO afl_team_seasons VALUES (?,?,?,?)", ((87, 10, "now", "now"), (87, 11, "now", "now")),
+    )
+    database.commit()
+
+    persist_player_seasons(database, result("CD_S1", team="CD_T1"), provider_season_id="CD_S1")  # 2025 -> Team A
+    persist_player_seasons(database, result("CD_S2", team="CD_T1"), provider_season_id="CD_S2")  # 2026 -> Team A
+    persist_player_seasons(database, result("CD_S3", team="CD_T2"), provider_season_id="CD_S3")  # 2027 -> Team B
+
+    before = database.execute(
+        "SELECT competition_season_id,team_id,updated_at FROM competition_season_players "
+        "WHERE competition_season_id IN (85,86) ORDER BY competition_season_id"
+    ).fetchall()
+
+    # Refresh 2027 with an unresolved snapshot; 2025/2026 rows must be untouched.
+    persist_player_seasons(database, result("CD_S3", team=None), provider_season_id="CD_S3")
+
+    after = database.execute(
+        "SELECT competition_season_id,team_id,updated_at FROM competition_season_players "
+        "WHERE competition_season_id IN (85,86) ORDER BY competition_season_id"
+    ).fetchall()
+    assert before == after
+    assert database.execute(
+        "SELECT team_id FROM competition_season_players WHERE competition_season_id=87"
+    ).fetchone() == (11,)
+
+
+# Note on explicit team removal (Issue #210 investigation finding): Champion
+# Data's season-player endpoint carries no distinct removal/no-team signal --
+# a player with no team is indistinguishable from a player whose team simply
+# failed to resolve. No test exercises "explicit removal clears team_id"
+# because the source/model does not currently expose that state; inventing
+# one would conflate it with the unresolved case this fix is careful not to
+# treat as destructive. See docs/database_migrations.md for the documented
+# limitation.
+
+
 def test_conflicting_crosswalk_rolls_back_without_reassignment(database):
     persist_player_seasons(database, result("CD_S1"), provider_season_id="CD_S1")
     other = PlayerCollectionResult(

@@ -1,4 +1,19 @@
-"""Transactional persistence for normalized canonical player collections."""
+"""Transactional persistence for normalized canonical player collections.
+
+``persist_player_seasons`` updates are scoped to one
+``(player_id, competition_season_id)`` row: refreshing one season never
+touches another season's membership. Within that scope, a same-season
+snapshot whose team is unresolved (missing ``team`` field, or a provider
+team identifier that does not resolve through ``afl_team_seasons``/
+``afl_teams``) preserves the row's existing resolved ``team_id`` rather than
+overwriting it with ``NULL`` -- Champion Data's season-player listing has no
+explicit removal/lifecycle signal, so an unresolved observation is treated
+as "no new information" rather than "the player has no team". A snapshot
+that resolves to a *different* canonical team still replaces the stored
+``team_id``, since that is itself a resolved, source-backed observation
+(see Issue #210 for the investigation this is based on, and Issue #182/PR
+#207 for the cross-season isolation this preserves).
+"""
 from __future__ import annotations
 
 import json
@@ -120,7 +135,7 @@ def persist_player_seasons(conn: sqlite3.Connection, result: PlayerCollectionRes
                     )
                     counts["mappings_inserted"] += 1
             association = associations[cd_id]
-            team_id = None
+            resolved_team_id = None
             team_provider_id = association.get("team_id")
             if team_provider_id:
                 team = conn.execute(
@@ -129,17 +144,30 @@ def persist_player_seasons(conn: sqlite3.Connection, result: PlayerCollectionRes
                     (season_id, team_provider_id),
                 ).fetchone()
                 if team:
-                    team_id = team[0]
+                    resolved_team_id = team[0]
                 else:
                     counts["missing_team_links"] += 1
-            values = (team_id, "champion_data", association.get("jumper_number"),
-                      association.get("listed_position"), association.get("photo_url"),
-                      json.dumps(association.get("source"), sort_keys=True, separators=(",", ":")))
             existing = conn.execute(
                 "SELECT team_id,source_provider,jumper_number,listed_position,photo_url,source_json "
                 "FROM competition_season_players WHERE player_id=? AND competition_season_id=?",
                 (player_id, season_id),
             ).fetchone()
+            # Champion Data's season-player snapshot has no removal/lifecycle
+            # signal: a missing "team" field and a team identifier that does
+            # not (yet) resolve to a canonical team are indistinguishable from
+            # "this observation carries no team information", and are not
+            # evidence that a previously resolved same-season team is no
+            # longer valid. Retain the last resolved team_id for this
+            # (player_id, competition_season_id) row in that case. A snapshot
+            # that resolves to a *different* team still replaces it, since
+            # that is itself a resolved, source-backed observation -- this is
+            # not a blanket "once set, never change" rule.
+            team_id = resolved_team_id if resolved_team_id is not None else (
+                existing[0] if existing is not None else None
+            )
+            values = (team_id, "champion_data", association.get("jumper_number"),
+                      association.get("listed_position"), association.get("photo_url"),
+                      json.dumps(association.get("source"), sort_keys=True, separators=(",", ":")))
             if existing is None:
                 conn.execute(
                     "INSERT INTO competition_season_players(player_id,competition_season_id,team_id,"
