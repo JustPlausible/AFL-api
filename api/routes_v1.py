@@ -490,15 +490,30 @@ def _display_name(row) -> str | None:
         "Returns canonical player identity and AFL statistics with final, partial, or "
         "not_available lifecycle semantics. metadata.source_updated_at is the newest "
         "source observation represented by the returned (and therefore filtered) rows, "
-        "or null when no rows are returned. Set advanced=true to add selected per-player "
-        "provenance and match-level finality evidence; this requires the advanced-read "
-        "API-key capability. Application 403 and 404 errors use the documented structured "
-        "error response."
+        "or null when no rows are returned. canonical_player_id and champion_data_player_id "
+        "each filter directly against the value persisted on the stat row -- neither is "
+        "resolved from the other. Supplying both is conjunctive (AND): rows must match both "
+        "persisted values, so identifiers naming different players deterministically return "
+        "an empty players list rather than an error, consistent with any other filter that "
+        "matches no rows. A row with an unresolved (null) canonical_player_id never matches "
+        "the canonical filter but remains reachable via champion_data_player_id. Set "
+        "advanced=true to add selected per-player provenance and match-level finality "
+        "evidence; this requires the advanced-read API-key capability. Application 403 and "
+        "404 errors use the documented structured error response."
     ),
 )
 def get_match_player_stats(
     match_id: int,
     side: MatchSide | None = Query(None, description="Filter players by side (home or away)"),
+    canonical_player_id: int | None = Query(
+        None,
+        description=(
+            "Filter to a single player by canonical AFL-api player ID "
+            "(cfs_player_stats.canonical_player_id). Matches only rows with that "
+            "persisted canonical identity; a row with an unresolved (null) canonical "
+            "identity never matches, and is not inferred."
+        ),
+    ),
     champion_data_player_id: str | None = Query(
         None, description="Filter to a single player by Champion Data player ID"
     ),
@@ -557,6 +572,9 @@ def get_match_player_stats(
         if side is not None:
             filters.append("s.side = ?")
             values.append(side.value)
+        if canonical_player_id is not None:
+            filters.append("s.canonical_player_id = ?")
+            values.append(canonical_player_id)
         if champion_data_player_id is not None:
             filters.append("s.champion_data_player_id = ?")
             values.append(champion_data_player_id)
