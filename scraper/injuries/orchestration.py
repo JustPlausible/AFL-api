@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from db.scrape_runs import audited_scrape_run
 from .acquisition import InjuryAcquirer
 from .models import InjuryCollectionOutcome
@@ -24,6 +26,21 @@ def collect_injuries(conn, *, acquirer=None, parser=parse_injuries_html,
         audit["rows_read"] = persisted.rows_parsed
         audit["rows_written"] = persisted.rows_persisted
         audit["status"] = persisted.status
+        # Reuse the existing scrape-run audit record for source-coverage
+        # provenance rather than a parallel logging mechanism: which teams
+        # were actually observed on this page (and therefore eligible to
+        # scope expiry) versus teams whose absence carries no information.
+        resolved_teams = sorted(
+            {t.club_code for t in resolved.observed_teams if t.status == "resolved"}
+        )
+        audit["diagnostic_summary"] = json.dumps({
+            "source_url": document.source_url,
+            "observed_team_count": len(resolved.observed_teams),
+            "observed_resolved_teams": resolved_teams,
+            "rows_parsed": persisted.rows_parsed,
+            "rows_persisted": persisted.rows_persisted,
+            "status": persisted.status,
+        }, separators=(",", ":"))
         parser_diagnostics = tuple({
             "code": item.code, "message": item.message, "team_index": item.team_index
         } for item in parsed.diagnostics)
@@ -32,5 +49,5 @@ def collect_injuries(conn, *, acquirer=None, parser=parse_injuries_html,
             parsed.team_count, persisted.rows_parsed, persisted.rows_resolved,
             persisted.rows_persisted, persisted.rows_unresolved,
             persisted.rows_ambiguous, persisted.status,
-            parser_diagnostics + persisted.diagnostics,
+            parser_diagnostics + persisted.diagnostics, persisted.teams_observed,
         )

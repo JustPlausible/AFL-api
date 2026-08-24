@@ -5,7 +5,7 @@ import re
 from bs4 import BeautifulSoup, Comment
 
 from scraper.afl_selectors import INJURY_SELECTORS
-from .models import InjuryParseResult, InjuryParserDiagnostic, ParsedInjuryRecord
+from .models import InjuryParseResult, InjuryParserDiagnostic, ParsedInjuryRecord, ParsedTeamBlock
 
 
 def parse_injuries_html(html: str) -> InjuryParseResult:
@@ -20,7 +20,7 @@ def parse_injuries_html(html: str) -> InjuryParseResult:
         raise ValueError(
             f"Injury source contract contains no team blocks '{INJURY_SELECTORS.TEAM_BLOCKS}'"
         )
-    records, diagnostics = [], []
+    records, diagnostics, teams = [], [], []
     for index, block in enumerate(blocks):
         comment = block.find(string=lambda value: isinstance(value, Comment))
         image_soup = BeautifulSoup(comment, "html.parser") if comment else None
@@ -53,6 +53,16 @@ def parse_injuries_html(html: str) -> InjuryParseResult:
             diagnostics.append(InjuryParserDiagnostic(
                 "missing_optional_updated", "Team table has no update date", index
             ))
+        # Record this team block's coverage regardless of row count: a block
+        # with zero rows is still an authoritative empty list for that team,
+        # distinct from a team never appearing on the page at all.
+        teams.append(ParsedTeamBlock(
+            team_index=index,
+            club_image_src=image["src"],
+            club_image_alt=image.get("alt", "").strip(),
+            updated=updated,
+            row_count=len(player_rows),
+        ))
         for cells in player_rows:
             records.append(ParsedInjuryRecord(
                 player_name=cells[0].get_text(" ", strip=True),
@@ -62,4 +72,4 @@ def parse_injuries_html(html: str) -> InjuryParseResult:
                 club_image_src=image["src"],
                 club_image_alt=image.get("alt", "").strip(),
             ))
-    return InjuryParseResult(tuple(records), len(blocks), tuple(diagnostics))
+    return InjuryParseResult(tuple(records), len(blocks), tuple(diagnostics), tuple(teams))

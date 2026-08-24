@@ -1,5 +1,30 @@
 # AFL Injury List Fixtures
 
+## 2026 finals-window boundary case (Issue #213)
+
+As of 2026-08-24, the live injury page is reported to show only the 10 teams
+remaining in the AFL finals series, rather than all 18 AFL teams. This is
+temporary but important real-world evidence for partial source coverage: a
+team's absence from the page must never be treated as "that team has zero
+injuries" (see `docs/architecture/injury_collector_pipeline.md`).
+
+**No fixture for this specific 10-team finals state is committed here.** A
+live capture was attempted on 2026-08-24 and was blocked by this execution
+environment's own network policy before any origin response -- see
+`docs/investigation/afl_injury_finals_evidence_capture_2026-08-24.md` for the
+full record. Per repository policy, fixture structure for a state that could
+not actually be observed was not fabricated. An operator with unrestricted
+network access should still capture this state (rendered + plain HTTP, per
+that investigation doc) before the finals conclude and the page reverts to an
+18-team state.
+
+The closest committed evidence for the "team present with zero rows" half of
+this boundary case is
+`tests/fixtures/afl_sources/html_rendered/injuries_round_21_populated.html`,
+which already has one team with a listed row and one team with a table but no
+rows. It does not, however, demonstrate a team missing from the page
+entirely -- only a live finals-window capture can.
+
 ## Purpose
 
 These fixtures support development and regression testing of the AFL injury

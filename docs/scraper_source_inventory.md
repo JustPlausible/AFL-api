@@ -2,6 +2,15 @@
 
 **Repository revision investigated:** `6c738e6`<br>
 **Last verified:** 2026-08-01<br>
+**Injuries domain re-attempted:** 2026-08-24 (Issue #213) -- live capture and
+the requested plain-HTTP-vs-Playwright comparison were blocked by this
+environment's egress policy before any origin response, identically to the
+2026-07-28 finding below. No conclusion in this document changed as a result;
+see `docs/investigation/afl_injury_finals_evidence_capture_2026-08-24.md` for
+the full record and required live-network follow-up. Separately, Issue #213
+also fixed the injuries persistence layer so that a team omitted from the
+page is no longer treated as "confirmed zero injuries" -- see
+`docs/architecture/injury_collector_pipeline.md`.<br>
 **Scope:** documentation and investigation only; no runtime scraper, selector,
 model, schema, scheduler, Admin action, or acquisition-routing change is made here.
 

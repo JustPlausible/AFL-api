@@ -163,7 +163,7 @@ def start_scrape_run(scrape_type: str, *, target_type: str | None = None, target
             db.close()
 
 
-def _finish(run_id: str, status: str, *, rows_read=None, rows_written=None, error_class=None, error_summary=None, conn=None) -> None:
+def _finish(run_id: str, status: str, *, rows_read=None, rows_written=None, error_class=None, error_summary=None, diagnostic_summary=None, conn=None) -> None:
     db, close = _conn(conn)
     finished = utc_now()
     try:
@@ -173,10 +173,17 @@ def _finish(run_id: str, status: str, *, rows_read=None, rows_written=None, erro
             raise ValueError(f"No running scrape run found for run_id={run_id}")
         started = datetime.fromisoformat(row[0])
         duration_ms = max(0, int((datetime.fromisoformat(finished) - started).total_seconds() * 1000))
-        updated = db.execute("""
-            UPDATE scrape_runs SET status=?, finished_at=?, duration_ms=?, rows_read=?, rows_written=?, error_class=?, error_summary=?
-            WHERE run_id=? AND status=?
-        """, (status, finished, duration_ms, rows_read, rows_written, error_class, error_summary, run_id, STATUS_RUNNING))
+        if diagnostic_summary is not None:
+            updated = db.execute("""
+                UPDATE scrape_runs SET status=?, finished_at=?, duration_ms=?, rows_read=?, rows_written=?, error_class=?, error_summary=?, diagnostic_summary=?
+                WHERE run_id=? AND status=?
+            """, (status, finished, duration_ms, rows_read, rows_written, error_class, error_summary,
+                  sanitize_error_summary(diagnostic_summary), run_id, STATUS_RUNNING))
+        else:
+            updated = db.execute("""
+                UPDATE scrape_runs SET status=?, finished_at=?, duration_ms=?, rows_read=?, rows_written=?, error_class=?, error_summary=?
+                WHERE run_id=? AND status=?
+            """, (status, finished, duration_ms, rows_read, rows_written, error_class, error_summary, run_id, STATUS_RUNNING))
         if updated.rowcount != 1:
             raise ValueError(f"No running scrape run found for run_id={run_id}")
         db.commit()
@@ -187,9 +194,11 @@ def _finish(run_id: str, status: str, *, rows_read=None, rows_written=None, erro
 
 def complete_scrape_run(run_id: str, *, rows_read: int | None = None,
                         rows_written: int | None = None, partial: bool = False,
+                        diagnostic_summary: str | None = None,
                         conn: sqlite3.Connection | None = None) -> None:
     _finish(run_id, STATUS_PARTIAL if partial else STATUS_COMPLETED,
-            rows_read=rows_read, rows_written=rows_written, conn=conn)
+            rows_read=rows_read, rows_written=rows_written,
+            diagnostic_summary=diagnostic_summary, conn=conn)
 
 
 def fail_scrape_run(run_id: str, exc: BaseException | str, *, conn: sqlite3.Connection | None = None) -> None:
@@ -306,7 +315,8 @@ def audited_scrape_run(scrape_type: str, *, target_type: str | None = None, targ
         if run_id is not None:
             finish = lambda db: complete_scrape_run(
                 run_id, rows_read=counts.get("rows_read"), rows_written=counts.get("rows_written"),
-                partial=counts.get("status") == "partial", conn=db)
+                partial=counts.get("status") == "partial",
+                diagnostic_summary=counts.get("diagnostic_summary"), conn=db)
             (write_executor("scrape_runs.complete", run_id, finish) if write_executor else finish(conn))
     finally:
         _audit_depth.reset(depth_token)

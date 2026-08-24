@@ -1338,3 +1338,123 @@ def get_match_interchange_events(
         ),
         events=[_interchange_event_from_row(row, player_names) for row in rows],
     )
+
+
+class InjuryPlayer(BaseModel):
+    """Minimal player identity attached to one injury row."""
+
+    display_name: str | None = Field(
+        description="Canonical display name, or null when not yet resolved."
+    )
+
+
+class InjuryRecord(BaseModel):
+    """One current canonical injury (Issue #213)."""
+
+    canonical_player_id: int = Field(
+        description="Primary consumer player identity; always present -- see Scope below."
+    )
+    player: InjuryPlayer
+    team: MatchTeam | None = Field(
+        description="Canonical team identity, or null when the source club marker did not "
+        "resolve to a canonical team."
+    )
+    injury: str | None = Field(description="Source injury description, persisted verbatim.")
+    estimated_return: str | None = Field(
+        description="Source estimated-return text, persisted verbatim (e.g. 'Round 5', 'Test')."
+    )
+    source_updated: str | None = Field(
+        description="Source 'Updated:' text for this player's team block, or null when the "
+        "source omitted it."
+    )
+    observed_at: str = Field(description="UTC time this row was last (re)collected.")
+    current: bool = Field(description="Always true for this resource today; see Scope below.")
+
+
+class InjuriesResponse(BaseModel):
+    injuries: list[InjuryRecord]
+
+
+@router.get(
+    "/api/v1/injuries",
+    response_model=InjuriesResponse,
+    summary="List current canonical injuries",
+    description=(
+        "Returns current AFL injury rows using canonical player and team identity, resolved "
+        "at collection time by the injury pipeline (scraper/injuries/resolution.py) rather than "
+        "guessed at read time. canonical_player_id is the primary consumer identity, matching "
+        "GET /api/v1/players/{canonical_player_id}; only rows with a resolved canonical player "
+        "identity are returned -- an unresolved/ambiguous source row is never exposed under an "
+        "invented or provider-only identity. team_id filters by canonical AFL team id (the same "
+        "identifier used by home_team/away_team on the match resource); canonical_player_id "
+        "filters to one player. Both are optional and conjunctive when combined. Ordering is "
+        "deterministic: team_id ascending (unresolved-team rows last), then canonical_player_id "
+        "ascending. This resource only ever returns current injuries -- historical injury "
+        "querying is out of scope for now (Issue #213). A team omitted from the AFL source page "
+        "is not evidence that team has zero injuries: see docs/architecture/injury_collector_pipeline.md."
+    ),
+)
+def get_injuries(
+    team_id: int | None = Query(
+        None, ge=_SQLITE_INTEGER_MIN, le=_SQLITE_INTEGER_MAX,
+        description="Filter to one canonical AFL team id.",
+    ),
+    canonical_player_id: int | None = Query(
+        None, ge=_SQLITE_INTEGER_MIN, le=_SQLITE_INTEGER_MAX,
+        description="Filter to one canonical AFL-api player id.",
+    ),
+    credential: AuthenticatedCredential = Depends(authenticate_api_key),
+) -> InjuriesResponse:
+    log(f"🩹 {credential.label} requested v1 injuries", "INFO")
+    filters = ["i.current = 1", "i.canonical_player_id IS NOT NULL"]
+    values: list[object] = []
+    if team_id is not None:
+        filters.append("i.canonical_team_id = ?")
+        values.append(team_id)
+    if canonical_player_id is not None:
+        filters.append("i.canonical_player_id = ?")
+        values.append(canonical_player_id)
+
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            "SELECT i.canonical_player_id, i.canonical_team_id, i.injury, i.return_info, "
+            "i.updated, i.scraped_at, i.current "
+            "FROM injuries i "
+            f"WHERE {' AND '.join(filters)} "
+            "ORDER BY i.canonical_team_id IS NULL, i.canonical_team_id, i.canonical_player_id",
+            tuple(values),
+        ).fetchall()
+
+        player_names: dict[int, str | None] = {}
+        player_ids = {row["canonical_player_id"] for row in rows}
+        if player_ids:
+            placeholders = ",".join("?" for _ in player_ids)
+            for prow in conn.execute(
+                "SELECT id, display_name, given_name, family_name FROM canonical_players "
+                f"WHERE id IN ({placeholders})",
+                tuple(player_ids),
+            ):
+                player_names[prow["id"]] = _display_name(prow)
+        teams = _team_projection(conn)
+    finally:
+        conn.close()
+
+    injuries = []
+    for row in rows:
+        team_id_value = row["canonical_team_id"]
+        team = None
+        if team_id_value is not None:
+            name, _abbreviation = teams.get(team_id_value, (None, None))
+            team = MatchTeam(team_id=team_id_value, name=name)
+        injuries.append(InjuryRecord(
+            canonical_player_id=row["canonical_player_id"],
+            player=InjuryPlayer(display_name=player_names.get(row["canonical_player_id"])),
+            team=team,
+            injury=row["injury"],
+            estimated_return=row["return_info"],
+            source_updated=row["updated"] or None,
+            observed_at=row["scraped_at"],
+            current=bool(row["current"]),
+        ))
+    return InjuriesResponse(injuries=injuries)

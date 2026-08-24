@@ -10,11 +10,12 @@ from db.migration_runner import migrate_database
 from scraper.injuries.acquisition import INJURY_URL, InjuryAcquirer
 from scraper.injuries.models import (
     InjuryParseResult, InjuryResolutionResult, InjurySourceDocument,
-    ParsedInjuryRecord, ResolvedInjuryRecord,
+    ParsedInjuryRecord, ParsedTeamBlock, ResolvedInjuryRecord, ResolvedTeamCoverage,
 )
 from scraper.injuries.orchestration import collect_injuries
 from scraper.injuries.parser import parse_injuries_html
 from scraper.injuries.persistence import InjuryPersistenceAdapter
+from scraper.injuries.resolution import InjuryResolver
 
 FIXTURE = Path("tests/fixtures/afl_sources/html_rendered/injuries_round_21_populated.html")
 
@@ -71,6 +72,52 @@ def test_pure_parser_reports_counts_raw_markers_and_optional_diagnostic():
     assert parse_injuries_html(changed).diagnostics[0].code == "missing_optional_updated"
 
 
+def test_pure_parser_records_team_coverage_including_zero_row_block():
+    """Every recognised team block is observed coverage, whether or not it has rows.
+
+    The fixture's second team (Carlton) has zero player rows -- that must still
+    surface as an explicit, present team block, not be silently absent from the
+    parse result (Issue #213 partial-team persistence semantics).
+    """
+    parsed = parse_injuries_html(FIXTURE.read_text())
+    assert len(parsed.teams) == 2
+    adelaide, carlton = parsed.teams
+    assert (adelaide.team_index, adelaide.row_count, adelaide.club_image_alt) == (0, 1, "Adelaide Crows")
+    assert (carlton.team_index, carlton.row_count, carlton.club_image_alt) == (1, 0, "Carlton")
+
+
+def _club_stub(mapping):
+    def resolver(_src, alt):
+        return mapping.get(alt)
+    return resolver
+
+
+class _StubPlayerResolver:
+    def resolve(self, name, club_code):
+        from merge.helpers import InjuryPlayerResolution
+        return InjuryPlayerResolution("resolved", name, club_code, canonical_player_id=1, afl_id=1)
+
+
+def test_resolver_marks_team_coverage_resolved_only_when_club_marker_is_canonical():
+    parsed = InjuryParseResult((), 2, (), (
+        ParsedTeamBlock(0, "adelaide.jpg", "Adelaide Crows", "July 28, 2026", 0),
+        ParsedTeamBlock(1, "unknown.jpg", "Unknown Team", "", 0),
+    ))
+    resolver = InjuryResolver(
+        conn=None,
+        club_resolver=_club_stub({"Adelaide Crows": {"code": "ADE", "teamId": 1}}),
+        player_resolver=_StubPlayerResolver(),
+    )
+    resolved = resolver.resolve(parsed)
+    assert [team.status for team in resolved.observed_teams] == ["resolved", "unresolved"]
+    assert resolved.observed_teams[0].canonical_team_id == 1
+    assert resolved.observed_teams[1].canonical_team_id is None
+    assert any(
+        diagnostic["reason"] and "team block" in diagnostic["reason"]
+        for diagnostic in resolved.diagnostics
+    )
+
+
 def _database(tmp_path):
     path = tmp_path / "pipeline.db"
     migrate_database(path)
@@ -106,6 +153,133 @@ def test_persistence_rolls_back_the_whole_stage_on_failure(tmp_path):
     conn.close()
 
 
+def test_persistence_stores_resolved_canonical_identity(tmp_path):
+    conn = _database(tmp_path)
+    InjuryPersistenceAdapter(conn).persist(_resolved(), _document())
+    row = conn.execute(
+        "SELECT canonical_player_id, canonical_team_id FROM injuries WHERE afl_id=123"
+    ).fetchone()
+    assert row == (1, None)
+    conn.close()
+
+
+def _player_row(name, afl_id, club_code, canonical_team_id, canonical_player_id=None):
+    source = ParsedInjuryRecord(name, "Knee", "1 week", "Today", "x", club_code)
+    return ResolvedInjuryRecord(
+        source, "resolved", club_code, canonical_player_id if canonical_player_id is not None else afl_id,
+        afl_id, canonical_team_id=canonical_team_id,
+    )
+
+
+def _seed_current(conn, afl_id, name, club, canonical_team_id, canonical_player_id, updated="prior"):
+    conn.execute(
+        "INSERT INTO injuries (afl_id, club, player_name, injury, return_info, updated, "
+        "first_updated, source, scraped_at, current, canonical_player_id, canonical_team_id) "
+        "VALUES (?, ?, ?, 'Old', 'Old', ?, ?, 'prior-source', 'prior-time', 1, ?, ?)",
+        (afl_id, club, name, updated, updated, canonical_player_id, canonical_team_id),
+    )
+    conn.commit()
+
+
+def test_partial_team_coverage_preserves_omitted_team_current_rows(tmp_path):
+    """A team absent from the latest page's observed coverage keeps its prior current rows."""
+    conn = _database(tmp_path)
+    _seed_current(conn, 900, "West Coast Player", "WCE", 7, 900)
+    resolved = InjuryResolutionResult(
+        (_player_row("Adelaide Player", 1, "ADE", 1),),
+        observed_teams=(ResolvedTeamCoverage(0, "resolved", "ADE", 1, 1),),
+    )
+    InjuryPersistenceAdapter(conn).persist(resolved, _document())
+    assert conn.execute("SELECT current FROM injuries WHERE afl_id=900").fetchone() == (1,)
+    conn.close()
+
+
+def test_observed_team_with_zero_rows_is_authoritative_empty(tmp_path):
+    """A team block present with zero rows expires that team's previously-current rows."""
+    conn = _database(tmp_path)
+    _seed_current(conn, 901, "Carlton Player", "CAR", 5, 901)
+    resolved = InjuryResolutionResult(
+        (), observed_teams=(ResolvedTeamCoverage(0, "resolved", "CAR", 5, 0),),
+    )
+    InjuryPersistenceAdapter(conn).persist(resolved, _document())
+    assert conn.execute("SELECT current FROM injuries WHERE afl_id=901").fetchone() == (0,)
+    conn.close()
+
+
+def test_observed_team_expires_player_no_longer_listed_but_keeps_others_current(tmp_path):
+    conn = _database(tmp_path)
+    _seed_current(conn, 902, "Still Injured", "ADE", 1, 902)
+    _seed_current(conn, 903, "Now Fit", "ADE", 1, 903)
+    resolved = InjuryResolutionResult(
+        (_player_row("Still Injured", 902, "ADE", 1),),
+        observed_teams=(ResolvedTeamCoverage(0, "resolved", "ADE", 1, 1),),
+    )
+    InjuryPersistenceAdapter(conn).persist(resolved, _document())
+    rows = dict(conn.execute("SELECT afl_id, current FROM injuries WHERE afl_id IN (902,903)").fetchall())
+    assert rows == {902: 1, 903: 0}
+    conn.close()
+
+
+def test_full_team_coverage_expires_across_every_observed_team(tmp_path):
+    conn = _database(tmp_path)
+    _seed_current(conn, 904, "Gone A", "ADE", 1, 904)
+    _seed_current(conn, 905, "Gone B", "CAR", 5, 905)
+    resolved = InjuryResolutionResult(
+        (_player_row("New A", 906, "ADE", 1), _player_row("New B", 907, "CAR", 5)),
+        observed_teams=(
+            ResolvedTeamCoverage(0, "resolved", "ADE", 1, 1),
+            ResolvedTeamCoverage(1, "resolved", "CAR", 5, 1),
+        ),
+    )
+    InjuryPersistenceAdapter(conn).persist(resolved, _document())
+    current_ids = {row[0] for row in conn.execute("SELECT afl_id FROM injuries WHERE current=1").fetchall()}
+    assert current_ids == {906, 907}
+    conn.close()
+
+
+def test_unresolved_identity_anywhere_blocks_all_expiry_even_for_observed_teams(tmp_path):
+    conn = _database(tmp_path)
+    _seed_current(conn, 908, "Should Survive", "ADE", 1, 908)
+    unresolved_source = ParsedInjuryRecord("Mystery Player", "Knee", "1 week", "Today", "x", "ADE")
+    resolved = InjuryResolutionResult(
+        (_player_row("New Player", 909, "ADE", 1),
+         ResolvedInjuryRecord(unresolved_source, "unresolved", reason="no canonical match")),
+        observed_teams=(ResolvedTeamCoverage(0, "resolved", "ADE", 1, 2),),
+    )
+    result = InjuryPersistenceAdapter(conn).persist(resolved, _document())
+    assert result.status == "partial"
+    assert conn.execute("SELECT current FROM injuries WHERE afl_id=908").fetchone() == (1,)
+    conn.close()
+
+
+def test_ambiguous_identity_anywhere_blocks_all_expiry_even_for_observed_teams(tmp_path):
+    conn = _database(tmp_path)
+    _seed_current(conn, 910, "Should Also Survive", "ADE", 1, 910)
+    ambiguous_source = ParsedInjuryRecord("Two Matches", "Knee", "1 week", "Today", "x", "ADE")
+    resolved = InjuryResolutionResult(
+        (_player_row("New Player", 911, "ADE", 1),
+         ResolvedInjuryRecord(ambiguous_source, "ambiguous", "ADE", reason="two canonical matches")),
+        observed_teams=(ResolvedTeamCoverage(0, "resolved", "ADE", 1, 2),),
+    )
+    result = InjuryPersistenceAdapter(conn).persist(resolved, _document())
+    assert result.status == "partial"
+    assert conn.execute("SELECT current FROM injuries WHERE afl_id=910").fetchone() == (1,)
+    conn.close()
+
+
+def test_team_block_with_unresolved_club_marker_does_not_scope_expiry(tmp_path):
+    """A team block that itself failed club resolution must not expire anything --
+    persistence does not safely know which team's coverage it represents."""
+    conn = _database(tmp_path)
+    _seed_current(conn, 912, "Unknown Club Player", "XXX", None, 912)
+    resolved = InjuryResolutionResult(
+        (), observed_teams=(ResolvedTeamCoverage(0, "unresolved", reason="club marker unresolved"),),
+    )
+    InjuryPersistenceAdapter(conn).persist(resolved, _document())
+    assert conn.execute("SELECT current FROM injuries WHERE afl_id=912").fetchone() == (1,)
+    conn.close()
+
+
 class _Acquirer:
     def acquire(self): return _document()
 
@@ -124,6 +298,33 @@ def test_orchestration_completes_one_audit_and_returns_structured_outcome(tmp_pa
     assert conn.execute("SELECT status,rows_read,rows_written FROM scrape_runs").fetchone() == (
         "completed", 1, 1
     )
+    conn.close()
+
+
+class _CoverageResolver:
+    """Stub resolver whose result also carries observed-team coverage."""
+
+    def __init__(self, _conn): pass
+
+    def resolve(self, _parsed):
+        source = _resolved().records[0].source
+        return InjuryResolutionResult(
+            (ResolvedInjuryRecord(source, "resolved", "ADE", 1, 123, canonical_team_id=1),),
+            observed_teams=(ResolvedTeamCoverage(0, "resolved", "ADE", 1, 1),),
+        )
+
+
+def test_orchestration_records_source_coverage_provenance_on_the_scrape_run(tmp_path):
+    """Issue #213: reuse the existing scrape-run audit for source-coverage provenance."""
+    conn = _database(tmp_path)
+    parser = lambda _html: InjuryParseResult((_resolved().records[0].source,), 1)
+    result = collect_injuries(conn, acquirer=_Acquirer(), parser=parser,
+                              resolver_factory=_CoverageResolver)
+    assert result.teams_observed == 1
+    summary = conn.execute("SELECT diagnostic_summary FROM scrape_runs").fetchone()[0]
+    payload = json.loads(summary)
+    assert payload["observed_team_count"] == 1
+    assert payload["observed_resolved_teams"] == ["ADE"]
     conn.close()
 
 
