@@ -573,3 +573,253 @@ def test_search_response_shape_and_openapi_documentation(tmp_path, monkeypatch):
 
     operation = client.get("/openapi.json").json()["paths"]["/api/v1/players"]["get"]
     assert {"200", "422"} <= set(operation["responses"])
+
+
+# --- GET /api/v1/players/{canonical_player_id}/seasons --------------------
+
+FUTURE_SEASON_ID = 86
+TEAM_B_ID = 11
+
+
+def _seed_future_season(conn, *, future_season_id=FUTURE_SEASON_ID, team_id=TEAM_B_ID):
+    """Seed a 2027 season and a second club (Team B), distinct from the
+    2025/2026 fixture seeded by ``_seed_seasons``/``TEAM_ID`` (Team A)."""
+    conn.execute(
+        "INSERT INTO afl_seasons VALUES(?,'CD_S86',1,'2027','2027',2027,0,1,NULL,NULL,'{}','{}',?)",
+        (future_season_id, NOW),
+    )
+    conn.execute(
+        "INSERT INTO afl_teams VALUES(?,'CD_T2',?,'Essendon','ESS','Bombers','Essendon',"
+        "'Essendon','MEN','{}','{}','{}',?)",
+        (team_id, future_season_id, NOW),
+    )
+    conn.execute("INSERT INTO afl_team_seasons VALUES(?,?,?,?)", (future_season_id, team_id, NOW, NOW))
+
+
+def _get_seasons(client, canonical_player_id=PLAYER_ID, headers=None):
+    headers = headers or {"x-api-key": API_KEY}
+    return client.get(f"/api/v1/players/{canonical_player_id}/seasons", headers=headers)
+
+
+def test_seasons_returns_multiple_memberships_most_recent_first(tmp_path, monkeypatch):
+    def seed(conn):
+        _seed_seasons(conn)
+        _seed_player(conn, display_name="Nick Daicos")
+        _seed_membership(conn, PLAYER_ID, OTHER_SEASON_ID, TEAM_ID)
+        _seed_membership(conn, PLAYER_ID, CURRENT_SEASON_ID, TEAM_ID)
+
+    db_path = _make_db(tmp_path, seed=seed)
+    client = _client(db_path, monkeypatch)
+
+    response = _get_seasons(client)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["canonical_player_id"] == PLAYER_ID
+    assert [s["season_id"] for s in body["seasons"]] == [CURRENT_SEASON_ID, OTHER_SEASON_ID]
+    assert [s["year"] for s in body["seasons"]] == [2026, 2025]
+
+
+def test_seasons_reports_the_same_team_across_seasons(tmp_path, monkeypatch):
+    def seed(conn):
+        _seed_seasons(conn)
+        _seed_player(conn, display_name="Nick Daicos")
+        _seed_membership(conn, PLAYER_ID, OTHER_SEASON_ID, TEAM_ID)
+        _seed_membership(conn, PLAYER_ID, CURRENT_SEASON_ID, TEAM_ID)
+
+    db_path = _make_db(tmp_path, seed=seed)
+    client = _client(db_path, monkeypatch)
+
+    seasons = _get_seasons(client).json()["seasons"]
+
+    assert all(s["team"] == {"team_id": TEAM_ID, "name": "Collingwood"} for s in seasons)
+
+
+def test_seasons_reflects_a_team_change_without_rewriting_earlier_history(tmp_path, monkeypatch):
+    """Core historical-correctness scenario from Issue #182: a player moving
+    from Team A (2025, 2026) to Team B (2027) must keep 2025/2026 reporting
+    Team A -- the newest season's team must never be back-applied to older
+    persisted season rows."""
+
+    def seed(conn):
+        _seed_seasons(conn)
+        _seed_future_season(conn)
+        _seed_player(conn, display_name="Journeyman Player")
+        _seed_membership(conn, PLAYER_ID, OTHER_SEASON_ID, TEAM_ID)  # 2025 -> Team A
+        _seed_membership(conn, PLAYER_ID, CURRENT_SEASON_ID, TEAM_ID)  # 2026 -> Team A
+        _seed_membership(conn, PLAYER_ID, FUTURE_SEASON_ID, TEAM_B_ID)  # 2027 -> Team B
+
+    db_path = _make_db(tmp_path, seed=seed)
+    client = _client(db_path, monkeypatch)
+
+    response = _get_seasons(client)
+
+    assert response.status_code == 200
+    seasons_by_year = {s["year"]: s for s in response.json()["seasons"]}
+    assert seasons_by_year[2025]["team"] == {"team_id": TEAM_ID, "name": "Collingwood"}
+    assert seasons_by_year[2026]["team"] == {"team_id": TEAM_ID, "name": "Collingwood"}
+    assert seasons_by_year[2027]["team"] == {"team_id": TEAM_B_ID, "name": "Essendon"}
+    # Most-recent-first ordering, not merely grouped correctly.
+    assert [s["year"] for s in response.json()["seasons"]] == [2027, 2026, 2025]
+
+
+def test_seasons_with_unresolved_team_reports_null(tmp_path, monkeypatch):
+    def seed(conn):
+        _seed_seasons(conn)
+        _seed_player(conn, display_name="No Team Player")
+        _seed_membership(conn, PLAYER_ID, CURRENT_SEASON_ID, None)
+
+    db_path = _make_db(tmp_path, seed=seed)
+    client = _client(db_path, monkeypatch)
+
+    response = _get_seasons(client)
+
+    assert response.status_code == 200
+    assert response.json()["seasons"] == [
+        {"season_id": CURRENT_SEASON_ID, "year": 2026, "name": "2026", "team": None}
+    ]
+
+
+def test_player_with_no_season_membership_returns_empty_collection(tmp_path, monkeypatch):
+    def seed(conn):
+        _seed_seasons(conn)
+        _seed_player(conn, display_name="Unlisted Player")
+
+    db_path = _make_db(tmp_path, seed=seed)
+    client = _client(db_path, monkeypatch)
+
+    response = _get_seasons(client)
+
+    assert response.status_code == 200
+    assert response.json() == {"canonical_player_id": PLAYER_ID, "seasons": []}
+
+
+def test_seasons_unknown_canonical_player_returns_404(tmp_path, monkeypatch):
+    db_path = _make_db(tmp_path, seed=lambda conn: _seed_seasons(conn))
+    client = _client(db_path, monkeypatch)
+
+    response = _get_seasons(client, canonical_player_id=999999)
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "error": {"code": "player_not_found", "message": "Player not found."}
+    }
+
+
+def test_seasons_missing_api_key_returns_401(tmp_path, monkeypatch):
+    db_path = _make_db(tmp_path, seed=lambda conn: _seed_seasons(conn))
+    client = _client(db_path, monkeypatch)
+
+    response = client.get(f"/api/v1/players/{PLAYER_ID}/seasons")
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Invalid or missing API Key"}
+
+
+def test_seasons_invalid_api_key_returns_401(tmp_path, monkeypatch):
+    db_path = _make_db(tmp_path, seed=lambda conn: _seed_seasons(conn))
+    client = _client(db_path, monkeypatch)
+
+    response = _get_seasons(client, headers={"x-api-key": "wrong-key"})
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Invalid or missing API Key"}
+
+
+def test_seasons_response_shape_and_openapi_documentation(tmp_path, monkeypatch):
+    def seed(conn):
+        _seed_seasons(conn)
+        _seed_player(conn, display_name="Nick Daicos")
+        _seed_membership(conn, PLAYER_ID, CURRENT_SEASON_ID, TEAM_ID)
+
+    db_path = _make_db(tmp_path, seed=seed)
+    client = _client(db_path, monkeypatch)
+
+    response = _get_seasons(client)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body.keys()) == {"canonical_player_id", "seasons"}
+    assert set(body["seasons"][0].keys()) == {"season_id", "year", "name", "team"}
+    assert set(body["seasons"][0]["team"].keys()) == {"team_id", "name"}
+
+    operation = client.get("/openapi.json").json()["paths"][
+        "/api/v1/players/{canonical_player_id}/seasons"
+    ]["get"]
+    assert {"200", "404", "422"} <= set(operation["responses"])
+    assert operation["responses"]["404"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/ApplicationErrorResponse"
+    }
+
+
+def test_seasons_endpoint_does_not_change_existing_player_resource_contract(tmp_path, monkeypatch):
+    """Backwards-compatibility guard for #180/#181: adding the seasons
+    sub-resource must not alter GET /api/v1/players/{id} or its search
+    sibling's existing response shape or behaviour."""
+
+    def seed(conn):
+        _seed_seasons(conn)
+        _seed_player(conn, display_name="Nick Daicos")
+        _seed_provider_id(conn, PLAYER_ID, "afl", "5501")
+        _seed_provider_id(conn, PLAYER_ID, "champion_data", "CD_I1023261")
+        _seed_membership(conn, PLAYER_ID, CURRENT_SEASON_ID, TEAM_ID)
+
+    db_path = _make_db(tmp_path, seed=seed)
+    client = _client(db_path, monkeypatch)
+
+    player_response = _get(client)
+    assert player_response.status_code == 200
+    assert player_response.json() == {
+        "player": {
+            "canonical_player_id": PLAYER_ID,
+            "display_name": "Nick Daicos",
+            "current_team": {"team_id": TEAM_ID, "name": "Collingwood"},
+            "identifiers": {
+                "afl_player_id": 5501,
+                "champion_data_player_id": "CD_I1023261",
+            },
+        }
+    }
+
+    search_response = _search(client, params={"search": "daicos"})
+    assert search_response.status_code == 200
+    assert search_response.json()["players"][0]["canonical_player_id"] == PLAYER_ID
+
+
+def test_navigation_from_player_seasons_to_season_rounds(tmp_path, monkeypatch):
+    """End-to-end navigation exercise for Issue #182's target workflow:
+    canonical player -> season memberships -> team for each season -> the
+    season's own resources (rounds, and onward to matches/player-stats)."""
+
+    def seed(conn):
+        _seed_seasons(conn)
+        _seed_player(conn, display_name="Nick Daicos")
+        _seed_provider_id(conn, PLAYER_ID, "champion_data", "CD_I1023261")
+        _seed_membership(conn, PLAYER_ID, OTHER_SEASON_ID, TEAM_ID)
+        _seed_membership(conn, PLAYER_ID, CURRENT_SEASON_ID, TEAM_ID)
+        conn.execute(
+            "INSERT INTO rounds(round_id,round_label,season_id,competition_id,provider_id,round_number) "
+            "VALUES(201,'Round 1',?,1,'CD_R_HIST',1)",
+            (OTHER_SEASON_ID,),
+        )
+
+    db_path = _make_db(tmp_path, seed=seed)
+    client = _client(db_path, monkeypatch)
+
+    seasons_response = _get_seasons(client)
+    assert seasons_response.status_code == 200
+    historical_season = next(
+        s for s in seasons_response.json()["seasons"] if s["year"] == 2025
+    )
+    assert historical_season["team"] == {"team_id": TEAM_ID, "name": "Collingwood"}
+
+    rounds_response = client.get(
+        f"/api/v1/seasons/{historical_season['season_id']}/rounds",
+        headers={"x-api-key": API_KEY},
+    )
+    assert rounds_response.status_code == 200
+    assert [r["round_id"] for r in rounds_response.json()["rounds"]] == [201]
+
+    identifiers_response = _get(client)
+    champion_data_id = identifiers_response.json()["player"]["identifiers"]["champion_data_player_id"]
+    assert champion_data_id == "CD_I1023261"

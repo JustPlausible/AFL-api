@@ -32,7 +32,7 @@ for the reusable release summary and upgrade cautions.
 - [API v1 discovery and canonical seasons — consumer reference](api_v1_seasons.md) — start at `GET /api/v1` and discover persisted seasons through `GET /api/v1/seasons`
 - [Canonical v1 rounds — consumer reference](api_v1_rounds.md) — navigate persisted season rounds and typed bye-team context
 - [Canonical v1 matches — consumer reference](api_v1_matches.md) — complete the `/api/v1` season → round → match → player-stats navigation chain
-- [Canonical v1 player lookup and search — consumer reference](api_v1_players.md) — resolve a canonical player ID to identity, provider crosswalks, and current-season team context, or discover a `canonical_player_id` via `GET /api/v1/players?search=`
+- [Canonical v1 player lookup and search — consumer reference](api_v1_players.md) — resolve a canonical player ID to identity, provider crosswalks, and current-season team context; discover a `canonical_player_id` via `GET /api/v1/players?search=`; or navigate a player's season/team history via `GET /api/v1/players/{canonical_player_id}/seasons`
 - [Production CFS match-commentary persistence and consumer API design](architecture/api/commentary_api_design.md) — event-identity/dedup, canonical linking, score-review preservation, and production scheduler lifecycle for `commentaryFeed` (Issue #201)
 - [Canonical v1 match commentary — consumer reference](api_v1_commentary.md) — `GET /api/v1/matches/{match_id}/commentary`, chronological, canonically-linked commentary events
 - [JSON payload fixtures and offline contract regression tests](json_contract_fixtures.md)
