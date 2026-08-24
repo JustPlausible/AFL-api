@@ -1,0 +1,32 @@
+{
+  "domain": "match_interchange",
+  "fixture_set": "round24_live_membership_evidence_excerpt",
+  "season": 2026,
+  "round_number": 24,
+  "files": {
+    "round24_live_membership_evidence_excerpt.txt": "Hand-trimmed excerpt of the human-readable output of scripts/report_interchange_evidence.py, run by the repository owner against a deployment's populated match_interchange_evidence_observations table and supplied on PR #206. Covers 4 of the 7 real matches in the original supplied report (CD_M20260142401, CD_M20260142406, CD_M20260142408, CD_M20260142409), with '...' marking elided lines."
+  },
+  "capture": {
+    "capture_tool": "scripts/report_interchange_evidence.py (human-readable mode, not --json)",
+    "source_table": "match_interchange_evidence_observations (migration 0017, Issue #193 interchange diagnostic profile)",
+    "supplied_by": "repository owner, for review during PR #206 (Issue #204 production promotion)",
+    "original_report_scope": "7 real Round 24 matches: CD_M20260142401, CD_M20260142403, CD_M20260142404, CD_M20260142405, CD_M20260142406, CD_M20260142408, CD_M20260142409; ~700 observations per match, polled roughly every 15 seconds through each match's full LIVE window"
+  },
+  "aggregate_counts_over_the_full_original_report": {
+    "player_appeared_home_interchange": 442,
+    "player_disappeared_home_interchange": 435,
+    "player_appeared_away_interchange": 435,
+    "player_disappeared_away_interchange": 428,
+    "player_bench_reason_changed": 22,
+    "player_interchange_count_changed": 7,
+    "home_players_away_players_distribution": "982 polls at home=5/away=5 (steady state); 7 polls at 0/0 (one first_observation row per match); 5 polls at home=4/away=5; 3 polls at home=5/away=6 -- every non-5/5 count self-corrected within one to a few polls"
+  },
+  "notes": [
+    "The diagnostic module's player_appeared_*/player_disappeared_* flags are computed as an exact Champion Data playerId set difference between successive polls (collection.match_interchange_evidence._player_set_transitions, set(current) - set(previous)) -- their presence in this real captured data is direct proof, not an inference, that array membership genuinely changes during LIVE play.",
+    "This excerpt (and the original full report it was trimmed from) carries no individual Champion Data player IDs and no raw per-poll payloads -- scripts/report_interchange_evidence.py's human-readable mode prints only aggregate counts (home_players/away_players, home_total/away_total) and flag names, not entry-level detail. A specific player cannot be cited by ID as 'appeared, left, then came back' from this format alone; see afl_json/match_interchange.py module docstring for exactly what this evidence does and does not establish.",
+    "No POSTGAME/CONCLUDED status row is present anywhere in the original full report for any of the 7 matches -- every printed observation shows match_status_at_poll=LIVE (with one exception below). Whether array membership continues to change, freezes, or reflects a final settled bench once a match leaves LIVE therefore remains unverified.",
+    "CD_M20260142406 briefly recorded match_status_at_poll=CONFIRMED_TEAMS for several consecutive polls mid-match (seq 426-438) while interchange transitions continued firing normally -- a data-quality observation about local matches.status tracking, not evidence against the membership finding.",
+    "The handful of polls showing home_players/away_players other than 5 (see aggregate_counts_over_the_full_original_report) always self-corrected back to 5 within one to a few polls, consistent with catching an in-progress swap mid-transition at the 15s polling granularity, and inconsistent with a pool that is ever genuinely resized.",
+    "Used by afl_json/match_interchange.py's module docstring and docs/architecture/api/interchange_api_design.md §2.1 as the cited evidence basis for exposing on_bench as a confirmed-for-LIVE-play semantic (Issue #204, PR #206)."
+  ]
+}

@@ -1,0 +1,90 @@
+# Reduced real Round 24 live matchInterchange diagnostic evidence (Issue #204 / PR #206)
+#
+# This is a hand-trimmed excerpt of the human-readable output of
+# `scripts/report_interchange_evidence.py`, run by the repository owner
+# against a deployment's populated `match_interchange_evidence_observations`
+# table (Issue #193's `interchange` diagnostic profile), covering 7 real
+# Round 24 matches. It is genuinely captured evidence, not an invented
+# payload -- but it is a reduced excerpt (~40 of ~4900 lines in the
+# original supplied report), not the full report, and it carries no
+# individual Champion Data player IDs or raw per-poll payloads (the report
+# tool does not print them by default) -- see the metadata sidecar and
+# `afl_json/match_interchange.py` module docstring "Array-membership
+# semantics: confirmed by real Round 24 live evidence" for exactly what
+# this format can and cannot prove.
+#
+# "..." marks elided lines (both within a match's sequence and between
+# matches) -- see the full aggregate counts in the metadata sidecar and the
+# design doc for totals computed over the complete supplied report.
+
+=== CD_M20260142401 (713 observation(s)) ===
+first observed_at=2026-08-22T10:10:14.018633+00:00 last observed_at=2026-08-22T13:08:44.005523+00:00
+  seq=   1 at=2026-08-22T10:10:14.018633+00:00 flags=first_observation match_status_at_poll=LIVE home_total=0.0 away_total=0.0 home_players=0 away_players=0
+  seq=   2 at=2026-08-22T10:10:29.011012+00:00 flags=player_appeared_home_interchange,player_appeared_away_interchange match_status_at_poll=LIVE home_total=0.0 away_total=0.0 home_players=5 away_players=5
+  seq=  23 at=2026-08-22T10:15:44.010670+00:00 flags=player_appeared_home_interchange,player_disappeared_home_interchange,player_appeared_away_interchange,player_disappeared_away_interchange,away_total_interchange_count_changed,away_quarter_interchange_count_changed match_status_at_poll=LIVE home_total=0.0 away_total=1.0 home_players=5 away_players=5
+  seq=  24 at=2026-08-22T10:15:59.011458+00:00 flags=home_total_interchange_count_changed,home_quarter_interchange_count_changed match_status_at_poll=LIVE home_total=1.0 away_total=1.0 home_players=5 away_players=5
+  seq=  25 at=2026-08-22T10:16:14.013059+00:00 flags=player_appeared_home_interchange,player_disappeared_home_interchange,player_appeared_away_interchange,player_disappeared_away_interchange,home_total_interchange_count_changed,home_quarter_interchange_count_changed,away_total_interchange_count_changed,away_quarter_interchange_count_changed match_status_at_poll=LIVE home_total=2.0 away_total=2.0 home_players=5 away_players=5
+  seq=  26 at=2026-08-22T10:16:29.080180+00:00 flags=player_appeared_home_interchange,player_disappeared_home_interchange,player_appeared_away_interchange,player_disappeared_away_interchange match_status_at_poll=LIVE home_total=2.0 away_total=2.0 home_players=5 away_players=5
+  seq=  27 at=2026-08-22T10:16:44.008711+00:00 flags=home_total_interchange_count_changed,home_quarter_interchange_count_changed,away_total_interchange_count_changed,away_quarter_interchange_count_changed match_status_at_poll=LIVE home_total=3.0 away_total=3.0 home_players=5 away_players=5
+  seq=  32 at=2026-08-22T10:17:59.014450+00:00 flags=player_appeared_home_interchange,player_disappeared_home_interchange,home_total_interchange_count_changed,home_quarter_interchange_count_changed match_status_at_poll=LIVE home_total=4.0 away_total=3.0 home_players=5 away_players=5
+  seq=  50 at=2026-08-22T10:22:59.012756+00:00 flags=player_appeared_home_interchange,player_disappeared_home_interchange,home_total_interchange_count_changed,home_quarter_interchange_count_changed match_status_at_poll=LIVE home_total=5.0 away_total=3.0 home_players=5 away_players=5
+  seq=  51 at=2026-08-22T10:23:14.010379+00:00 flags=player_appeared_home_interchange,player_disappeared_home_interchange,home_total_interchange_count_changed,home_quarter_interchange_count_changed match_status_at_poll=LIVE home_total=6.0 away_total=3.0 home_players=5 away_players=5
+  seq=  54 at=2026-08-22T10:23:59.008268+00:00 flags=player_appeared_away_interchange,player_disappeared_away_interchange,away_total_interchange_count_changed,away_quarter_interchange_count_changed match_status_at_poll=LIVE home_total=6.0 away_total=4.0 home_players=5 away_players=5
+  seq=  55 at=2026-08-22T10:24:14.003557+00:00 flags=player_appeared_home_interchange,player_disappeared_home_interchange,player_appeared_away_interchange,player_disappeared_away_interchange,home_total_interchange_count_changed,home_quarter_interchange_count_changed,away_total_interchange_count_changed,away_quarter_interchange_count_changed match_status_at_poll=LIVE home_total=8.0 away_total=8.0 home_players=5 away_players=5
+  seq=  58 at=2026-08-22T10:24:59.026915+00:00 flags=player_appeared_home_interchange,player_disappeared_home_interchange,home_total_interchange_count_changed,home_quarter_interchange_count_changed match_status_at_poll=LIVE home_total=9.0 away_total=8.0 home_players=5 away_players=5
+  seq=  59 at=2026-08-22T10:25:14.015037+00:00 flags=player_appeared_away_interchange,player_disappeared_away_interchange match_status_at_poll=LIVE home_total=9.0 away_total=8.0 home_players=5 away_players=5
+  ...
+
+# Mid-match anomaly: the local `matches.status` snapshot this profile
+# records briefly read CONFIRMED_TEAMS (not LIVE) for several consecutive
+# polls, yet home/away interchange appear/disappear transitions continued
+# firing normally throughout -- a data-quality note about matches.status
+# tracking, not evidence against the array-membership finding.
+=== CD_M20260142406 (700 observation(s)) ===
+first observed_at=2026-08-22T06:13:59.008808+00:00 last observed_at=2026-08-22T09:08:44.014913+00:00
+  seq=   1 at=2026-08-22T06:13:59.008808+00:00 flags=first_observation match_status_at_poll=LIVE home_total=0.0 away_total=0.0 home_players=0 away_players=0
+  ...
+  seq= 426 at=2026-08-22T08:00:14.019233+00:00 flags=player_appeared_home_interchange,player_disappeared_home_interchange match_status_at_poll=CONFIRMED_TEAMS home_total=43.0 away_total=46.0 home_players=5 away_players=5
+  seq= 427 at=2026-08-22T08:00:29.026725+00:00 flags=home_total_interchange_count_changed,home_quarter_interchange_count_changed match_status_at_poll=CONFIRMED_TEAMS home_total=44.0 away_total=46.0 home_players=5 away_players=5
+  seq= 428 at=2026-08-22T08:00:44.018774+00:00 flags=player_appeared_home_interchange,player_disappeared_home_interchange,home_total_interchange_count_changed,home_quarter_interchange_count_changed match_status_at_poll=CONFIRMED_TEAMS home_total=46.0 away_total=46.0 home_players=5 away_players=5
+  seq= 437 at=2026-08-22T08:02:59.024863+00:00 flags=player_appeared_away_interchange,player_disappeared_away_interchange match_status_at_poll=CONFIRMED_TEAMS home_total=46.0 away_total=46.0 home_players=5 away_players=5
+  seq= 438 at=2026-08-22T08:03:14.005923+00:00 flags=player_appeared_away_interchange,player_disappeared_away_interchange,away_total_interchange_count_changed,away_quarter_interchange_count_changed match_status_at_poll=CONFIRMED_TEAMS home_total=46.0 away_total=49.0 home_players=5 away_players=5
+  ...
+
+# Transient asymmetric blip: a lone disappearance (no paired appearance)
+# briefly drops home_players to 4; the very next poll shows a paired
+# appear+disappear that restores 5 -- consistent with the 15s poll
+# granularity catching an in-progress swap mid-transition, never with a
+# genuinely resized pool.
+=== CD_M20260142408 (695 observation(s)) ===
+first observed_at=2026-08-23T05:20:14.015454+00:00 last observed_at=2026-08-23T08:13:44.015733+00:00
+  seq=   1 at=2026-08-23T05:20:14.015454+00:00 flags=first_observation match_status_at_poll=LIVE home_total=0.0 away_total=0.0 home_players=0 away_players=0
+  ...
+  seq= 364 at=2026-08-23T06:50:59.015088+00:00 flags=player_disappeared_home_interchange match_status_at_poll=LIVE home_total=36.0 away_total=39.0 home_players=4 away_players=5
+  seq= 366 at=2026-08-23T06:51:29.016660+00:00 flags=player_appeared_home_interchange,player_disappeared_home_interchange match_status_at_poll=LIVE home_total=36.0 away_total=39.0 home_players=5 away_players=5
+  ...
+
+# Transient asymmetric blip (growth this time): a lone appearance bumps
+# away_players to 6 for three consecutive polls (each only ticking that
+# player's own interchange_count -- player_interchange_count_changed,
+# no set-membership flag), then self-corrects back to 5 the moment a
+# disappearance is observed. This match's diagnostic capture window also
+# ends with match_status_at_poll still LIVE (last observed_at below) --
+# no POSTGAME/CONCLUDED row is present in the supplied report for any of
+# the 7 matches, which is exactly why POSTGAME/CONCLUDED behaviour is
+# documented as unverified rather than confirmed.
+=== CD_M20260142409 (693 observation(s)) ===
+first observed_at=2026-08-23T09:20:14.007446+00:00 last observed_at=2026-08-23T12:13:44.011925+00:00
+  seq=   1 at=2026-08-23T09:20:14.007446+00:00 flags=first_observation match_status_at_poll=LIVE home_total=0.0 away_total=0.0 home_players=0 away_players=0
+  ...
+  seq= 329 at=2026-08-23T10:42:44.016961+00:00 flags=player_appeared_away_interchange,player_interchange_count_changed match_status_at_poll=LIVE home_total=37.0 away_total=39.0 home_players=5 away_players=6
+  seq= 330 at=2026-08-23T10:42:59.012747+00:00 flags=player_interchange_count_changed match_status_at_poll=LIVE home_total=37.0 away_total=39.0 home_players=5 away_players=6
+  seq= 332 at=2026-08-23T10:43:29.018416+00:00 flags=player_interchange_count_changed match_status_at_poll=LIVE home_total=37.0 away_total=39.0 home_players=5 away_players=6
+  seq= 333 at=2026-08-23T10:43:44.013466+00:00 flags=player_disappeared_away_interchange,player_interchange_count_changed match_status_at_poll=LIVE home_total=37.0 away_total=39.0 home_players=5 away_players=5
+  ...
+  seq= 621 at=2026-08-23T11:55:44.016838+00:00 flags=player_appeared_home_interchange,player_disappeared_home_interchange,player_appeared_away_interchange,player_disappeared_away_interchange,home_total_interchange_count_changed,home_quarter_interchange_count_changed,away_total_interchange_count_changed,away_quarter_interchange_count_changed match_status_at_poll=LIVE home_total=72.0 away_total=68.0 home_players=5 away_players=5
+  seq= 622 at=2026-08-23T11:55:59.012816+00:00 flags=player_appeared_away_interchange,player_disappeared_away_interchange,home_total_interchange_count_changed,home_quarter_interchange_count_changed,away_total_interchange_count_changed,away_quarter_interchange_count_changed match_status_at_poll=LIVE home_total=73.0 away_total=69.0 home_players=5 away_players=5
+  seq= 630 at=2026-08-23T11:57:59.012271+00:00 flags=player_appeared_away_interchange,player_disappeared_away_interchange match_status_at_poll=LIVE home_total=73.0 away_total=69.0 home_players=5 away_players=5
+  seq= 632 at=2026-08-23T11:58:29.012383+00:00 flags=away_total_interchange_count_changed,away_quarter_interchange_count_changed match_status_at_poll=LIVE home_total=73.0 away_total=70.0 home_players=5 away_players=5
+  seq= 635 at=2026-08-23T11:59:14.012513+00:00 flags=player_appeared_home_interchange,player_disappeared_home_interchange match_status_at_poll=LIVE home_total=73.0 away_total=70.0 home_players=5 away_players=5
+  seq= 636 at=2026-08-23T11:59:29.017585+00:00 flags=home_total_interchange_count_changed,home_quarter_interchange_count_changed match_status_at_poll=LIVE home_total=74.0 away_total=70.0 home_players=5 away_players=5

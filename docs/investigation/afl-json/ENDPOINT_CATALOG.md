@@ -447,6 +447,105 @@ mirroring how `afl_json/match_period.py` (Issue #187) sits alongside its own
 diagnostic predecessor. See `docs/architecture/api/commentary_api_design.md`
 for the full production/consumer design.
 
+**Update (Issue #204): `matchInterchange/{matchProviderId}` is now a
+production-supported endpoint contract for per-player interchange state**,
+promoted from the Issue #193 diagnostic investigation. This PR's initial
+draft had only a single CONCLUDED-match fixture to promote against
+(materially weaker than Issue #201's commentary promotion); real Round 24
+live diagnostic observations across 7 matches were subsequently supplied
+and reviewed on PR #206, confirming the array-membership semantic for LIVE
+play -- see below.
+
+*Endpoint:* `GET {CFS root}/matchInterchange/{match_provider_id}` -- under
+the standard `/cfs/afl` root, unlike `commentaryFeed`.
+
+*Confirmed feed-level and entry-level fields* (unchanged from Issue #193,
+now the production contract in `afl_json/match_interchange.py`): top-level
+`matchId`, `homeInterchange[]`, `awayInterchange[]`, `homeInterchangeCounts`,
+`awayInterchangeCounts`. Each interchange entry carries `teamId`,
+`player.playerId` (plus `player.playerName`/`player.playerJumperNumber`,
+deliberately **not** persisted -- identity resolution uses `playerId` only),
+`interchangeCount`, `benchReason`, `timeOnGround`, `timeOnBench`,
+`powerRating`. The team-level `home/awayInterchangeCounts` totals remain
+diagnostic-scope only (still captured by the `interchange` diagnostic
+profile) and are deliberately out of scope for the narrower production
+contract, which answers one consumer question: is this canonical player
+currently on the interchange list, and what does CFS say about them.
+
+*What promotion evidence exists:* a single real captured concluded-match
+response (`tests/fixtures/afl/interchange/match_interchange_8216_concluded.json`,
+five entries per side, `benchReason="ROTATION"` throughout) confirming the
+entry-level field shape, plus real Round 24 live diagnostic observations
+across **7 matches** (`CD_M20260142401`, `CD_M20260142403`-`CD_M20260142406`,
+`CD_M20260142408`, `CD_M20260142409` -- the `scripts/report_interchange_evidence.py`
+output reviewed on PR #206), each polled roughly every 15 seconds through
+its full ~3 hour LIVE window.
+
+*Array-membership semantics: confirmed for LIVE play.* Issue #204 asked
+this promotion to establish, from evidence, whether membership means "the
+player is currently off the ground". The Round 24 live evidence confirms
+this for LIVE play: the diagnostic module's `appeared`/`disappeared` flags
+are an exact Champion Data `playerId` set difference (not an inference),
+and across the 7 matches membership changed hundreds of times per match
+(442/435 home appear/disappear events, 435/428 away), tightly
+time-correlated with each team's own `totalInterchangeCount` incrementing,
+with same-poll appear+disappear pairing holding each side's listed count
+at a steady 5 (self-correcting after a handful of transient 4/6 blips --
+e.g. `CD_M20260142403` seq 349, `CD_M20260142409` seq 329-332). This rules
+out the "fixed, always-listed pool" reading this promotion originally could
+not exclude. A subsequent full per-poll export for `CD_M20260142409`
+(Issue #204 comment) closed the two remaining gaps: Champion Data player
+`CD_I1028561` ("Tom Gross") is individually cited appearing/disappearing
+from `homeInterchange[]` five separate times across the match (real raw
+payloads checked in at `tests/fixtures/afl/interchange/match_interchange_CD_M20260142409_poll{002,048,100}_*.json`),
+and 40 captured `POSTGAME` polls (poll_sequence 654-693) show every field
+byte-identical throughout with zero transitions -- `matchInterchange` state
+freezes exactly at the `LIVE` -> `POSTGAME` transition. See
+`docs/architecture/api/interchange_api_design.md` §2.1 for the full
+evidence. **CONCLUDED remains the one open question**: this match's
+capture never reached it. The production contract accordingly exposes
+**`on_bench`** (see `docs/api_v1_interchange.md`), confirmed for LIVE play
+and confirmed to freeze through POSTGAME, documented with that one residual
+caveat.
+
+*`benchReason`:* persisted and returned exactly as CFS supplies it (only
+`"ROTATION"` observed so far). Never inferred as injury, substitution,
+tactical, or medical from commentary, timing, or any other field.
+
+*Identity resolution:* `player.playerId`/`teamId` resolve through the
+existing `player_provider_ids`/`afl_teams.provider_id` crosswalks, exactly
+like `afl_json/match_commentary.py`. Display name and jumper number are
+never used for identity. Unresolved crosswalks stay `NULL`, never guessed.
+
+*Scheduling/lifecycle:* production polling covers LIVE (including a bounded
+pre-kickoff tolerance window before it), then takes exactly **one** final
+reconciliation poll the first time a match reaches POSTGAME, then stops --
+no bounded grace window, and no dependency on or wait for CONCLUDED. This
+was tightened from an earlier bounded-grace-window design once real
+evidence (`CD_M20260142409`) showed `matchInterchange` state freezes
+completely, field-for-field, at the exact LIVE -> POSTGAME transition and
+never changes again across 40 real POSTGAME polls -- continued polling
+through a grace window would only ever re-observe an identical payload.
+`CONCLUDED` remains entirely the authoritative match-state pipeline's
+concern (`scheduler/match_interchange_production.py`). Interchange
+availability never affects match finality, lifecycle, or authoritative
+player-stat collection.
+
+*Production vs. diagnostic:* the diagnostic `interchange` profile
+(`collection/match_interchange_evidence.py`,
+`scheduler/match_interchange_capture.py`,
+`match_interchange_evidence_observations`) is **unchanged and still
+running independently** -- it remains useful for parser-regression evidence
+and for gathering the still-missing live-membership-transition evidence.
+It is **not** the backing store for the consumer API. Production ingestion
+is a new, separate, narrowly-scoped path (`afl_json/match_interchange.py`,
+`scheduler/match_interchange_production.py`,
+`match_interchange_state`/`match_interchange_events`/`match_interchange_polls`
+-- migration `0021`), mirroring the commentary (Issue #201) and match-period
+(Issue #187) promotion precedents. See
+`docs/architecture/api/interchange_api_design.md` for the full production/
+consumer design.
+
 ## 6. Canonical field mapping for match player statistics
 
 The original Codex table was based on HTML scraping and contained placeholder JSON paths. For the JSON collector, most HTML fallback rules are no longer primary. Keep the HTML scraper only as a fallback adapter.

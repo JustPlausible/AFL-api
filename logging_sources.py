@@ -72,6 +72,12 @@ def _match_commentary_production_enabled() -> bool:
     return bool(config.AFL_COMMENTARY_PRODUCTION_ENABLED)
 
 
+def _match_interchange_production_enabled() -> bool:
+    """Production interchange collection (Issue #204) -- independent of the
+    diagnostics framework entirely; gated only by its own flag."""
+    return bool(config.AFL_INTERCHANGE_PRODUCTION_ENABLED)
+
+
 @dataclass(frozen=True)
 class LogSource:
     """One known operational log source.
@@ -237,6 +243,18 @@ _SOURCES: tuple[LogSource, ...] = (
         filename="match_commentary_production.log",
         enabled=_match_commentary_production_enabled,
         disabled_reason="AFL_COMMENTARY_PRODUCTION_ENABLED is not enabled.",
+    ),
+    LogSource(
+        id="match_interchange_production",
+        display_name="Match Interchange Production",
+        description=(
+            "Production matchInterchange collection backing /api/v1/matches/{match_id}/interchanges "
+            "(Issue #204). Independent of the diagnostics framework."
+        ),
+        logger_name="match_interchange_production",
+        filename="match_interchange_production.log",
+        enabled=_match_interchange_production_enabled,
+        disabled_reason="AFL_INTERCHANGE_PRODUCTION_ENABLED is not enabled.",
     ),
 )
 

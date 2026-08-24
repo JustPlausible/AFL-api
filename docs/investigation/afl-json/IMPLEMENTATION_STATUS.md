@@ -298,22 +298,46 @@ Observed as authenticated match interchange history. Concluded and live response
 
 | Collector | DB | Scheduler | Consumer API |
 |---|---|---|---|
-| **Diagnostic-only** | **Diagnostic-only** | **Diagnostic-only** | **No** |
+| **Production** (`afl_json/match_interchange.py`) | **Production** (`match_interchange_state` + `match_interchange_events` + `match_interchange_polls`, migration `0021`) | **Production** (`scheduler/match_interchange_production.py`, always-on, `AFL_INTERCHANGE_PRODUCTION_ENABLED`) | **Yes** -- `GET /api/v1/matches/{match_id}/interchanges` + `/interchanges/events` |
 
-**Update (Issue #193):** as of this writing the endpoint is under active
-diagnostic verification through the checked-in `interchange` diagnostic
-profile (see `docs/diagnostics_framework.md`). It is explicitly opt-in
-(`AFL_DIAGNOSTICS_ENABLED=true`, `AFL_DIAGNOSTIC_PROFILES` including
-`interchange`), writes only to its own diagnostic evidence table
-(`match_interchange_evidence_observations`, migration `0017`), and is never
-consumed by scheduler planning or `/api/v1`. This is **not** a production
-collector and `matchInterchange` is **not** a production-supported endpoint
-contract -- the diagnostic profile exists to gather live evidence (endpoint
-availability timing, array-membership semantics, count/bench-reason update
-cadence, quarter-break and POSTGAME/CONCLUDED behaviour) that a future,
-separate implementation decision would need.
+**Update (Issue #204):** promoted to a production-supported endpoint
+contract from the Issue #193 diagnostic investigation (see
+`docs/investigation/afl-json/ENDPOINT_CATALOG.md` §5 "Update (Issue #204)"
+for the full detail). Production ingestion runs unconditionally via the
+normal scheduler (`scheduler/scheduled_tasks.py`), independent of
+`AFL_DIAGNOSTICS_ENABLED`/`AFL_DIAGNOSTIC_PROFILES` entirely, and persists
+canonically-linked current per-player state plus meaningful transition
+history. The initial promotion draft had only a single concluded-match
+snapshot to review, materially weaker than the Issue #201 commentary
+promotion's evidence basis; real Round 24 live diagnostic observations
+across 7 matches were subsequently supplied and reviewed on PR #206,
+confirming that array membership genuinely changes during LIVE play,
+tightly correlated with each team's own `totalInterchangeCount`
+incrementing (see `docs/architecture/api/interchange_api_design.md` §2.1
+for the full evidence). A follow-up full per-poll export for one match
+(`CD_M20260142409`, Issue #204 comment) individually confirmed a named
+player's repeated appear/disappear/reappear cycle and confirmed that
+`matchInterchange` state freezes byte-for-byte across 40 real `POSTGAME`
+polls. The production contract exposes **`on_bench`**, confirmed for LIVE
+play and confirmed to freeze through POSTGAME; only `CONCLUDED` behaviour
+remains unverified (this match's capture never reached it) -- see
+`docs/api_v1_interchange.md` for the exact caveat. Interchange state
+remains non-authoritative for match finality, lifecycle, or player
+statistics.
 
-**Recommendation:** lower priority for the core consumer API; potentially useful later for player-availability or time-on-ground related features, pending the outcome of the live diagnostic investigation above.
+**Diagnostic evidence capture unchanged:** the `interchange` diagnostic
+profile from Issue #193 (`collection/match_interchange_evidence.py`,
+`scheduler/match_interchange_capture.py`,
+`match_interchange_evidence_observations`, migration `0017`) is untouched
+and keeps running independently, opt-in via `AFL_DIAGNOSTICS_ENABLED=true` +
+`AFL_DIAGNOSTIC_PROFILES` including `interchange`. It remains useful for
+parser-regression evidence and for gathering further evidence toward the
+one residual open question above (`CONCLUDED` behaviour). It is not read by
+the production collector, the scheduler, or `/api/v1`.
+
+**Recommendation:** production-ready for consumer use, including the
+confirmed `on_bench` semantic for LIVE play and POSTGAME; revisit once
+`CONCLUDED` behaviour has been reviewed from further live evidence.
 
 ### CFS `commentaryFeed/{matchProviderId}`
 
@@ -446,7 +470,7 @@ These pages are no longer the preferred source for canonical player membership b
 | CFS round rosters | CFS `matchRosters/round` | **No** | **No** | Read-only |
 | `matchRoster/full` | None | No | No | Investigation only |
 | `matchItem` periods/events | None | No | No | Investigation only |
-| Interchange history | Diagnostic evidence table only (`match_interchange_evidence_observations`) | No | No | Active diagnostic investigation (Issue #193), not production-supported |
+| Interchange state | `match_interchange_state`/`match_interchange_events`/`match_interchange_polls` (migration `0021`) | **Yes** | **Yes** | `/api/v1/matches/{id}/interchanges` + `/interchanges/events` (Issue #204, promoted from Issue #193); array-membership semantic still unconfirmed by live evidence, see `docs/api_v1_interchange.md`; diagnostic evidence table also still maintained separately |
 | Commentary | `match_commentary_events` (migration `0019`) | **Yes** | **Yes** | `/api/v1/matches/{id}/commentary` (Issue #201); diagnostic evidence table also still maintained separately |
 | Stats Centre players | None | No | No | Investigation only |
 | Leader totals/averages | CSV artifact | No | No | Manual export |
@@ -551,16 +575,25 @@ A future design decision should determine whether v1 encompasses these domains o
 
 ### Finding 7 - Several discovered CFS sources are research evidence only
 
-`matchItem`, `matchRoster/full`, `matchInterchange` and Stats Centre player
-queries should not be described as supported AFL-api endpoints. They are
-known upstream endpoints, not maintained collector capabilities.
+`matchItem`, `matchRoster/full` and Stats Centre player queries should not
+be described as supported AFL-api endpoints. They are known upstream
+endpoints, not maintained collector capabilities.
 
-`commentaryFeed` is the exception as of Issue #201: it has been promoted to
-a production-supported endpoint contract (production collector, persistence
-and `/api/v1/matches/{id}/commentary` consumer route) -- see §4's
-"CFS `commentaryFeed/{matchProviderId}`" entry above. Its diagnostic
-evidence-capture profile from Issue #196 remains separately available for
-debugging/replay, but is no longer the only pathway.
+`commentaryFeed` and `matchInterchange` are the exceptions, as of Issues
+#201 and #204 respectively: both have been promoted to production-supported
+endpoint contracts (production collector, persistence and a consumer
+route) -- see §4's "CFS `commentaryFeed/{matchProviderId}`" and
+"CFS `matchInterchange/{matchProviderId}`" entries above.
+`matchInterchange`'s promotion initially had a materially weaker evidence
+basis than commentary's, before real Round 24 live diagnostic observations
+were supplied and reviewed on PR #206, confirming the array-membership
+semantic (`on_bench`) for LIVE play and, from a follow-up individually-cited
+per-poll export, confirming it freezes through POSTGAME too -- see
+`docs/api_v1_interchange.md` for the confirmed semantic and its one
+residual caveat (`CONCLUDED` behaviour).
+Both endpoints' diagnostic evidence-capture
+profiles (Issues #196 and #193) remain separately available for
+debugging/replay, but are no longer the only pathway for either.
 
 ## 9. Recommended priorities
 
@@ -626,6 +659,6 @@ while:
 
 and:
 
-**`matchItem`, `matchRoster/full`, interchange and Stats Centre remain investigation-only sources; commentary is production-supported as of Issue #201 (see §4).**
+**`matchItem`, `matchRoster/full` and Stats Centre remain investigation-only sources; commentary is production-supported as of Issue #201, and interchange is production-supported as of Issue #204 (see §4).**
 
 Maintaining those distinctions allows future collection work to be driven by a clear consumer API or operational requirement rather than by endpoint availability alone.

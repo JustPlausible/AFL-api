@@ -1,0 +1,193 @@
+{
+  "awayInterchange": [
+    {
+      "benchReason": "ROTATION",
+      "interchangeCount": 0,
+      "player": {
+        "captain": false,
+        "playerId": "CD_I1029417",
+        "playerJumperNumber": 40,
+        "playerName": {
+          "givenName": "Max",
+          "surname": "Beattie"
+        }
+      },
+      "powerRating": 1,
+      "teamId": "CD_T80",
+      "timeOnBench": 3,
+      "timeOnGround": 0
+    },
+    {
+      "benchReason": "ROTATION",
+      "interchangeCount": 0,
+      "player": {
+        "captain": false,
+        "playerId": "CD_I1029261",
+        "playerJumperNumber": 42,
+        "playerName": {
+          "givenName": "Bailey",
+          "surname": "Macdonald"
+        }
+      },
+      "powerRating": 1,
+      "teamId": "CD_T80",
+      "timeOnBench": 3,
+      "timeOnGround": 0
+    },
+    {
+      "benchReason": "ROTATION",
+      "interchangeCount": 0,
+      "player": {
+        "captain": false,
+        "playerId": "CD_I1017094",
+        "playerJumperNumber": 9,
+        "playerName": {
+          "givenName": "Connor",
+          "surname": "Macdonald"
+        }
+      },
+      "powerRating": 1,
+      "teamId": "CD_T80",
+      "timeOnBench": 3,
+      "timeOnGround": 0
+    },
+    {
+      "benchReason": "ROTATION",
+      "interchangeCount": 0,
+      "player": {
+        "captain": false,
+        "playerId": "CD_I1023482",
+        "playerJumperNumber": 28,
+        "playerName": {
+          "givenName": "Cam",
+          "surname": "Mackenzie"
+        }
+      },
+      "powerRating": 1,
+      "teamId": "CD_T80",
+      "timeOnBench": 3,
+      "timeOnGround": 0
+    },
+    {
+      "benchReason": "ROTATION",
+      "interchangeCount": 0,
+      "player": {
+        "captain": false,
+        "playerId": "CD_I1027935",
+        "playerJumperNumber": 23,
+        "playerName": {
+          "givenName": "Josh",
+          "surname": "Weddle"
+        }
+      },
+      "powerRating": 1,
+      "teamId": "CD_T80",
+      "timeOnBench": 3,
+      "timeOnGround": 0
+    }
+  ],
+  "awayInterchangeCounts": {
+    "interchangeCap": 75.0,
+    "interchangeCountQ1": 0.0,
+    "interchangeCountQ2": 0.0,
+    "interchangeCountQ3": 0.0,
+    "interchangeCountQ4": 0.0,
+    "totalInterchangeCount": 0.0
+  },
+  "homeInterchange": [
+    {
+      "benchReason": "ROTATION",
+      "interchangeCount": 0,
+      "player": {
+        "captain": false,
+        "playerId": "CD_I990827",
+        "playerJumperNumber": 17,
+        "playerName": {
+          "givenName": "Jack",
+          "surname": "Graham"
+        }
+      },
+      "powerRating": 1,
+      "teamId": "CD_T150",
+      "timeOnBench": 3,
+      "timeOnGround": 0
+    },
+    {
+      "benchReason": "ROTATION",
+      "interchangeCount": 0,
+      "player": {
+        "captain": false,
+        "playerId": "CD_I1028561",
+        "playerJumperNumber": 27,
+        "playerName": {
+          "givenName": "Tom",
+          "surname": "Gross"
+        }
+      },
+      "powerRating": 1,
+      "teamId": "CD_T150",
+      "timeOnBench": 3,
+      "timeOnGround": 0
+    },
+    {
+      "benchReason": "ROTATION",
+      "interchangeCount": 0,
+      "player": {
+        "captain": false,
+        "playerId": "CD_I1015798",
+        "playerJumperNumber": 51,
+        "playerName": {
+          "givenName": "Marcus",
+          "surname": "Herbert"
+        }
+      },
+      "powerRating": 1,
+      "teamId": "CD_T150",
+      "timeOnBench": 3,
+      "timeOnGround": 0
+    },
+    {
+      "benchReason": "ROTATION",
+      "interchangeCount": 0,
+      "player": {
+        "captain": false,
+        "playerId": "CD_I1033078",
+        "playerJumperNumber": 5,
+        "playerName": {
+          "givenName": "Josh",
+          "surname": "Lindsay"
+        }
+      },
+      "powerRating": 1,
+      "teamId": "CD_T150",
+      "timeOnBench": 3,
+      "timeOnGround": 0
+    },
+    {
+      "benchReason": "ROTATION",
+      "interchangeCount": 0,
+      "player": {
+        "captain": false,
+        "playerId": "CD_I1020371",
+        "playerJumperNumber": 34,
+        "playerName": {
+          "givenName": "Jack",
+          "surname": "Williams"
+        }
+      },
+      "powerRating": 1,
+      "teamId": "CD_T150",
+      "timeOnBench": 3,
+      "timeOnGround": 0
+    }
+  ],
+  "homeInterchangeCounts": {
+    "interchangeCap": 75.0,
+    "interchangeCountQ1": 0.0,
+    "interchangeCountQ2": 0.0,
+    "interchangeCountQ3": 0.0,
+    "interchangeCountQ4": 0.0,
+    "totalInterchangeCount": 0.0
+  },
+  "matchId": "CD_M20260142409"
+}
