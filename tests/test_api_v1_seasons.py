@@ -1,5 +1,7 @@
 """Offline contract tests for v1 discovery and canonical seasons."""
 
+import sqlite3
+
 from api.routes_v1 import ApiDiscoveryResponse, Season, SeasonsResponse
 from tests.test_api_v1_player_stats import API_KEY, NOW, _client, _make_db
 
@@ -34,6 +36,19 @@ def test_discovery_returns_only_typed_public_fields(tmp_path, monkeypatch):
         "documentation": "/docs",
     }
     assert ApiDiscoveryResponse.model_validate(response.json())
+
+
+def test_ordinary_v1_reads_do_not_require_standard_read(tmp_path, monkeypatch):
+    db_path = _make_db(tmp_path, _seed_historical_season)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "DELETE FROM api_key_capabilities WHERE capability = 'standard-read'"
+        )
+    client = _client(db_path, monkeypatch)
+
+    headers = {"x-api-key": API_KEY}
+    assert client.get("/api/v1", headers=headers).status_code == 200
+    assert client.get("/api/v1/seasons", headers=headers).status_code == 200
 
 
 def test_seasons_requires_api_key_with_shared_auth_error(tmp_path, monkeypatch):

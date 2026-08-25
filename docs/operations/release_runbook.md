@@ -74,9 +74,9 @@ paths. Replace the two paths with persistent, operator-controlled paths; do
 not place the backup over the source database.
 
 ```bash
-export DB_PATH=/absolute/path/to/afl_players.db
-export BACKUP_PATH=/absolute/path/to/backups/afl_players-${RELEASE_SHA}.db
-python - "$DB_PATH" "$BACKUP_PATH" <<'PY'
+SOURCE_DB_PATH=/absolute/path/to/afl_players.db
+BACKUP_PATH=/absolute/path/to/backups/afl_players-${RELEASE_SHA}.db
+python - "$SOURCE_DB_PATH" "$BACKUP_PATH" <<'PY'
 import sqlite3, sys
 source, target = sys.argv[1:]
 with sqlite3.connect(f"file:{source}?mode=ro", uri=True) as src:
@@ -88,6 +88,10 @@ with sqlite3.connect(f"file:{target}?mode=ro", uri=True) as check:
 print(target)
 PY
 ```
+
+Use `SOURCE_DB_PATH` only as the host-side backup input. Do **not** export the
+host path as `DB_PATH`: the example Compose file interpolates `DB_PATH` for its
+containers, where the named-volume database remains `/app/data/afl_players.db`.
 
 Retain the backup, its filesystem checksum, the previous immutable image
 identifier, and the tested restore instructions. A backup stored only in the
@@ -150,7 +154,8 @@ docker compose -f compose.production.example.yaml run --rm --no-build afl-api py
 ```
 
 Resolve completeness/reconciliation findings appropriate to the site's season.
-Verify every required consumer key is active and has `standard-read`; grant
+Verify every required consumer key is active. Ordinary `/api/v1` reads require
+authentication but do not currently enforce `standard-read`; grant
 `advanced-read` only when that consumer is approved for advanced provenance.
 Never put full keys into the release record.
 
