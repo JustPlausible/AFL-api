@@ -39,11 +39,16 @@ def test_policy_is_json_first_and_keeps_injuries_intentionally_html():
     assert policy_for(OperationalDomain.METADATA).source_family == "public_afl_json"
     assert policy_for(OperationalDomain.MATCH_STATUS).source_family == "public_afl_json"
     assert policy_for(OperationalDomain.MATCH_ROSTERS).source_family == "cfs_json"
-    assert policy_for(OperationalDomain.MATCH_ROSTERS).persists is False
+    # Canonical roster persistence (Issue #219, migration 0024) is a distinct
+    # authority from the legacy HTML lineups domain below -- see
+    # docs/architecture/data_authority_map.md.
+    assert policy_for(OperationalDomain.MATCH_ROSTERS).persists is True
     assert policy_for(OperationalDomain.LINEUPS).source_family == "html"
     assert policy_for(OperationalDomain.LINEUPS).persists is True
     assert policy_for(OperationalDomain.LINEUPS).preferred_source_family == "cfs_json"
-    assert policy_for(OperationalDomain.LINEUPS).preferred_persists is False
+    # preferred_* is informational context only; it never redirects LINEUPS'
+    # own source_family/collector/persists above, which remain HTML-only.
+    assert policy_for(OperationalDomain.LINEUPS).preferred_persists is True
     assert policy_for(OperationalDomain.MATCH_PLAYER_STATS).source_family == "cfs_json"
     assert policy_for(OperationalDomain.INJURIES).source_family == "html"
     assert all(not item.fallback_permitted for item in source_policy.SOURCE_POLICY.values())

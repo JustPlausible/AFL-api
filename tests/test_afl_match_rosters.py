@@ -70,11 +70,28 @@ def test_optional_team_fields_only_parse_lists_and_preserve_unresolved_shapes():
         assert result.rosters[0]["teams"][0]["provider_fields"][field] == {
             "unresolved": field
         }
+        assert field not in result.rosters[0]["teams"][0][
+            "replacement_authoritative_collections"
+        ]
 
         null_payload = deepcopy(source)
         null_payload[0]["matchRoster"]["homeTeam"][field] = None
         result = MatchRosterCollector(FixtureClient(null_payload)).collect("CD_R1")
         assert field not in result.rosters[0]["teams"][0]["provider_fields"]
+        assert field not in result.rosters[0]["teams"][0][
+            "replacement_authoritative_collections"
+        ]
+
+
+def test_partial_published_team_collection_is_not_compared_as_authoritative_removal():
+    previous = collect("match_rosters_available.json")
+    payload = fixture("match_rosters_available.json")
+    payload[0]["matchRoster"]["homeTeam"]["positions"] = None
+    current = MatchRosterCollector(FixtureClient(payload)).collect("CD_R1")
+
+    diff = compare_rosters(previous, current)
+    assert not any(item["team_provider_id"] == "CD_T1" and
+                   item["source_collection"] == "positions" for item in diff.removed)
 
 
 def test_positions_and_nested_change_players_preserve_verified_meaning():

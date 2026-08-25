@@ -404,7 +404,7 @@ browser observation:
 |---|---|---|
 | `afl_json.collectors.PublicAflCollector` | Public `competitions`, `competition_seasons`, `rounds`, `teams`, `matches`, and direct `match_detail`; normalises numeric and provider IDs, names/codes, round number, match teams/venue/start/status/scores while retaining `source`. | `cli.py --collect-afl-metadata` is manual read-only; `--bootstrap-afl-season` persists the hierarchy. Scheduler/Admin metadata operations also use public JSON through `SOURCE_POLICY`. |
 | `PublicAflCollector.season_players` / `.collect_players` / `.player_id_map` | Authenticated CFS `/players?seasonId=...` supplies season listings and provider identity; public `/players/idmap` supplies validated Champion Data-to-AFL numeric crosswalk. | Implemented and fixture-tested. CLI `--bootstrap-afl-season` persists canonical players, provider mappings, team links where resolvable, and competition-season membership; there is no scheduler/Admin player-bootstrap route. |
-| `afl_json.rosters.MatchRosterCollector` | Authenticated CFS `/matchRosters/round/{round_provider_id}`; selection/roster state, provider timestamps/version and Champion Data IDs. Explicit unpublished/malformed/change states. | `cli.py --collect-match-rosters`; not scheduled/Admin production routing. |
+| `afl_json.rosters.MatchRosterCollector` | Authenticated CFS `/matchRosters/round/{round_provider_id}`; selection/roster state, provider timestamps/version and Champion Data IDs. Explicit unpublished/malformed/change states. | `cli.py --collect-match-rosters` remains a read-only diagnostic. Production persistence (`afl_json.rosters.persist_match_rosters`, migration `0024`, Issue #219) is now routed through `OperationalDomain.MATCH_ROSTERS` and the recurring `scheduler.match_roster_production` poller, backing `GET /api/v1/matches/{match_id}/rosters`. |
 | `afl_json.player_stats.MatchPlayerStatsCollector` | Authenticated CFS `/playerStats/match/{match_provider_id}`; canonical mapping preserves extra stats and source/status provenance, with concluded/live-partial/unpublished/malformed fixtures. | Selected for Scheduler and Admin operational player-stat jobs and CLI `--collect-match-player-stats`; all three persist through `upsert_player_stats` to `cfs_player_stats`. |
 | `afl_json.match_status.reconcile_match_status` | Public direct match detail reconciles `SCHEDULED`, `LIVE`, `POSTGAME`, `CONCLUDED` monotonically against stored status. | Used by operational Scheduler/Admin and CLI CFS player-stat collection, and by match-status policy operations. |
 
@@ -425,11 +425,17 @@ be captured.
   Scheduler/Admin metadata and match-status operations now select public JSON;
   fixture/match HTML remains an explicit legacy/manual diagnostic path, not an
   automatic fallback.
-* **Lineups:** CFS match rosters are the best maintained structured alternative
-  and specifically model unavailable, changed and completed states. Positions,
-  `teamPlayers` relationships, and late-change timing remain marked unverified in
-  `ENDPOINTS`; HTML and CFS outputs also use different identifiers/position
-  semantics. Therefore migration/fallback eligibility needs parity work first.
+* **Lineups:** CFS match rosters now have canonical production persistence and
+  a versioned consumer endpoint (`GET /api/v1/matches/{match_id}/rosters`,
+  Issue #219) as a **separate authority** from this legacy HTML domain — see
+  [match roster collection](match_rosters.md) and
+  [`docs/architecture/data_authority_map.md`](architecture/data_authority_map.md).
+  Positions, `teamPlayers` relationships, and late-change timing remain marked
+  unverified in `ENDPOINTS`; HTML and CFS outputs also use different
+  identifiers/position semantics. Issue #219 deliberately does not migrate,
+  repoint, or retire this legacy HTML path — retirement/migration eligibility,
+  if pursued later, remains explicit follow-up work, not something this entry
+  or #219 resolves.
 * **Injuries:** **Resolved 2026-08-25.** A paired live capture (plain HTTP +
   browser-rendered DOM) of the same finals-window page proved the plain HTTP
   response alone satisfies the full parser contract -- see
@@ -473,7 +479,7 @@ to the recommendation; the current method column separately records reality.
 | Teams/clubs | Club squad HTML plus configured club DB | Playwright HTML | Public teams; CFS season players | **Public JSON preferred** for team metadata | Club HTML | **HTML fallback only** for proven enrichment gaps | CFS only for players | No for canonical team metadata | Medium | Public team collector tests; squad enrichment differs | Define team-vs-club and enrichment contract |
 | Match metadata/details | Public JSON | Plain HTTP JSON | Public matches/match detail | **Public JSON** | Fixture HTML | Explicit legacy diagnostics only; no automatic fallback | No | No | High | `SOURCE_POLICY`, normalisers, bootstrap and fixtures/tests | Compare start/status/score and special-round behavior |
 | Match status | Public match-detail JSON | Plain HTTP JSON | Public match detail | **Public JSON** | Fixture HTML | Explicit manual diagnostic only; no automatic fallback | No | No | High | `SOURCE_POLICY`, monotonic status reconciler and tests | Unify HTML vocabulary including postponed/cancelled |
-| Operational lineups/team selections | Team-lineups HTML | Interactive Playwright HTML | Authenticated CFS match rosters | **Playwright HTML intentionally selected for persistence** | None | Not a fallback; CFS roster collection is a separate read-only CLI path | No for operational HTML; yes for CFS diagnostic | Yes for operational path | Medium | `SOURCE_POLICY`, scheduler/Admin routing and persistence tests | Map IDs, positions and late changes before canonical CFS persistence |
+| Operational lineups/team selections (legacy unversioned routes) | Team-lineups HTML | Interactive Playwright HTML | Authenticated CFS match rosters (now separately canonical for `/api/v1`, Issue #219) | **Playwright HTML intentionally retained for this legacy domain's persistence** | None | Not a fallback; CFS roster collection is production-persisted as a distinct authority (`OperationalDomain.MATCH_ROSTERS`, `docs/match_rosters.md`), not a substitute for this legacy HTML domain | No for operational HTML; yes for CFS | Yes for operational path | Medium | `SOURCE_POLICY`, scheduler/Admin routing and persistence tests | Legacy HTML lineup migration/retirement remains explicit future follow-up, not resolved by Issue #219 |
 | Injuries | Injury-list article | Plain HTTP (Playwright removed 2026-08-25) | None maintained | **Plain HTTP** | None | Not applicable | No known | No, disproven 2026-08-25 | High | Real paired live capture: `docs/investigation/afl-json/samples/injuries/`, parsed identically by `parse_injuries_html()` | 10-team finals-window fixture pair now captured; further live capture only needed if the page's markup contract changes again |
 | Season players / player IDs | CFS season players + public ID map during CLI bootstrap | Plain authenticated/public JSON | Same implemented sources | **CFS season players plus public ID map** | Squad/leader HTML | Separate enrichment/historical-gap tools only; no automatic fallback | Yes for season list | No for canonical bootstrap | High for identity; medium enrichment | Persistence adapter, bootstrap and crosswalk tests | Keep enrichment parity distinct from canonical persistence |
 | Leaderboard totals/averages export | Stats leaders HTML (manual only) | Interactive Playwright HTML | None with proven field parity | **Playwright HTML required** / **Further investigation required** | None | Manual diagnostic/export only | No known | Yes currently | Low | Repository parser only; no fixture/live response | Investigate maintained stats endpoint; add heading fixture |
@@ -537,8 +543,14 @@ No issues are created by this document. Suggested titles/scopes are:
 * **Duplicated acquisition paths — “Introduce domain source policy without dual
   writes.”** Implement the boundary above and migrate one domain at a time.
 * **Output-contract mismatches — “Prove CFS roster parity with HTML lineups.”**
-  Resolve AFL/provider IDs, position groups, unpublished/late-change semantics
-  and canonical nullability.
+  Issue #219 delivered canonical CFS roster persistence and
+  `GET /api/v1/matches/{match_id}/rosters` as a *separate* authority from the
+  legacy HTML `lineups` domain, deliberately without attempting or claiming
+  output-contract parity between the two (see `docs/match_rosters.md`). If
+  retiring the legacy HTML path is ever pursued, this remains the right
+  follow-up title: resolve AFL/provider IDs, position groups,
+  unpublished/late-change semantics and canonical nullability differences
+  between the two models first.
 * **Output-contract mismatches — “Prove CFS match-stat parity with match-centre
   HTML.”** Compare every canonical field, live partials, conclusion status and
   historical availability before fallback eligibility.

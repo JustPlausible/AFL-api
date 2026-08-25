@@ -159,8 +159,13 @@ including writer shutdown, backups, restore, and rollback, remains in the
   `--sync-afl-season` operation; do not extrapolate unimplemented command names.
 * **CLI versus services:** CLI operations run synchronously. Scheduler/Admin
   triggers use their documented service paths and may enqueue work; they are not
-  aliases for bootstrap. Roster inspection remains read-only and never populates
-  canonical roster or operational lineup tables.
+  aliases for bootstrap. `--collect-match-rosters` itself remains read-only and
+  never populates any table directly. Canonical CFS roster persistence now
+  exists as a separate production path (the scheduler and
+  `collect_operational(OperationalDomain.MATCH_ROSTERS)`, Issue #219, see
+  `docs/match_rosters.md`); this CLI command still never populates the
+  operational HTML-backed `lineups` table either way, and remains distinct
+  from that path.
 * **One operation per invocation:** select only one top-level operation flag.
   Conflicts are rejected before runtime components load, as implemented for
   [Issue #110](https://github.com/JustPlausible/AFL-api/issues/110).
@@ -294,9 +299,15 @@ provider-ID family are rejected before network access.
 python cli.py --collect-match-rosters CD_R202601421 --print-json
 ```
 
-This collects CFS round selections and change records. It is **read-only**:
-there is no canonical, publication-safe roster persistence path yet, so it does
-not write the operational HTML-backed lineup tables.
+This collects CFS round selections and change records. The CLI command itself
+is **read-only**: it never writes the database, so it never populates either
+canonical roster persistence or the operational HTML-backed lineup tables.
+Canonical roster persistence (`cfs_match_rosters`/`cfs_match_roster_selections`/
+`cfs_match_roster_context`, migration `0024`) is now available separately
+through the production scheduler and
+`collect_operational(OperationalDomain.MATCH_ROSTERS)` — see
+[match roster collection](match_rosters.md) — and backs
+`GET /api/v1/matches/{match_id}/rosters`.
 
 ```bash
 python cli.py --collect-match-player-stats CD_M20260142001 --print-json
@@ -521,13 +532,15 @@ workflow.
 
 The implemented public metadata hierarchy, season/player bootstrap, CFS match
 rosters, and CFS match player statistics are all reachable through `cli.py`.
-No new persistence switch was added: roster/selection persistence lacks a
-canonical publication-safe persistence function, while metadata collection and
-metadata persistence are already deliberately separated. Follow-up work should
-first define canonical selection identity/replacement semantics; only then
-should it expose a persistent CFS roster command. Grouped subcommands and
-broader source-selection redesign are also intentionally outside this guide's
-scope.
+No new persistence switch was added for rosters (Issue #219): canonical
+selection identity/replacement semantics are now defined and roster
+persistence exists (see `docs/match_rosters.md`), but it is reached through
+the production scheduler and `collect_operational(OperationalDomain.MATCH_ROSTERS)`,
+not a new CLI flag — `--collect-match-rosters` deliberately stays the existing
+read-only diagnostic command rather than becoming a surprising persistent
+write path, consistent with how metadata collection and metadata persistence
+are already deliberately separated commands. Grouped subcommands and broader
+source-selection redesign are also intentionally outside this guide's scope.
 
 ## Read-only season completeness report
 

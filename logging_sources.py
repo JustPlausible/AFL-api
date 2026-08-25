@@ -78,6 +78,12 @@ def _match_interchange_production_enabled() -> bool:
     return bool(config.AFL_INTERCHANGE_PRODUCTION_ENABLED)
 
 
+def _match_roster_production_enabled() -> bool:
+    """Production roster collection (Issue #219) -- independent of the
+    diagnostics framework entirely; gated only by its own flag."""
+    return bool(config.AFL_ROSTER_PRODUCTION_ENABLED)
+
+
 def _analytics_enabled() -> bool:
     """Modular analytics/telemetry framework (Issue #205) -- independent of
     the diagnostics framework entirely; gated only by its own flag."""
@@ -261,6 +267,18 @@ _SOURCES: tuple[LogSource, ...] = (
         filename="match_interchange_production.log",
         enabled=_match_interchange_production_enabled,
         disabled_reason="AFL_INTERCHANGE_PRODUCTION_ENABLED is not enabled.",
+    ),
+    LogSource(
+        id="match_roster_production",
+        display_name="Match Roster Production",
+        description=(
+            "Production matchRosters/round collection backing /api/v1/matches/{match_id}/rosters "
+            "(Issue #219). Independent of the diagnostics framework."
+        ),
+        logger_name="match_roster_production",
+        filename="match_roster_production.log",
+        enabled=_match_roster_production_enabled,
+        disabled_reason="AFL_ROSTER_PRODUCTION_ENABLED is not enabled.",
     ),
     LogSource(
         id="analytics",

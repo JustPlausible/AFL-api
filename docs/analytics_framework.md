@@ -200,6 +200,16 @@ identified by these stable resource identifiers:
   production `matchInterchange` polling. Instrumented the same way, using
   `len(appeared) + len(disappeared) + len(changed)` as the change
   magnitude.
+* **`match_rosters`** (`scheduler/match_roster_production.py`, Issue #219) --
+  production round-scoped `matchRosters/round` polling. Instrumented in
+  `_capture_one` after a successful, replacement-safe (`PUBLISHED`)
+  `write_lane.execute(...)` persist, using `selections_written` as the
+  change magnitude. Unlike the other two, this observation carries no
+  `match_id`/`match_provider_id` (the collector call is round-scoped, not
+  per-match) -- the polled `round_provider_id` is recorded in `note`
+  instead. A skipped poll (not-yet-published, empty, malformed, or a
+  transport/auth failure) is never recorded, matching the other two
+  collectors' success-only instrumentation.
 
 Each collector reads `matches.status` at poll time via the same one-row
 `SELECT status FROM matches WHERE match_id=?` read it already performs for

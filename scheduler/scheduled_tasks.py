@@ -77,6 +77,12 @@ def match_interchange_production_job():
     return poll_match_interchange()
 
 
+@scheduler.scheduled_job(IntervalTrigger(seconds=config.AFL_ROSTER_PRODUCTION_INTERVAL_SECONDS), id="match_roster_production", name="Production CFS match-roster polling", max_instances=1, coalesce=True, misfire_grace_time=30)
+def match_roster_production_job():
+    from scheduler.match_roster_production import poll_match_rosters
+    return poll_match_rosters()
+
+
 # Analytics retention/roll-up (Issue #205): the one piece of new scheduler
 # infrastructure the analytics framework adds. A single shared daily job for
 # every analytics resource/route -- adding a new analytics module never
