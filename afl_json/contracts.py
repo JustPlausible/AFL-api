@@ -14,7 +14,13 @@ from types import MappingProxyType
 from typing import Final, Literal, Mapping
 
 PUBLIC_API_BASE: Final = "https://aflapi.afl.com.au/afl/v2"
-CFS_API_BASE: Final = "https://api.afl.com.au/cfs/afl"
+# The CFS service root shared by every CFS-hosted endpoint. Each endpoint
+# family models its own path below (e.g. "/afl/players", "/afl/WMCTok",
+# "/commentaryFeed/{...}") rather than the root itself encoding the "afl"
+# family -- see Issue #199. This is what lets commentaryFeed (which lives
+# directly under this root, not under "/afl") resolve correctly without a
+# per-endpoint base-URL override or string-manipulation workaround.
+CFS_SERVICE_ROOT: Final = "https://api.afl.com.au/cfs"
 CFS_TOKEN_HEADER: Final = "x-media-mis-token"
 CFS_ERROR_AUTH: Final = "CFSAPI001"
 CFS_ERROR_NOT_PUBLISHED: Final = "CFSSDS001"
@@ -57,24 +63,10 @@ class EndpointDefinition:
     verified: bool = True
     unverified_fields: tuple[str, ...] = ()
     required_record_fields: tuple[str, ...] = ()
-    # Every maintained CFS endpoint in this project genuinely lives under
-    # CFS_API_BASE ("https://api.afl.com.au/cfs/afl"), so this defaults to
-    # None and base_url below is unchanged for all of them. It exists because
-    # not every CFS endpoint family actually lives there -- commentaryFeed
-    # was confirmed (PR #197 live-match follow-up, comparing a direct Bruno
-    # capture against AFL-api's generated request for CD_M20260142403) to
-    # live one directory above, at "https://api.afl.com.au/cfs/commentaryFeed/...",
-    # not ".../cfs/afl/commentaryFeed/...". Rather than hardcode a special
-    # case into base_url's logic, a diagnostic-only endpoint definition (kept
-    # out of the maintained ENDPOINTS registry below, same as any other
-    # unverified diagnostic endpoint) can set this explicitly.
-    base_url_override: str | None = None
 
     @property
     def base_url(self) -> str:
-        if self.base_url_override is not None:
-            return self.base_url_override
-        return CFS_API_BASE if self.source is SourceSystem.CFS else PUBLIC_API_BASE
+        return CFS_SERVICE_ROOT if self.source is SourceSystem.CFS else PUBLIC_API_BASE
 
     @property
     def url_template(self) -> str:
@@ -88,7 +80,7 @@ def _endpoint(name: str, path: str, entity: str, **values: object) -> EndpointDe
 
 
 _ENDPOINTS = {
-    "wmc_token": _endpoint("wmc_token", "/WMCTok", "authentication", source=SourceSystem.CFS,
+    "wmc_token": _endpoint("wmc_token", "/afl/WMCTok", "authentication", source=SourceSystem.CFS,
         method=HttpMethod.POST, requires_auth=False, collection_paths=("token",), identifier_type=None),
     "competitions": _endpoint("competitions", "/competitions", "competition", source=SourceSystem.PUBLIC,
         method=HttpMethod.GET, requires_auth=False, collection_paths=("competitions",), identifier_type="competition",
@@ -116,17 +108,17 @@ _ENDPOINTS = {
         required_path_parameters=("afl_match_id",)),
     "player_id_map": _endpoint("player_id_map", "/players/idmap", "player_id_map", source=SourceSystem.PUBLIC,
         method=HttpMethod.GET, requires_auth=False, collection_paths=("idMapResponse.ids",), identifier_type="player"),
-    "season_players": _endpoint("season_players", "/players", "season_player", source=SourceSystem.CFS,
+    "season_players": _endpoint("season_players", "/afl/players", "season_player", source=SourceSystem.CFS,
         method=HttpMethod.GET, requires_auth=True, collection_paths=("players",), identifier_type="player",
         required_query_parameters=("seasonId",),
         optional_query_parameters=("pageSize", "pageNum", "sortBy", "teamIds", "playerPosition"),
         pagination=Pagination.VERIFY_TOTAL_THEN_RESPONSE_DRIVEN),
-    "match_rosters": _endpoint("match_rosters", "/matchRosters/round/{round_provider_id}", "match_roster",
+    "match_rosters": _endpoint("match_rosters", "/afl/matchRosters/round/{round_provider_id}", "match_roster",
         source=SourceSystem.CFS, method=HttpMethod.GET, requires_auth=True,
         collection_paths=(), identifier_type="player",
         required_path_parameters=("round_provider_id",),
         unverified_fields=("positions semantics", "teamPlayers relationship", "late-change timing")),
-    "match_player_statistics": _endpoint("match_player_statistics", "/playerStats/match/{match_provider_id}",
+    "match_player_statistics": _endpoint("match_player_statistics", "/afl/playerStats/match/{match_provider_id}",
         "match_player_statistics", source=SourceSystem.CFS, method=HttpMethod.GET, requires_auth=True,
         collection_paths=("homeTeamPlayerStats", "awayTeamPlayerStats"), identifier_type="player",
         required_path_parameters=("match_provider_id",),

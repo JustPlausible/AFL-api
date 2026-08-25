@@ -119,7 +119,7 @@ def test_endpoint_is_marked_verified_and_independent_of_diagnostic_definition():
     assert MATCH_INTERCHANGE_ENDPOINT.verified is True
     assert MATCH_INTERCHANGE_ENDPOINT is not diagnostic_endpoint
     resolved = MATCH_INTERCHANGE_ENDPOINT.url_template.format(match_provider_id=MATCH_PROVIDER_ID)
-    assert resolved.endswith(f"/matchInterchange/{MATCH_PROVIDER_ID}")
+    assert resolved == f"https://api.afl.com.au/cfs/afl/matchInterchange/{MATCH_PROVIDER_ID}"
 
 
 # --- Parsing ------------------------------------------------------------------

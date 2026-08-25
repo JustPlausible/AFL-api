@@ -5,7 +5,7 @@
 This document converts the current AFL website investigation into an implementation contract for a JSON collection module. It separates:
 
 - public AFL API endpoints (`aflapi.afl.com.au`), which currently work without a token;
-- protected CFS endpoints (`api.afl.com.au/cfs/afl`), which require a WMCTok value in the `x-media-mis-token` header;
+- protected CFS endpoints (`api.afl.com.au/cfs`), which require a WMCTok value in the `x-media-mis-token` header;
 - source identifiers from AFL's numeric IDs and Champion Data provider IDs (`CD_*`);
 - collection behaviour from database persistence.
 
@@ -16,6 +16,27 @@ Collectors must import that registry instead of copying URLs or request rules. T
 document provides rationale and investigation detail; where it differs from the
 registry, the registry is authoritative. Fields still awaiting verification are
 listed both in section 9 and in each endpoint's `unverified_fields` value.
+
+### 1.1 CFS service root vs. endpoint family (Issue #199)
+
+`https://api.afl.com.au/cfs` is the actual shared CFS service root
+(`afl_json.contracts.CFS_SERVICE_ROOT`). It is not itself an endpoint family
+-- individual endpoint definitions each model their own family path
+explicitly:
+
+```text
+CFS service root:      https://api.afl.com.au/cfs
+AFL CFS endpoint family: https://api.afl.com.au/cfs/afl/...   (WMCTok, players, playerStats, matchRosters, matchItem, matchInterchange)
+Commentary endpoint:     https://api.afl.com.au/cfs/commentaryFeed/...
+```
+
+Most CFS endpoints genuinely live under the `/afl` family and model that
+prefix in their own `path_template` (e.g. `/afl/players`,
+`/afl/matchInterchange/{match_provider_id}`). `commentaryFeed` is the one
+documented exception, living directly under the service root -- see the
+"Update (Issue #201)" note below. Do not assume every CFS endpoint lives
+under `/afl`; only the families explicitly listed above have been verified
+to.
 
 ## 2. Authentication contract
 
@@ -354,12 +375,14 @@ no longer the only or the authoritative path -- see the "Production vs.
 diagnostic" note below.
 
 *Endpoint:* `GET {CFS root}/commentaryFeed/{match_provider_id}` --
-`https://api.afl.com.au/cfs/commentaryFeed/{match_provider_id}`, one
-directory above the `/cfs/afl` root most other CFS endpoints live under
-(Issue #199 tracks a possible future URL-model refactor; the production
-endpoint definition in `afl_json/match_commentary.py` uses the same
-`base_url_override` technique as the diagnostic definition rather than
-pre-empting that refactor).
+`https://api.afl.com.au/cfs/commentaryFeed/{match_provider_id}`, directly
+under the CFS service root, not under the `/afl` endpoint family most other
+CFS endpoints live under (see §1.1). Following the Issue #199 URL-model
+refactor, the production endpoint definition in
+`afl_json/match_commentary.py` models this directly as its own
+`path_template` ("/commentaryFeed/{match_provider_id}") rather than via a
+base-URL override or string manipulation, exactly like the diagnostic
+definition in `collection/match_commentary_evidence.py`.
 
 *Confirmed feed-level fields:* `matchId` (Champion Data match id),
 `lastUpdated` (ISO-8601 with milliseconds, e.g.

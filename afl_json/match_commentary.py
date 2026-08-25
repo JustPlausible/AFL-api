@@ -191,18 +191,17 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from afl_json.contracts import CFS_API_BASE, EndpointDefinition, HttpMethod, SourceSystem
+from afl_json.contracts import EndpointDefinition, HttpMethod, SourceSystem
 
 COLLECTOR_VERSION = "match_commentary_production_v1"
 SOURCE_LABEL = "cfs_commentary_feed"
 
 # See module docstring "Endpoint contract (confirmed)" -- commentaryFeed lives
-# one directory above the standard CFS_API_BASE root, exactly like the
-# diagnostic endpoint definition in collection.match_commentary_evidence.
+# directly under the CFS service root (CFS_SERVICE_ROOT), not under the
+# "/afl" endpoint family most other CFS endpoints live under, exactly like
+# the diagnostic endpoint definition in collection.match_commentary_evidence.
 # Kept as an independent EndpointDefinition (not imported) so the production
 # path never depends on the diagnostic module, per this module's docstring.
-_CFS_COMMENTARY_BASE_URL = CFS_API_BASE.removesuffix("/afl")
-
 MATCH_COMMENTARY_ENDPOINT = EndpointDefinition(
     name="match_commentary",
     source=SourceSystem.CFS,
@@ -213,7 +212,6 @@ MATCH_COMMENTARY_ENDPOINT = EndpointDefinition(
     collection_paths=(),
     identifier_type=None,
     required_path_parameters=("match_provider_id",),
-    base_url_override=_CFS_COMMENTARY_BASE_URL,
     verified=True,
     unverified_fields=(
         "whether commentaryEvent[] entries can ever be removed rather than only added to "
