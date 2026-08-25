@@ -13,7 +13,7 @@ from afl_json.client import (
     AflJsonTransportError,
     HttpPolicy,
 )
-from afl_json.contracts import CFS_API_BASE, CFS_TOKEN_HEADER
+from afl_json.contracts import CFS_SERVICE_ROOT, CFS_TOKEN_HEADER
 
 
 @dataclass
@@ -145,14 +145,17 @@ def test_required_parameters_are_validated_before_network_access():
     assert subject.session.calls == []
 
 
-# --- base_url_override + invalid-JSON diagnostics ---------------------------
+# --- CFS endpoint family paths + invalid-JSON diagnostics -------------------
 # Regression coverage for the live CD_M20260142403 commentary failure: a
 # correct parser wired to a URL resolved from the wrong CFS base path
 # returned a non-JSON (HTML) error response on every single poll. See
 # collection/match_commentary_evidence.py's MATCH_COMMENTARY_ENDPOINT and
-# afl_json/contracts.py's EndpointDefinition.base_url_override.
+# Issue #199 (CFS_SERVICE_ROOT plus per-endpoint family paths).
 
-def test_endpoint_with_base_url_override_is_requested_at_the_overridden_root():
+def test_endpoint_family_path_resolves_directly_under_the_cfs_service_root():
+    """An endpoint whose path_template does not include an "/afl" prefix
+    (like commentaryFeed) resolves directly under CFS_SERVICE_ROOT -- no
+    base-URL override or string manipulation is needed for this any more."""
     from afl_json.contracts import EndpointDefinition, HttpMethod, SourceSystem
 
     endpoint = EndpointDefinition(
@@ -160,10 +163,8 @@ def test_endpoint_with_base_url_override_is_requested_at_the_overridden_root():
         path_template="/exampleFeed/{match_provider_id}", requires_auth=True,
         entity_type="diagnostic_example", collection_paths=(), identifier_type=None,
         required_path_parameters=("match_provider_id",), verified=False,
-        base_url_override="https://api.afl.com.au/cfs",
     )
-    assert endpoint.base_url == "https://api.afl.com.au/cfs"
-    assert endpoint.base_url != CFS_API_BASE  # the standard CFS root every other endpoint uses
+    assert endpoint.base_url == CFS_SERVICE_ROOT
     assert endpoint.url_template == "https://api.afl.com.au/cfs/exampleFeed/{match_provider_id}"
 
     subject = client(
@@ -176,14 +177,17 @@ def test_endpoint_with_base_url_override_is_requested_at_the_overridden_root():
     assert requested_url == "https://api.afl.com.au/cfs/exampleFeed/CD_M1"
 
 
-def test_endpoint_without_override_still_uses_the_standard_cfs_root():
-    """The override is opt-in and additive: an endpoint that doesn't set it
-    (i.e. every existing maintained endpoint) is completely unaffected."""
+def test_afl_family_endpoint_owns_its_afl_prefix_without_duplicating_it():
+    """The "/afl" endpoint family segment is modelled explicitly in each such
+    endpoint's own path_template, not implied by the shared CFS root --
+    guards against a malformed, duplicated "/cfs/afl/afl/..." path."""
     from afl_json.contracts import get_endpoint
 
     definition = get_endpoint("season_players")
-    assert definition.base_url_override is None
-    assert definition.base_url == CFS_API_BASE
+    assert definition.base_url == CFS_SERVICE_ROOT
+    assert definition.path_template.startswith("/afl/")
+    assert definition.url_template == "https://api.afl.com.au/cfs/afl/players"
+    assert definition.url_template.count("/afl/") == 1
 
 
 def test_invalid_json_response_carries_safe_diagnostics_for_an_html_error_page():

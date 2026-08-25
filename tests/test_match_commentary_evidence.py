@@ -104,7 +104,7 @@ def test_match_commentary_endpoint_resolves_to_the_cfs_commentary_root_not_cfs_a
     that match failed with "AFL endpoint returned invalid JSON" because
     MATCH_COMMENTARY_ENDPOINT resolved to
     https://api.afl.com.au/cfs/afl/commentaryFeed/CD_M20260142403 (via the
-    standard CFS_API_BASE root every *other* CFS endpoint in this project
+    "/afl" endpoint family root every *other* CFS endpoint in this project
     genuinely lives under), which does not exist. A direct Bruno capture
     against the same match during the same window confirmed the real
     endpoint lives one directory above: .../cfs/commentaryFeed/{id}, not
@@ -113,11 +113,13 @@ def test_match_commentary_endpoint_resolves_to_the_cfs_commentary_root_not_cfs_a
     test fed already-parsed JSON straight into parse_match_commentary(), so
     this specific class of bug (a correct parser wired to a wrong URL) was
     invisible to it. See collection/match_commentary_evidence.py's
-    _CFS_COMMENTARY_BASE_URL and afl_json/contracts.py's base_url_override.
+    MATCH_COMMENTARY_ENDPOINT and afl_json/contracts.py's CFS_SERVICE_ROOT
+    (Issue #199: commentaryFeed's path_template models "/commentaryFeed/..."
+    directly, so it resolves under the shared root with no override needed).
     """
-    from afl_json.contracts import CFS_API_BASE
+    from afl_json.contracts import CFS_SERVICE_ROOT
     assert MATCH_COMMENTARY_ENDPOINT.base_url == "https://api.afl.com.au/cfs"
-    assert MATCH_COMMENTARY_ENDPOINT.base_url != CFS_API_BASE
+    assert MATCH_COMMENTARY_ENDPOINT.base_url == CFS_SERVICE_ROOT
     assert not MATCH_COMMENTARY_ENDPOINT.base_url.endswith("/afl")
     resolved = MATCH_COMMENTARY_ENDPOINT.url_template.format(match_provider_id="CD_M20260142403")
     assert resolved == "https://api.afl.com.au/cfs/commentaryFeed/CD_M20260142403"
