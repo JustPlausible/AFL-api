@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Analytics · Data · AFL API Admin{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <h1 class="h2">Analytics</h1>
+  <p class="text-muted mb-0">Read-only upstream-collection and consumer-API telemetry (Issue #205). Observational only -- never a source of collection or API decisions. See <span class="technical">docs/analytics_framework.md</span>.</p>
+</div>
+
+<form method="get" class="card card-body mb-4" aria-label="Report filters">
+  <div class="d-flex gap-2 flex-wrap align-items-end">
+    <div>
+      <label for="since" class="form-label fw-semibold">Since (UTC date)</label>
+      <input type="date" id="since" name="since" class="form-control" value="{{ since_date or '' }}">
+    </div>
+    <div>
+      <label for="until" class="form-label fw-semibold">Until (UTC date)</label>
+      <input type="date" id="until" name="until" class="form-control" value="{{ until_date or '' }}">
+    </div>
+    <div class="form-check mb-2">
+      <input type="checkbox" id="by_lifecycle" name="by_lifecycle" class="form-check-input" value="true" {% if by_lifecycle %}checked{% endif %}>
+      <label for="by_lifecycle" class="form-check-label">Break out by lifecycle state</label>
+    </div>
+    <button type="submit" class="btn btn-primary">Update</button>
+  </div>
+  <div class="form-text">Recent detail is kept for the configured retention window; older observations are shown from daily roll-ups (see the storage/retention section of the analytics docs).</div>
+</form>
+
+<section aria-labelledby="upstream-heading">
+  <h2 id="upstream-heading" class="h4">Upstream collection</h2>
+  {% if report.upstream %}
+  <div class="table-responsive mb-4"><table class="table table-sm table-striped">
+    <thead><tr><th>Resource</th><th>Lifecycle</th><th class="text-end">Polls</th><th class="text-end">Changed</th><th class="text-end">Unchanged</th><th class="text-end">Errors</th><th class="text-end">Polls/change</th><th class="text-end">Avg ms</th></tr></thead>
+    <tbody>{% for row in report.upstream %}<tr>
+      <td>{{ row.display_name }}</td>
+      <td class="technical">{{ row.lifecycle_state or 'ALL' }}</td>
+      <td class="text-end">{{ row.polls }}</td>
+      <td class="text-end">{{ row.changed }}</td>
+      <td class="text-end">{{ row.unchanged }}</td>
+      <td class="text-end">{{ row.failures }}</td>
+      <td class="text-end">{{ "%.2f"|format(row.polls_per_change) if row.polls_per_change is not none else "—" }}</td>
+      <td class="text-end">{{ "%.1f"|format(row.avg_duration_ms) if row.avg_duration_ms is not none else "—" }}</td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+  {% else %}<div class="empty-state"><p class="text-muted mb-0">No upstream poll observations in this range.</p></div>{% endif %}
+</section>
+
+<section aria-labelledby="consumer-heading">
+  <h2 id="consumer-heading" class="h4">Consumer API requests</h2>
+  {% if report.consumer %}
+  <div class="table-responsive mb-4"><table class="table table-sm table-striped">
+    <thead><tr><th>Route</th><th class="text-end">Requests</th><th class="text-end">2xx</th><th class="text-end">4xx</th><th class="text-end">5xx</th><th class="text-end">Avg ms</th></tr></thead>
+    <tbody>{% for row in report.consumer %}<tr>
+      <td class="technical">{{ row.route }}</td>
+      <td class="text-end">{{ row.requests }}</td>
+      <td class="text-end">{{ row.status_2xx }}</td>
+      <td class="text-end">{{ row.status_4xx }}</td>
+      <td class="text-end">{{ row.status_5xx }}</td>
+      <td class="text-end">{{ "%.1f"|format(row.avg_duration_ms) if row.avg_duration_ms is not none else "—" }}</td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+  {% else %}<div class="empty-state"><p class="text-muted mb-0">No consumer API request observations in this range.</p></div>{% endif %}
+</section>
+{% endblock %}

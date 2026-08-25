@@ -12,6 +12,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 import config
+from analytics.contracts import UpstreamOutcome
+from analytics.record import record_upstream_poll
 from afl_json.client import (AflJsonAuthenticationError, AflJsonClient, AflJsonHttpError,
                              AflJsonInvalidResponse, AflJsonTransportError,
                              HttpPolicy, WMCTokenProvider)
@@ -196,6 +198,19 @@ def _failure_backoff(row: dict[str, Any], base: timedelta, settings: PlayerStatP
     failures = max(0, int(row.get("consecutive_failure_count") or 0))
     seconds = min(settings.max_backoff.total_seconds(), base.total_seconds() * (2 ** failures))
     return timedelta(seconds=seconds)
+
+
+_ANALYTICS_STATUS_MAP = {
+    PlayerStatsStatus.CONCLUDED: UpstreamOutcome.SUCCESS,
+    PlayerStatsStatus.LIVE_PARTIAL: UpstreamOutcome.SUCCESS,
+    PlayerStatsStatus.EMPTY: UpstreamOutcome.NOT_PUBLISHED,
+    PlayerStatsStatus.UNKNOWN: UpstreamOutcome.INVALID_RESPONSE,
+    PlayerStatsStatus.UNAVAILABLE: UpstreamOutcome.UNAVAILABLE,
+}
+
+
+def _analytics_outcome_for_status(status: PlayerStatsStatus) -> UpstreamOutcome:
+    return _ANALYTICS_STATUS_MAP.get(status, UpstreamOutcome.ERROR)
 
 
 class PlayerStatPollingWorker:
@@ -386,6 +401,7 @@ class PlayerStatPollingWorker:
             lifecycle = str(row.get("lifecycle") or "").upper()
             if lifecycle not in {"LIVE", "POSTGAME", "CONCLUDED"}:
                 return self._persist_skip(row, execution, "awaiting_authoritative_live", self.settings.pre_match_cadence, failure=False)
+            canonical_status: str | None = None
             started = time.monotonic()
             try:
                 canonical_status = self._current_canonical_status(row)
@@ -402,13 +418,18 @@ class PlayerStatPollingWorker:
                 period_state = self._resolve_period_state(row)
                 return self._persist_success(row, result, execution, network_ms, canonical_status, period_state)
             except AflJsonAuthenticationError as exc:
+                self._record_poll_analytics(row, canonical_status, time.monotonic() - started, UpstreamOutcome.AUTH_ERROR)
                 return self._persist_failure(row, execution, exc, _failure_backoff(row, self.settings.auth_pause, self.settings), "auth_failed_paused", set_auth_pause=True)
             except AflJsonHttpError as exc:
                 base = self.settings.rate_limit_backoff if exc.status_code == 429 else self.settings.transient_backoff
+                self._record_poll_analytics(row, canonical_status, time.monotonic() - started, UpstreamOutcome.HTTP_ERROR, http_status=exc.status_code)
                 return self._persist_failure(row, execution, exc, _failure_backoff(row, base, self.settings), "http_429" if exc.status_code == 429 else "http_failure")
             except (AflJsonTransportError, AflJsonInvalidResponse, ValueError) as exc:
+                outcome = UpstreamOutcome.TRANSPORT_ERROR if isinstance(exc, AflJsonTransportError) else UpstreamOutcome.INVALID_RESPONSE
+                self._record_poll_analytics(row, canonical_status, time.monotonic() - started, outcome)
                 return self._persist_failure(row, execution, exc, _failure_backoff(row, self.settings.transient_backoff, self.settings), "collector_failure")
             except BaseException as exc:
+                self._record_poll_analytics(row, canonical_status, time.monotonic() - started, UpstreamOutcome.ERROR)
                 return self._persist_failure(row, execution, exc, _failure_backoff(row, self.settings.transient_backoff, self.settings), ReasonCode.INTERRUPTED.value)
         finally:
             with self._state:
@@ -462,7 +483,9 @@ class PlayerStatPollingWorker:
         # LIVE, so it is folded into this same single UPDATE below rather than
         # issuing a separate write.
         advance_to_final_confirmation = effective_lifecycle in {"POSTGAME", "CONCLUDED"}
+        written_capture: int | None = None
         def op(conn):
+            nonlocal written_capture
             owned = conn.execute(
                 "SELECT 1 FROM match_stat_windows WHERE window_id=? AND lease_token=?",
                 (row["window_id"], execution.lease_token),
@@ -477,6 +500,7 @@ class PlayerStatPollingWorker:
             else:
                 written = upsert_player_stats(conn, result, match_period_state=period_state)
                 finality, auth = _finality(conn, row["match_provider_id"])
+            written_capture = written
             self.finalization_hook("after_domain_write")
             complete = finality is FinalityState.AUTHORITATIVE_COMPLETE
             status = "complete" if complete else "backoff" if failure_like else "awaiting_final"
@@ -500,7 +524,26 @@ class PlayerStatPollingWorker:
             if updated.rowcount != 1:
                 raise RuntimeError("Expected one running registry row during success finalisation")
             return {"status": "complete" if complete else "rejected_backoff" if failure_like else "rescheduled", "rows_written": written, "next_due_at": None if complete else _iso(next_due), "scrape_run_id": run_id}
-        return self.lane.execute("player_stats_poll.persist_success", row["window_id"], op)
+        outcome_result = self.lane.execute("player_stats_poll.persist_success", row["window_id"], op)
+        self._record_poll_analytics(
+            row, effective_lifecycle, network_ms / 1000.0, _analytics_outcome_for_status(result.status),
+            configured_interval_seconds=cadence.total_seconds(),
+            changed=(written_capture > 0) if written_capture is not None else None,
+            change_magnitude=written_capture,
+        )
+        return outcome_result
+
+    def _record_poll_analytics(self, row: dict[str, Any], lifecycle_state: str | None, duration_seconds: float,
+                               outcome: UpstreamOutcome, *, http_status: int | None = None,
+                               configured_interval_seconds: float | None = None,
+                               changed: bool | None = None, change_magnitude: int | None = None) -> None:
+        """Emit one Issue #205 analytics observation for a poll attempt. Never raises (see analytics/record.py)."""
+        record_upstream_poll(
+            resource="cfs_player_stats", match_id=row.get("match_id"), match_provider_id=row.get("match_provider_id"),
+            observed_at=self.clock().astimezone(timezone.utc), lifecycle_state=lifecycle_state,
+            configured_interval_seconds=configured_interval_seconds, duration_ms=duration_seconds * 1000,
+            outcome=outcome, http_status=http_status, changed=changed, change_magnitude=change_magnitude,
+        )
 
     def _persist_failure(self, row, execution: AttemptExecution, exc: BaseException, backoff: timedelta, reason: str, *, set_auth_pause: bool = False) -> dict[str, Any]:
         run_id = execution.run_id

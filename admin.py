@@ -19,6 +19,7 @@ from api_key_security import api_key_prefix, generate_api_key, hash_api_key
 from db.init_db import create_api_keys_table
 from db.connection import get_db_path, get_read_only_db_connection
 from afl_json.season_report import SeasonCompletenessReporter, list_persisted_afl_seasons
+from analytics.reporting import AnalyticsReporter
 from admin_csrf import csrf_input, require_csrf
 from logging_sources import (
     STATUS_AVAILABLE, STATUS_DISABLED, STATUS_NOT_CREATED, STATUS_UNAVAILABLE,
@@ -406,6 +407,23 @@ def season_review(request: Request, season: str | None = Query(None)):
         context={"seasons": seasons, "selected_year": selected_year,
                  "report": report, "error": error},
         status_code=400 if error else 200,
+    )
+
+
+@app.get("/analytics", response_class=HTMLResponse)
+def analytics_report(request: Request, since: str | None = Query(None), until: str | None = Query(None),
+                     by_lifecycle: bool = Query(False)):
+    """Render the shared analytics report (Issue #205) through a read-only connection."""
+    conn = get_read_only_db_connection()
+    try:
+        report = AnalyticsReporter(conn).report(
+            since_date=since or None, until_date=until or None, group_by_lifecycle=by_lifecycle,
+        )
+    finally:
+        conn.close()
+    return templates.TemplateResponse(
+        request=request, name="analytics_report.html",
+        context={"report": report, "since_date": since, "until_date": until, "by_lifecycle": by_lifecycle},
     )
 
 # Show table of player data
