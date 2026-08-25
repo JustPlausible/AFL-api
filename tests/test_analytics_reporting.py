@@ -87,6 +87,31 @@ def test_group_by_lifecycle_breaks_out_states(conn):
     assert ungrouped[0].lifecycle_state == "ALL"
 
 
+def test_missing_lifecycle_state_is_normalized_consistently_across_retention_boundary(conn):
+    """A raw row with no lifecycle_state (NULL) and a rolled-up row for an
+    older NULL-lifecycle observation (stored as 'UNKNOWN', per the rollup
+    table's NOT NULL column) must merge into one 'UNKNOWN' group, not split
+    into separate None/'UNKNOWN' groups depending on which side of the
+    retention boundary each observation happens to fall on."""
+    recent_date = (TODAY - timedelta(days=1)).date().isoformat()
+    old_date = (TODAY - timedelta(days=20)).date().isoformat()
+    _insert_poll(conn, resource="cfs_player_stats", lifecycle_state=None,
+                observation_date=recent_date, outcome="success", changed=True)
+    _insert_poll(conn, resource="cfs_player_stats", lifecycle_state=None,
+                observation_date=old_date, outcome="success", changed=False)
+    run_rollup_and_retention(conn, now=TODAY, retention_days=14)
+
+    reporter = AnalyticsReporter(conn, clock=lambda: TODAY)
+    grouped = reporter.resource_summary(group_by_lifecycle=True)
+    assert len(grouped) == 1
+    assert grouped[0].lifecycle_state == "UNKNOWN"
+    assert grouped[0].polls == 2
+
+    filtered = reporter.resource_summary(lifecycle_state="UNKNOWN", group_by_lifecycle=True)
+    assert len(filtered) == 1
+    assert filtered[0].polls == 2
+
+
 def test_match_summary_is_raw_only(conn):
     connection = conn
     connection.execute(

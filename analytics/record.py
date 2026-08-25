@@ -108,7 +108,16 @@ def dropped_observation_count() -> int:
 
 
 def wait_until_idle(timeout: float = 5.0) -> bool:
-    """Block until the background write queue is empty. Test-only helper."""
+    """Block until the background write queue is empty, or ``timeout`` elapses.
+
+    Returns whether the queue actually drained. Used by tests for
+    deterministic assertions, and by process shutdown
+    (``scheduler/start.py``'s ``shutdown_scheduler``, ``main.py``'s
+    ``lifespan``) as a best-effort drain -- a timed-out drain there is
+    logged, never raised: analytics is observational and must never block a
+    clean shutdown. Anything still queued past the timeout is simply lost,
+    the same outcome as any other dropped observation.
+    """
     done = threading.Event()
 
     def _waiter() -> None:

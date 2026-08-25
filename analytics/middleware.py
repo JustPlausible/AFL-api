@@ -25,16 +25,49 @@ from analytics.record import record_consumer_request
 # routes (api/routes_v1.py): advanced-read gating, and a handful of route-
 # specific boolean/enum filters. Extending this list is how a future route's
 # mode flag becomes visible in analytics -- never read arbitrary query keys.
-ALLOWED_REQUEST_MODE_PARAMS = ("advanced", "score_events_only", "on_bench_only", "event_type")
+# Each entry normalizes the raw query string to one of a small fixed set of
+# accepted values (mirroring FastAPI/Pydantic's own bool query-param
+# coercion for the boolean flags, and the route's exact Literal[...] values
+# for event_type) rather than copying whatever the caller sent -- an
+# unrecognized value (e.g. "?advanced=" or an invalid event_type, which
+# FastAPI itself would reject with 422) is simply omitted, never persisted
+# verbatim.
+_TRUE_VALUES = {"1", "true", "on", "yes"}
+_FALSE_VALUES = {"0", "false", "off", "no"}
+
+
+def _normalize_bool(raw: str) -> str | None:
+    lowered = raw.strip().lower()
+    if lowered in _TRUE_VALUES:
+        return "true"
+    if lowered in _FALSE_VALUES:
+        return "false"
+    return None
+
+
+def _normalize_event_type(raw: str) -> str | None:
+    accepted = {"appeared", "disappeared", "interchange_count_changed", "bench_reason_changed"}
+    return raw if raw in accepted else None
+
+
+REQUEST_MODE_NORMALIZERS = {
+    "advanced": _normalize_bool,
+    "score_events_only": _normalize_bool,
+    "on_bench_only": _normalize_bool,
+    "event_type": _normalize_event_type,
+}
 _MAX_REQUEST_MODE_LENGTH = 100
 
 
 def _request_mode(request: Request) -> str | None:
     parts = []
-    for name in ALLOWED_REQUEST_MODE_PARAMS:
-        value = request.query_params.get(name)
-        if value is not None:
-            parts.append(f"{name}={value}")
+    for name, normalize in REQUEST_MODE_NORMALIZERS.items():
+        raw = request.query_params.get(name)
+        if raw is None:
+            continue
+        normalized = normalize(raw)
+        if normalized is not None:
+            parts.append(f"{name}={normalized}")
     if not parts:
         return None
     return ",".join(parts)[:_MAX_REQUEST_MODE_LENGTH]

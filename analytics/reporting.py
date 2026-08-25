@@ -108,7 +108,7 @@ class AnalyticsReporter:
         group_clause = "resource, lifecycle_state" if group_by_lifecycle else "resource"
         query = f"""
             WITH combined AS (
-                SELECT resource, lifecycle_state,
+                SELECT resource, COALESCE(lifecycle_state, 'UNKNOWN') AS lifecycle_state,
                        1 AS polls,
                        CASE WHEN outcome='success' THEN 1 ELSE 0 END AS successes,
                        CASE WHEN outcome='success' AND changed=1 THEN 1 ELSE 0 END AS changed,
@@ -119,7 +119,7 @@ class AnalyticsReporter:
                 WHERE observation_date >= COALESCE(:since, observation_date)
                   AND observation_date <= COALESCE(:until, observation_date)
                   AND (:resource IS NULL OR resource = :resource)
-                  AND (:lifecycle IS NULL OR lifecycle_state = :lifecycle)
+                  AND (:lifecycle IS NULL OR COALESCE(lifecycle_state, 'UNKNOWN') = :lifecycle)
                 UNION ALL
                 SELECT resource, lifecycle_state, polls, successes, changed, unchanged, failures, total_duration_ms
                 FROM analytics_upstream_daily_rollups

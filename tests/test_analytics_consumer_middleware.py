@@ -52,6 +52,10 @@ def _build_app() -> FastAPI:
     def unversioned():
         return {"ok": True}
 
+    @app.get("/api/v1/mode-echo")
+    def mode_echo(advanced: bool = False):
+        return {"advanced": advanced}
+
     return app
 
 
@@ -148,3 +152,23 @@ def test_analytics_failure_never_breaks_a_valid_response(db_path, monkeypatch):
     response = client.get("/api/v1/seasons")
     assert response.status_code == 200
     assert response.json() == {"seasons": []}
+
+
+def test_request_mode_normalizes_recognized_bool_values(db_path):
+    client = TestClient(_build_app())
+    response = client.get("/api/v1/mode-echo", params={"advanced": "yes"})
+    assert response.status_code == 200
+    assert record.wait_until_idle()
+    assert _requests(db_path)[-1]["request_mode"] == "advanced=true"
+
+
+def test_request_mode_omits_unrecognized_value_rather_than_persisting_raw_input(db_path):
+    client = TestClient(_build_app())
+    # FastAPI itself would reject "?advanced=" with 422 (not a valid bool),
+    # and rejects it here too -- the point of this test is that even when a
+    # request is accepted, an unrecognized value for a listed param is never
+    # copied into request_mode verbatim.
+    response = client.get("/api/v1/mode-echo", params={"advanced": "banana"})
+    assert response.status_code == 422
+    assert record.wait_until_idle()
+    assert _requests(db_path)[-1]["request_mode"] is None

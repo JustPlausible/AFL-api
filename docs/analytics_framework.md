@@ -246,9 +246,16 @@ per-route. It:
   never a new auth path) for the middleware to read after the request
   completes;
 * extracts `request_mode` from a **fixed allow-list** of already-existing
-  bounded query flags (`ALLOWED_REQUEST_MODE_PARAMS` in
+  bounded query flags (`REQUEST_MODE_NORMALIZERS` in
   `analytics/middleware.py`: `advanced`, `score_events_only`,
   `on_bench_only`, `event_type`) -- never arbitrary query-string content.
+  Each flag is additionally **normalized**, not copied verbatim: the three
+  boolean flags accept only the same string forms FastAPI/Pydantic itself
+  accepts for a bool query parameter (`1`/`true`/`on`/`yes` -> `true`,
+  `0`/`false`/`off`/`no` -> `false`); `event_type` accepts only its route's
+  exact `Literal[...]` values. An unrecognized value for a listed
+  parameter -- including one FastAPI would itself reject with 422 -- is
+  simply omitted, never persisted as-supplied.
 
 ## Privacy rules
 
@@ -293,6 +300,19 @@ source-selection rules, or polling cadence -- it is purely observational,
 exactly as Issue #205 requires. No adaptive polling is implemented; this is
 explicitly deferred (see "Non-goals" in the PR description).
 
+### Shutdown
+
+`analytics.record.wait_until_idle(timeout)` blocks until the write queue
+drains (or the timeout elapses) and is called as a best-effort drain on
+process shutdown -- `scheduler/start.py`'s `shutdown_scheduler` (alongside
+the existing `write_lane.drain(...)` call it already made) and `main.py`'s
+new `lifespan` shutdown handler. Unlike the write lane's drain, a timed-out
+analytics drain is only logged, never raised: analytics is observational
+and must never turn an otherwise-clean shutdown into a failure. Anything
+still queued past the timeout is simply lost, the same outcome as any other
+dropped observation (disabled flag, full queue, storage error) -- shutdown
+is not a special case, just another way an observation can fail to persist.
+
 ## Storage schema and retention
 
 Four tables (migration `0023_analytics_foundation.py`):
@@ -321,6 +341,16 @@ is safe), and deletes the now-represented raw rows. This is the **one**
 piece of genuinely new scheduler infrastructure Stage 1 adds -- it is
 shared across every resource/route already present in the raw tables, so
 adding a new analytics module never needs a second job.
+
+`analytics_upstream_polls.lifecycle_state` is nullable (a collector may not
+always have it cheaply available), but the rollup table's equivalent column
+is `NOT NULL` -- the roll-up query already normalizes a missing value to
+the literal string `'UNKNOWN'` when aggregating. `AnalyticsReporter`'s
+raw-detail queries apply the identical `COALESCE(lifecycle_state,
+'UNKNOWN')` normalization, so a report spanning the retention boundary
+merges both representations into one `UNKNOWN` group instead of splitting
+it into `NULL` (recent, raw) and `'UNKNOWN'` (older, rolled up) --
+see `test_missing_lifecycle_state_is_normalized_consistently_across_retention_boundary`.
 
 Match-level detail (`AnalyticsReporter.match_summary`) is **raw-only by
 design**: the rollup tables intentionally do not retain `match_id` (that

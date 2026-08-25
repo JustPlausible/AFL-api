@@ -179,6 +179,19 @@ def test_consumer_request_disabled_records_nothing(_database, monkeypatch):
     assert _consumer_rows(_database) == []
 
 
+def test_wait_until_idle_drains_pending_writes_used_as_shutdown_hook(_database):
+    """scheduler/start.py and main.py both call wait_until_idle() as a
+    best-effort drain on process shutdown -- confirm it actually blocks
+    until previously-enqueued writes land, not just that it returns True."""
+    for i in range(20):
+        record.record_upstream_poll(
+            resource="cfs_player_stats", observed_at=NOW, duration_ms=1.0,
+            outcome=UpstreamOutcome.SUCCESS, changed=(i % 2 == 0),
+        )
+    assert record.wait_until_idle(timeout=5.0) is True
+    assert len(_rows(_database)) == 20
+
+
 def test_consumer_request_success_and_error_are_recorded(_database):
     record.record_consumer_request(
         route="/api/v1/seasons", observed_at=NOW, duration_ms=5.0, status_code=200, api_key_id=42,
