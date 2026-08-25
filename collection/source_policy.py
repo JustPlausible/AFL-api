@@ -18,8 +18,8 @@ import config
 from afl_json import (
     AflJsonClient, MatchPlayerStatsCollector, MatchRosterCollector,
     PlayerStatsStatus, PublicAflCollector, RosterStatus,
-    persist_afl_metadata, persist_match_status_resolution, reconcile_match_status,
-    upsert_player_stats,
+    persist_afl_metadata, persist_match_rosters, persist_match_status_resolution,
+    reconcile_match_status, upsert_player_stats,
 )
 from db.connection import get_db_connection
 from db.scrape_runs import TRIGGER_SCHEDULER, audited_scrape_run
@@ -61,15 +61,19 @@ SOURCE_POLICY = {
         "scraper.scrape_afl_fixtures / scraper.scrape_afl_matches",
     ),
     OperationalDomain.MATCH_ROSTERS: SourcePolicy(
-        OperationalDomain.MATCH_ROSTERS, "cfs_json", "MatchRosterCollector", False, False,
+        OperationalDomain.MATCH_ROSTERS, "cfs_json", "MatchRosterCollector", True, False,
         "scraper.scrape_afl_lineups",
-        "Canonical roster persistence is not implemented; collection is explicitly read-only.",
+        "Canonical persistence (afl_json.rosters.persist_match_rosters, migration 0024, Issue #219) "
+        "upserts current-state selection/change-context rows and backs GET /api/v1/matches/{match_id}/rosters. "
+        "This is a distinct authority from OperationalDomain.LINEUPS below -- see docs/architecture/data_authority_map.md.",
     ),
     OperationalDomain.LINEUPS: SourcePolicy(
         OperationalDomain.LINEUPS, "html", "scraper.scrape_afl_lineups", True, False,
         None,
-        "HTML remains the operational writer until canonical CFS roster persistence exists.",
-        "cfs_json", "MatchRosterCollector", False,
+        "HTML remains the separate legacy/compatibility writer for the unversioned lineups routes. "
+        "Canonical CFS roster persistence (OperationalDomain.MATCH_ROSTERS) now exists for /api/v1 but is "
+        "a distinct authority; this domain is never repointed, and neither domain falls back to the other.",
+        "cfs_json", "MatchRosterCollector", True,
     ),
     OperationalDomain.MATCH_STATUS: SourcePolicy(
         OperationalDomain.MATCH_STATUS, "public_afl_json", "reconcile_match_status", True, False,
@@ -219,10 +223,27 @@ def collect_operational(
                         # A match target is resolved to its round by callers before dispatch.
                         provider_id = _provider_id(conn, "rounds", "round_id", target_id)
                         result = MatchRosterCollector(client).collect(provider_id)
-                        status = "unavailable" if result.status is RosterStatus.UNAVAILABLE else "success"
+                        observed_at = datetime.now(timezone.utc).isoformat()
+                        persist = lambda db: persist_match_rosters(db, result, observed_at=observed_at)
+                        summary = (write_executor("cfs_match_rosters.persist_round", target_id, persist)
+                                   if write_executor else persist_match_rosters(
+                                       conn, result, observed_at=observed_at))
+                        if not write_executor:
+                            conn.commit()
+                        if result.status is RosterStatus.UNAVAILABLE:
+                            status = "unavailable"
+                        elif result.status is RosterStatus.EMPTY:
+                            status = "empty"
+                        else:
+                            status = "success"
                         outcome = CollectionOutcome(selected.domain.value, selected.source_family,
-                            selected.collector, False, False, None, status,
-                            len(result.selections), 0, target_id)
+                            selected.collector, summary.rosters_written > 0, False, None, status,
+                            len(result.selections), summary.rosters_written, target_id, {
+                                "selections_written": summary.selections_written,
+                                "context_written": summary.context_written,
+                                "unmatched_matches": list(summary.unmatched_matches),
+                                "unmatched_teams": [list(item) for item in summary.unmatched_teams],
+                            })
                     elif selected.domain is OperationalDomain.MATCH_STATUS:
                         if target_id is None:
                             raise ValueError("match status requires an internal match ID")

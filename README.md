@@ -270,7 +270,12 @@ The existing commands remain deliberately distinct:
 * `--collect-afl-data --no-database`: diagnostic files only, never persistence.
 
 Authenticated Champion Data/CFS commands require opaque provider IDs, not AFL
-numeric IDs. Roster collection is read-only; match player-stat collection
+numeric IDs. `--collect-match-rosters` itself remains a read-only diagnostic
+command (it does not write to the database); canonical roster persistence now
+exists separately through the production scheduler and
+`collect_operational(OperationalDomain.MATCH_ROSTERS)`, backing
+`GET /api/v1/matches/{match_id}/rosters` — see
+[match roster collection](docs/match_rosters.md). Match player-stat collection
 persists to `cfs_player_stats`:
 
 ```bash
@@ -293,7 +298,10 @@ the **[player-stat storage contract](docs/architecture/player_stats_storage_cont
 Injuries and operational lineups deliberately remain rendered-HTML sources:
 Scheduler and Admin persist them through the shared policy, while the CLI exposes
 `--scrape-injuries` and `--scrape-lineups` explicitly. Injury rows are persisted
-only after canonical AFL player-ID resolution.
+only after canonical AFL player-ID resolution. The legacy `--scrape-lineups`/
+`/api/lineups/*` HTML path is unrelated to, and unaffected by, canonical CFS
+roster persistence — the two are separate authorities and neither falls back
+to or dual-writes the other; see [match roster collection](docs/match_rosters.md).
 
 ## 🔐 API Key Authentication
 

@@ -1340,6 +1340,214 @@ def get_match_interchange_events(
     )
 
 
+class RosterPlayer(BaseModel):
+    """Minimal player identity attached to one roster selection or context record."""
+
+    champion_data_player_id: str = Field(description="Source Champion Data player identifier.")
+    canonical_player_id: int | None = Field(
+        description="Canonical AFL-api player id, or null when unresolved. Never guessed from name."
+    )
+    display_name: str | None = Field(description="Canonical display name, or null when unresolved.")
+
+
+class RosterSelection(BaseModel):
+    """One selected positional-lineup entry (Issue #219).
+
+    A selection is a team's choice, not evidence the player took the field --
+    see GET /api/v1/matches/{match_id}/player-stats for actual participation
+    and statistics.
+    """
+
+    player: RosterPlayer
+    position: str | None = Field(
+        description="CFS positional group name exactly as supplied (e.g. FORWARDS, INTERCHANGE), "
+        "persisted verbatim. Never translated into a speculative enum."
+    )
+    jumper_number: int | None
+    captain: bool | None = Field(description="Source captain flag exactly as supplied, or null when not supplied.")
+
+
+class RosterContextRecord(BaseModel):
+    """One in/out/late-change/club-debut/milestone record.
+
+    Deliberately a separate collection from ``selections`` -- a change/context
+    record is never merged into or inferred as lineup membership.
+    """
+
+    player: RosterPlayer
+    reason: str | None = Field(description="Source-supplied reason, persisted verbatim, or null when not supplied.")
+
+
+class RosterContext(BaseModel):
+    """The five supported change/context collections, kept distinguishable from selections."""
+
+    ins: list[RosterContextRecord]
+    outs: list[RosterContextRecord]
+    late_changes: list[RosterContextRecord]
+    club_debuts: list[RosterContextRecord]
+    milestones: list[RosterContextRecord]
+
+
+class TeamRoster(BaseModel):
+    """One side's current canonical roster state."""
+
+    team: MatchTeam | None = Field(description="Canonical team identity, or null when unresolved.")
+    champion_data_team_id: str | None = Field(description="Source Champion Data team identifier.")
+    team_status: str | None = Field(
+        description="Source teamStatus exactly as supplied (e.g. CONFIRMED), persisted verbatim."
+    )
+    selections: list[RosterSelection] = Field(
+        description="Selected positional players for this side. Selection is not participation evidence."
+    )
+    context: RosterContext
+
+
+class RosterMetadata(BaseModel):
+    match_status_at_observation: str | None = Field(
+        description="Source matchRoster.status for the most recent observation (e.g. PUBLISHED, "
+        "CONCLUDED), persisted verbatim -- distinct from the canonical matches.status lifecycle field."
+    )
+    source_updated_at: str | None = Field(
+        description="Source matchRoster.lastUpdated for the most recent observation, or null when "
+        "no roster has been observed for this match yet."
+    )
+
+
+class MatchRostersResponse(BaseModel):
+    match: MatchInfo
+    metadata: RosterMetadata
+    home_team: TeamRoster | None = Field(
+        description="Null when no roster observation has been persisted for the home side yet."
+    )
+    away_team: TeamRoster | None = Field(
+        description="Null when no roster observation has been persisted for the away side yet."
+    )
+
+
+_CONTEXT_TYPE_FIELDS = {
+    "ins": "ins", "outs": "outs", "lateChanges": "late_changes",
+    "clubDebuts": "club_debuts", "milestones": "milestones",
+}
+
+
+def _roster_player(row, player_names: dict) -> RosterPlayer:
+    return RosterPlayer(
+        champion_data_player_id=row["player_provider_id"],
+        canonical_player_id=row["canonical_player_id"],
+        display_name=player_names.get(row["canonical_player_id"]),
+    )
+
+
+def _roster_name_lookups(conn, rows: list) -> dict[int, str | None]:
+    player_ids = {row["canonical_player_id"] for row in rows if row["canonical_player_id"] is not None}
+    player_names: dict[int, str | None] = {}
+    if player_ids:
+        placeholders = ",".join("?" for _ in player_ids)
+        for prow in conn.execute(
+            f"SELECT id, display_name, given_name, family_name FROM canonical_players WHERE id IN ({placeholders})",
+            tuple(player_ids),
+        ):
+            player_names[prow["id"]] = _display_name(prow)
+    return player_names
+
+
+@router.get(
+    "/api/v1/matches/{match_id}/rosters",
+    response_model=MatchRostersResponse,
+    responses={404: {"model": ApplicationErrorResponse, "description": "Match not found"}},
+    summary="Get canonical CFS rosters for a match",
+    description=(
+        "Returns the current canonical CFS matchRosters selection for one match (Issue #219), backed "
+        "by production persistence (afl_json.rosters.persist_match_rosters) rather than the separate "
+        "legacy rendered-HTML lineups compatibility routes/tables, which this resource never reads, "
+        "writes, or falls back to -- see docs/architecture/data_authority_map.md. "
+        "IMPORTANT: a returned selection is a team's choice, not evidence the player took the field. "
+        "Use GET /api/v1/matches/{match_id}/player-stats for actual participation and statistics. "
+        "home_team/away_team are null when no roster observation has been persisted for that side yet "
+        "-- never inferred. Each side's selections and context (ins, outs, late_changes, club_debuts, "
+        "milestones) are kept as separate collections; a context record is never merged into or read "
+        "as lineup membership. canonical_player_id/team.team_id are null when the source Champion Data "
+        "identifier has no resolved canonical crosswalk yet -- never guessed from name or jumper "
+        "number, and self-healed on a later valid observation once a crosswalk exists. This resource "
+        "reflects only the most recent replacement-safe (published, non-empty) observation for each "
+        "side; an unavailable, empty, or malformed upstream response never erases a previously "
+        "persisted roster -- see docs/match_rosters.md."
+    ),
+)
+def get_match_rosters(
+    match_id: int,
+    credential: AuthenticatedCredential = Depends(authenticate_api_key),
+) -> MatchRostersResponse | JSONResponse:
+    log(f"🧑‍🤝‍🧑 {credential.label} requested v1 rosters for match {match_id}", "INFO")
+    from afl_json.rosters import current_roster_context, current_roster_selections, current_roster_teams
+
+    conn = get_db_connection()
+    try:
+        match_row = conn.execute(
+            "SELECT match_id, match_provider_id, round_id, season_id, status FROM matches WHERE match_id = ?",
+            (match_id,),
+        ).fetchone()
+        if match_row is None:
+            return application_error(404, "match_not_found", "Match not found.")
+
+        team_rows = current_roster_teams(conn, match_id)
+        selection_rows = current_roster_selections(conn, match_id)
+        context_rows = current_roster_context(conn, match_id)
+        player_names = _roster_name_lookups(conn, [*selection_rows, *context_rows])
+        teams = _team_projection(conn)
+    finally:
+        conn.close()
+
+    match_status_at_observation = None
+    source_updated_at = None
+    sides: dict[str, TeamRoster] = {}
+    for team_row in team_rows:
+        side = team_row["side"]
+        match_status_at_observation = team_row["match_status_at_observation"]
+        source_updated_at = team_row["source_last_updated"]
+        canonical_team_id = team_row["canonical_team_id"]
+        team_identity = None
+        if canonical_team_id is not None:
+            name, _abbreviation = teams.get(canonical_team_id, (None, None))
+            team_identity = MatchTeam(team_id=canonical_team_id, name=name)
+
+        selections = [
+            RosterSelection(
+                player=_roster_player(row, player_names), position=row["position"],
+                jumper_number=row["jumper_number"],
+                captain=(bool(row["captain"]) if row["captain"] is not None else None),
+            )
+            for row in selection_rows if row["team_provider_id"] == team_row["team_provider_id"]
+        ]
+        context_by_field: dict[str, list[RosterContextRecord]] = {
+            field_name: [] for field_name in _CONTEXT_TYPE_FIELDS.values()
+        }
+        for row in context_rows:
+            if row["team_provider_id"] != team_row["team_provider_id"]:
+                continue
+            field_name = _CONTEXT_TYPE_FIELDS[row["context_type"]]
+            context_by_field[field_name].append(
+                RosterContextRecord(player=_roster_player(row, player_names), reason=row["reason"])
+            )
+
+        sides[side] = TeamRoster(
+            team=team_identity, champion_data_team_id=team_row["team_provider_id"],
+            team_status=team_row["team_status"], selections=selections,
+            context=RosterContext(**context_by_field),
+        )
+
+    return MatchRostersResponse(
+        match=MatchInfo(
+            match_id=match_row["match_id"], match_provider_id=match_row["match_provider_id"],
+            round_id=match_row["round_id"], season_id=match_row["season_id"], status=match_row["status"],
+        ),
+        metadata=RosterMetadata(
+            match_status_at_observation=match_status_at_observation, source_updated_at=source_updated_at,
+        ),
+        home_team=sides.get("home"), away_team=sides.get("away"),
+    )
+
+
 class InjuryPlayer(BaseModel):
     """Minimal player identity attached to one injury row."""
 

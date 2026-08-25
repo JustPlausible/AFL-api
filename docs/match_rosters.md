@@ -29,12 +29,136 @@ CLI outcomes are distinct:
 
 The structured output identifies `source_family=cfs_json`,
 `collector=MatchRosterCollector`, a null `persistence_target`, and
-`persistence_performed=false`. Roster collection does not write lineup rows.
-Although roster selections repeat Champion Data player, team and match IDs,
-they do not supply the independent AFL numeric player crosswalk or a trustworthy
-replacement boundary. v0.5.0 therefore uses the season-player and ID-map
-collectors for canonical persistence and deliberately defers match-selection
-persistence to v0.5.1.
+`persistence_performed=false`. **This CLI command remains deliberately
+read-only** — it inspects one round without writing to the database, even
+though canonical persistence now exists (see "Canonical persistence
+(Issue #219)" below). Use
+`python cli.py --collect-scheduled-jobs`/the production scheduler, or
+`collection.source_policy.collect_operational(OperationalDomain.MATCH_ROSTERS,
+target_id=<round_id>)` for an internal round id, to persist.
+
+## Canonical persistence (Issue #219)
+
+The collector above remains the single source of normalisation; production
+persistence reuses its output unchanged rather than re-parsing the raw CFS
+payload. `afl_json.rosters.persist_match_rosters` upserts three tables
+(migration `0024_match_roster_production.py`, which documents the full
+schema/safety rationale in its module docstring):
+
+* **`cfs_match_rosters`** — one row per `(match_provider_id,
+  team_provider_id)`, holding source `teamStatus`, the roster-level
+  `matchRoster.status`/`lastUpdated` observed with it, and canonical
+  match/team identity where resolvable.
+* **`cfs_match_roster_selections`** — current selected positional-lineup
+  membership, one row per `(match_provider_id, team_provider_id,
+  player_provider_id)` observed in `positions`.
+* **`cfs_match_roster_context`** — current `ins`/`outs`/`lateChanges`/
+  `clubDebuts`/`milestones` records, kept in a table separate from
+  selections so a change/context record can never be read as lineup
+  membership.
+
+**A CFS roster is a team selection, not proof of participation.** Nothing
+persisted here, and nothing derived from it (including the
+[`/api/v1/matches/{match_id}/rosters`](api_v1_rosters.md) consumer resource),
+implies a selected player took the field — see
+[`docs/api_v1_player_stats.md`](api_v1_player_stats.md) for actual
+participation and statistics.
+
+### Current-state, not append-only history
+
+There is no separate roster event-history table. The live evidence already
+recorded below (a pre-bounce and a LIVE capture of the same match differing
+only in the roster timestamp) does not establish that selections change
+often enough in observed practice to justify one; `compare_rosters`'s
+existing diff already treats each valid published response as the complete
+current selection/context state for a team, and persistence mirrors that
+model unchanged. A player's row is *updated* in place when e.g. their
+position changes (`first_observed_at` preserved, `last_observed_at`/
+`position` refreshed) rather than duplicated.
+
+### Replacement and supersession safety (Issue #219)
+
+`persist_match_rosters` reuses `compare_rosters`'s existing
+`replacement_safe` gate unchanged: only a `RosterStatus.PUBLISHED`
+observation is replacement-safe. Concretely:
+
+| Observation | Effect on a previously persisted roster |
+| --- | --- |
+| Top-level `null` (`RosterStatus.UNAVAILABLE`) | No effect — `persist_match_rosters` returns immediately without touching any table. |
+| Top-level empty list `[]` (`RosterStatus.EMPTY`) | No effect — same immediate no-op. Live evidence has not yet established a distinct destructive meaning for an empty list (see "Still unresolved" below), so it is conservatively treated exactly like `null`. |
+| Malformed/partial payload | Never reaches persistence at all — `MatchRosterCollector.collect` raises before returning a result, so the caller (the production scheduler, or a manual `collect_operational` trigger) never calls `persist_match_rosters` for that observation. |
+| A genuine later published update | Replaces the affected team's selection/context rows in place: a player no longer present is removed, a newly present player is added, an existing player's changed fields (e.g. `position`) are updated. |
+| An unchanged repeated publish | Idempotent — the same rows are re-upserted with the same content; no duplicates, no spurious change. |
+| Provider array reordering | Never a change — identity is keyed by `(match_provider_id, team_provider_id, player_provider_id)`/`context_type`, never by array position. `group_order`/`player_order` are retained only as non-authoritative presentation metadata. |
+
+### Identity resolution
+
+* **Match** — `matches.match_provider_id` (existing canonical match
+  relationship). An unresolved match is skipped for that match only; other
+  matches in the same round observation are unaffected.
+* **Team** — `afl_teams.provider_id` (the same crosswalk used by
+  `afl_json.match_interchange.resolve_canonical_team`). An unresolved team
+  still persists its Champion Data team id; `canonical_team_id` stays `NULL`
+  rather than guessed.
+* **Player** — the existing `player_provider_ids` crosswalk
+  (`provider='champion_data'`), exactly as used by
+  `afl_json.player_stats`/`afl_json.match_interchange`/
+  `afl_json.match_commentary`. Never resolved by display name or jumper
+  number. Canonical identity is re-resolved on every valid observation (a
+  current-state table), so a crosswalk added after a player's first roster
+  observation self-heals the persisted row on the next valid publish — no
+  separate repair path is required.
+
+A selection or context record with no Champion Data player id at all (not
+observed in any committed evidence, but structurally possible per the
+source's own optional shapes) is conservatively skipped rather than
+persisted under an invented identity.
+
+### Production collection integration
+
+Promoted through the existing scheduler/source-policy architecture, not a
+parallel orchestration system:
+
+* `collection.source_policy.OperationalDomain.MATCH_ROSTERS` now persists
+  (`SourcePolicy.persists=True`) for manual/admin one-off triggering via
+  `collect_operational`.
+* `scheduler.match_roster_production.poll_match_rosters` is the recurring
+  production poller, registered in `scheduler/scheduled_tasks.py` alongside
+  the other production collectors, gated by its own
+  `AFL_ROSTER_PRODUCTION_ENABLED` flag. It polls **rounds**, not individual
+  matches — one `matchRosters/round/{round_provider_id}` request refreshes
+  every match in that round at once.
+* **Cadence is deliberately conservative**: 900 seconds (15 minutes) by
+  default (`AFL_ROSTER_PRODUCTION_INTERVAL_SECONDS`), far slower than
+  commentary/interchange's 20-second live cadence. The evidence below (a
+  pre-bounce and LIVE capture of the same match differing only in
+  timestamp) does not show selection churn fast enough to justify
+  higher-frequency polling.
+* A round becomes a candidate once any of its matches is `LIVE`, or within
+  `AFL_ROSTER_PRODUCTION_PRE_ROUND_WINDOW_SECONDS` (default 24h, mirroring
+  the legacy HTML lineup scheduler's "T-1 day" trigger) of its scheduled
+  start, or within `AFL_ROSTER_PRODUCTION_KICKOFF_TOLERANCE_SECONDS`
+  (default 600s) after a scheduled start that has not yet locally flipped to
+  `LIVE`. A round with every match `CONCLUDED` is never polled.
+* See `scheduler/match_roster_production.py`'s module docstring for the full
+  candidate-selection and failure-isolation rationale.
+
+### Legacy `lineups` boundary
+
+Canonical CFS roster persistence is a **distinct authority** from the
+pre-existing rendered-HTML `lineups` table/routes
+(`OperationalDomain.LINEUPS`, `scraper.scrape_afl_lineups`). Issue #219 does
+not repoint, rewrite, or migrate that path:
+
+* the `/api/v1/matches/{match_id}/rosters` consumer resource reads only the
+  canonical CFS tables above, never `lineups`;
+* the legacy HTML `lineups` routes/persistence remain unchanged and continue
+  to operate exactly as before;
+* neither domain falls back to the other, and neither is dual-written merely
+  for compatibility.
+
+See [`docs/architecture/data_authority_map.md`](architecture/data_authority_map.md)
+for the maintained authority-boundary statement.
 
 `--afl-raw-directory PATH` enables the existing deterministic raw capture.
 Available responses are saved as their original JSON list and unpublished
@@ -120,8 +244,16 @@ change shortly before first bounce. A pre-bounce and live capture differed only
 in the roster timestamp, and the live roster then appeared stable. This is
 evidence that publication is effectively frozen near first bounce, but remains
 a provider observation rather than a persistence rule enforced by the collector.
+This same pre-bounce/LIVE stability evidence is the basis for the production
+scheduler's conservative 15-minute polling cadence — see "Production
+collection integration" above.
 
 ## Still unresolved
+
+Every item below remains conservatively handled by both the collector and
+production persistence: an unresolved shape is retained at collector scope
+(if a list) or skipped (if it cannot be resolved to a Champion Data player
+id), never guessed into a canonical meaning.
 
 Further live investigation should establish:
 

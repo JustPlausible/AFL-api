@@ -261,6 +261,39 @@ AFL_INTERCHANGE_PRODUCTION_ENABLED = _parse_bool_env("AFL_INTERCHANGE_PRODUCTION
 AFL_INTERCHANGE_PRODUCTION_INTERVAL_SECONDS = _parse_int_env("AFL_INTERCHANGE_PRODUCTION_INTERVAL_SECONDS", 20)
 AFL_INTERCHANGE_PRODUCTION_KICKOFF_TOLERANCE_SECONDS = _parse_int_env("AFL_INTERCHANGE_PRODUCTION_KICKOFF_TOLERANCE_SECONDS", 600)
 
+# Production CFS match-roster (selection) collection (Issue #219), promoting
+# afl_json.rosters.MatchRosterCollector into canonical persistence. See
+# afl_json/rosters.py and scheduler/match_roster_production.py.
+#
+# Deliberately a much slower cadence than commentary/interchange above: this
+# collector is round-scoped (one matchRosters/round/{provider_id} request
+# refreshes every match in that round at once), and docs/match_rosters.md
+# records that a pre-bounce and a LIVE capture of the same match differed
+# only in the roster timestamp -- i.e. no live evidence of selection churn
+# fast enough to need sub-minute polling. 900s (15 minutes) keeps
+# consumer-visible staleness low without polling meaningfully more often
+# than the source is expected to change.
+#
+# AFL_ROSTER_PRODUCTION_PRE_ROUND_WINDOW_SECONDS mirrors the legacy HTML
+# lineup scheduler's "T-1 day" pre-match trigger
+# (scheduler/schedule_lineup_scrapes.py): a round becomes a polling candidate
+# once any of its matches is within this window of its scheduled start,
+# consistent with docs/match_rosters.md recording rosters as available
+# "before and during matches". AFL_ROSTER_PRODUCTION_KICKOFF_TOLERANCE_SECONDS
+# mirrors the other production collectors' kickoff-tolerance settings above,
+# catching a match whose local status has not yet flipped to LIVE promptly
+# after its scheduled start. A round drops out of the candidate set entirely
+# once every one of its matches is CONCLUDED -- see
+# scheduler/match_roster_production.py.
+AFL_ROSTER_PRODUCTION_ENABLED = _parse_bool_env("AFL_ROSTER_PRODUCTION_ENABLED", True)
+AFL_ROSTER_PRODUCTION_INTERVAL_SECONDS = _parse_int_env("AFL_ROSTER_PRODUCTION_INTERVAL_SECONDS", 900)
+AFL_ROSTER_PRODUCTION_PRE_ROUND_WINDOW_SECONDS = _parse_int_env(
+    "AFL_ROSTER_PRODUCTION_PRE_ROUND_WINDOW_SECONDS", 86400
+)
+AFL_ROSTER_PRODUCTION_KICKOFF_TOLERANCE_SECONDS = _parse_int_env(
+    "AFL_ROSTER_PRODUCTION_KICKOFF_TOLERANCE_SECONDS", 600
+)
+
 # Modular analytics/telemetry framework (Issue #205). See analytics/ and
 # docs/analytics_framework.md. This is historical/domain analytics -- polls,
 # meaningful-change rate, consumer API usage -- not the diagnostics
