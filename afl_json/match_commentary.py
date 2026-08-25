@@ -21,11 +21,12 @@ writes to them.
 
 ## Endpoint contract (confirmed)
 
-``GET {CFS root}/commentaryFeed/{match_provider_id}`` -- one directory above
-the ``/cfs/afl`` root most other CFS endpoints live under (Issue #199 tracks
-a possible future URL-model refactor; this module uses the same
-``base_url_override`` technique the diagnostic endpoint definition already
-uses rather than pre-empting that refactor). Response shape:
+``GET {CFS root}/commentaryFeed/{match_provider_id}`` -- directly under the
+CFS service root (``CFS_SERVICE_ROOT``), not under the ``/afl`` endpoint
+family most other CFS endpoints live under (Issue #199: this module's
+``path_template`` models ``/commentaryFeed/...`` directly, the same as the
+diagnostic endpoint definition, so no base-URL override is needed). Response
+shape:
 
 ```json
 {
