@@ -25,6 +25,7 @@ from apscheduler.events import (
 from apscheduler.schedulers.base import STATE_STOPPED
 from fastapi import FastAPI
 
+from analytics import record as analytics_record
 from db.migration_runner import migrate_database
 from health import router as health_router
 from scheduler import scheduled_tasks  # force import to register cron jobs
@@ -70,6 +71,7 @@ _bootstrap_lock = threading.Lock()
 _jobs_registered = False
 _scheduler_thread: threading.Thread | None = None
 WRITE_LANE_DRAIN_TIMEOUT_SECONDS = 30.0
+ANALYTICS_DRAIN_TIMEOUT_SECONDS = 5.0
 
 
 def _reconcile_match_windows_startup() -> None:
@@ -182,6 +184,12 @@ def shutdown_scheduler(wait: bool = True) -> None:
         mark_graceful_shutdown()
     if wait and not write_lane.drain(timeout=WRITE_LANE_DRAIN_TIMEOUT_SECONDS):
         raise RuntimeError("Scheduler write lane did not drain")
+    # Best-effort only (Issue #205): analytics is observational, so a timed-out
+    # drain is logged, never raised -- it must never turn a clean scheduler
+    # shutdown into a failure. Any observation still queued past the timeout
+    # is dropped, exactly like a normal write failure (see analytics/record.py).
+    if wait and not analytics_record.wait_until_idle(timeout=ANALYTICS_DRAIN_TIMEOUT_SECONDS):
+        log.warning("Analytics write queue did not drain before shutdown; some observations may be lost.")
 
 
 @asynccontextmanager

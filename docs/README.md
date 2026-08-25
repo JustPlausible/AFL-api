@@ -39,6 +39,8 @@ for the reusable release summary and upgrade cautions.
 - [Injury collector pipeline architecture](architecture/injury_collector_pipeline.md) — acquisition/parser/resolver/persistence/orchestration boundaries, observed-team-authority persistence semantics, and canonical identity persistence (Issue #213)
 - [Canonical v1 current injuries — consumer reference](api_v1_injuries.md) — `GET /api/v1/injuries`, filterable by `team_id`/`canonical_player_id` (Issue #213)
 - [JSON payload fixtures and offline contract regression tests](json_contract_fixtures.md)
+- [Modular analytics/telemetry framework](analytics_framework.md) — upstream-collection and consumer-API telemetry, storage/retention, privacy rules, and how to add a new analytics module (Issue #205)
+- [Collection-to-consumer value mapping](architecture/collection_to_consumer_map.md) — the maintained map from upstream datasets through persistence to `/api/v1` exposure and usage classification (Issue #205)
 
 ## Reviews and planning
 

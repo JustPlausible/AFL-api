@@ -68,11 +68,14 @@ for any other match in the same cycle.
 from __future__ import annotations
 
 import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable
 
 import config
+from analytics.contracts import UpstreamOutcome
+from analytics.record import record_upstream_poll
 from afl_json.client import (
     AflJsonAuthenticationError,
     AflJsonClient,
@@ -159,12 +162,15 @@ def _current_match_status(conn, match_id: int) -> str | None:
 
 
 def _capture_one(client: AflJsonClient, match_id: int, match_provider_id: str, *,
-                 clock: Callable[[], datetime]) -> dict[str, Any]:
+                 clock: Callable[[], datetime],
+                 interval_seconds: int = MatchInterchangeProductionSettings.interval_seconds) -> dict[str, Any]:
     """Poll and persist one match's production interchange state.
 
     Mirrors ``scheduler.match_commentary_production._capture_one``'s outcome
     mapping and per-match error isolation.
     """
+    started = time.monotonic()
+    lifecycle_state: str | None = None
     outcome: str | None
     try:
         response = client.request(MATCH_INTERCHANGE_ENDPOINT, path_parameters={"match_provider_id": match_provider_id})
@@ -197,7 +203,9 @@ def _capture_one(client: AflJsonClient, match_id: int, match_provider_id: str, *
         response, outcome = None, "http_error"
 
     def op(conn):
+        nonlocal lifecycle_state
         local_status = _current_match_status(conn, match_id)
+        lifecycle_state = local_status
         observed_at = clock().isoformat()
         if outcome is not None:
             return persist_poll_outcome(
@@ -221,14 +229,40 @@ def _capture_one(client: AflJsonClient, match_id: int, match_provider_id: str, *
         return persist_match_interchange(conn, parsed)
 
     result = write_lane.execute("match_interchange_production.persist", match_provider_id, op)
-    if result["outcome"] == "success" and (result["appeared"] or result["disappeared"] or result["changed"]):
-        log.info(
-            "match_interchange_production transitions match_id=%s match_provider_id=%s poll_sequence=%s "
-            "appeared=%s disappeared=%s changed=%s",
-            match_id, match_provider_id, result["poll_sequence"], len(result["appeared"]),
-            len(result["disappeared"]), len(result["changed"]),
-        )
+    transition_count = None
+    if result["outcome"] == "success":
+        transition_count = len(result["appeared"]) + len(result["disappeared"]) + len(result["changed"])
+        if transition_count:
+            log.info(
+                "match_interchange_production transitions match_id=%s match_provider_id=%s poll_sequence=%s "
+                "appeared=%s disappeared=%s changed=%s",
+                match_id, match_provider_id, result["poll_sequence"], len(result["appeared"]),
+                len(result["disappeared"]), len(result["changed"]),
+            )
+    duration_ms = (time.monotonic() - started) * 1000
+    record_upstream_poll(
+        resource="match_interchange", match_id=match_id, match_provider_id=match_provider_id,
+        observed_at=clock(), lifecycle_state=lifecycle_state, configured_interval_seconds=interval_seconds,
+        duration_ms=duration_ms, outcome=_analytics_outcome(result["outcome"]),
+        changed=(transition_count > 0) if transition_count is not None else None,
+        change_magnitude=transition_count,
+    )
     return {"match_id": match_id, "match_provider_id": match_provider_id, **result}
+
+
+_ANALYTICS_OUTCOME_MAP = {
+    "success": UpstreamOutcome.SUCCESS,
+    "not_published": UpstreamOutcome.NOT_PUBLISHED,
+    "auth_error": UpstreamOutcome.AUTH_ERROR,
+    "transport_error": UpstreamOutcome.TRANSPORT_ERROR,
+    "invalid_response": UpstreamOutcome.INVALID_RESPONSE,
+    "http_error": UpstreamOutcome.HTTP_ERROR,
+    "malformed_payload": UpstreamOutcome.MALFORMED_PAYLOAD,
+}
+
+
+def _analytics_outcome(outcome: str) -> UpstreamOutcome:
+    return _ANALYTICS_OUTCOME_MAP.get(outcome, UpstreamOutcome.ERROR)
 
 
 def poll_match_interchange(*, client: AflJsonClient | None = None,
@@ -256,7 +290,8 @@ def poll_match_interchange(*, client: AflJsonClient | None = None,
     results: list[dict[str, Any]] = []
     for match_id, match_provider_id in matches:
         try:
-            results.append(_capture_one(active_client, match_id, match_provider_id, clock=clock_fn))
+            results.append(_capture_one(active_client, match_id, match_provider_id, clock=clock_fn,
+                                        interval_seconds=settings.interval_seconds))
         except AflJsonError as exc:
             log.warning(
                 "matchInterchange production capture failed match_id=%s match_provider_id=%s error=%s",

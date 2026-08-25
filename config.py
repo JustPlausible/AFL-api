@@ -260,3 +260,29 @@ AFL_COMMENTARY_PRODUCTION_POSTGAME_GRACE_SECONDS = _parse_int_env("AFL_COMMENTAR
 AFL_INTERCHANGE_PRODUCTION_ENABLED = _parse_bool_env("AFL_INTERCHANGE_PRODUCTION_ENABLED", True)
 AFL_INTERCHANGE_PRODUCTION_INTERVAL_SECONDS = _parse_int_env("AFL_INTERCHANGE_PRODUCTION_INTERVAL_SECONDS", 20)
 AFL_INTERCHANGE_PRODUCTION_KICKOFF_TOLERANCE_SECONDS = _parse_int_env("AFL_INTERCHANGE_PRODUCTION_KICKOFF_TOLERANCE_SECONDS", 600)
+
+# Modular analytics/telemetry framework (Issue #205). See analytics/ and
+# docs/analytics_framework.md. This is historical/domain analytics -- polls,
+# meaningful-change rate, consumer API usage -- not the diagnostics
+# evidence-capture framework above, not process/Prometheus-style metrics, and
+# never a source of collection or consumer-API decisions. Observational only:
+# a failed or slow analytics write is dropped, never raised, and never
+# delays the collector or API request it describes (see
+# analytics/record.py's background queue). Default-on, unlike the
+# diagnostics framework (opt-in investigation tooling) and the
+# player-stat-polling pilot (a new collection capability with real upstream
+# load) -- analytics purely observes calls that already happen and adds no
+# upstream request of its own, so the risk profile is materially lower.
+AFL_ANALYTICS_ENABLED = _parse_bool_env("AFL_ANALYTICS_ENABLED", True)
+# Consumer /api/v1 request telemetry has its own switch so an operator can run
+# upstream-collection analytics without also recording API usage, or vice
+# versa.
+AFL_ANALYTICS_CONSUMER_ENABLED = _parse_bool_env("AFL_ANALYTICS_CONSUMER_ENABLED", True)
+# How long bounded raw per-poll/per-request observations are kept before
+# being folded into daily rollups and purged (see analytics/rollup.py).
+AFL_ANALYTICS_RETENTION_DAYS = _parse_int_env("AFL_ANALYTICS_RETENTION_DAYS", 14)
+# Bound on the in-process background write queue (analytics/record.py). An
+# observation is dropped rather than blocking the calling collector/request
+# once this many writes are already queued -- see the "Analytics overhead"
+# section of docs/analytics_framework.md for measured queue behaviour.
+AFL_ANALYTICS_QUEUE_MAX_SIZE = _parse_int_env("AFL_ANALYTICS_QUEUE_MAX_SIZE", 2000)

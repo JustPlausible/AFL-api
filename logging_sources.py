@@ -78,6 +78,12 @@ def _match_interchange_production_enabled() -> bool:
     return bool(config.AFL_INTERCHANGE_PRODUCTION_ENABLED)
 
 
+def _analytics_enabled() -> bool:
+    """Modular analytics/telemetry framework (Issue #205) -- independent of
+    the diagnostics framework entirely; gated only by its own flag."""
+    return bool(config.AFL_ANALYTICS_ENABLED)
+
+
 @dataclass(frozen=True)
 class LogSource:
     """One known operational log source.
@@ -255,6 +261,18 @@ _SOURCES: tuple[LogSource, ...] = (
         filename="match_interchange_production.log",
         enabled=_match_interchange_production_enabled,
         disabled_reason="AFL_INTERCHANGE_PRODUCTION_ENABLED is not enabled.",
+    ),
+    LogSource(
+        id="analytics",
+        display_name="Analytics",
+        description=(
+            "Modular upstream-collection and consumer-API telemetry framework "
+            "(Issue #205): dropped-observation warnings and rollup/retention runs."
+        ),
+        logger_name="analytics",
+        filename="analytics.log",
+        enabled=_analytics_enabled,
+        disabled_reason="AFL_ANALYTICS_ENABLED is not enabled.",
     ),
 )
 

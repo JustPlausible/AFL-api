@@ -77,6 +77,17 @@ def match_interchange_production_job():
     return poll_match_interchange()
 
 
+# Analytics retention/roll-up (Issue #205): the one piece of new scheduler
+# infrastructure the analytics framework adds. A single shared daily job for
+# every analytics resource/route -- adding a new analytics module never
+# requires a second one. Scheduled off-peak, after the other daily jobs
+# above. See analytics/rollup.py.
+@scheduler.scheduled_job(CronTrigger(hour=4, minute=20), id="analytics_rollup", name="Analytics retention and roll-up")  # 4:20 AM AWST
+def analytics_rollup_job():
+    from analytics.rollup import run_rollup_and_retention
+    return run_rollup_and_retention()
+
+
 # Start the scheduler loop
 if __name__ == "__main__":
     from scheduler.job_cleaner import clean_broken_jobs

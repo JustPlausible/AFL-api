@@ -1,6 +1,6 @@
 import sqlite3
 from dataclasses import dataclass
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, Header, HTTPException, Request
 from utils.log import log
 from api_key_security import api_key_prefix, verify_api_key_hash
 from db.connection import get_db_path
@@ -30,7 +30,7 @@ class AuthenticatedCredential:
         return capability in self.capabilities
 
 
-def authenticate_api_key(x_api_key: str | None = Header(None)) -> AuthenticatedCredential:
+def authenticate_api_key(x_api_key: str | None = Header(None), request: Request = None) -> AuthenticatedCredential:
     conn = get_db_connection()
     cursor = conn.execute(
         "SELECT id, label, key_hash FROM api_keys WHERE is_active = 1 AND key_hash IS NOT NULL",
@@ -54,12 +54,17 @@ def authenticate_api_key(x_api_key: str | None = Header(None)) -> AuthenticatedC
     conn.close()
     credential = AuthenticatedCredential(result["id"], result["label"], capabilities)
     log(f"🔐 Authenticated request from: {credential.label}", "DEBUG")
+    if request is not None:
+        # Non-secret internal key ID, stashed for the analytics telemetry
+        # middleware (analytics/middleware.py, Issue #205) to pick up as a
+        # pseudonymous consumer identifier -- never the key secret itself.
+        request.state.api_key_id = credential.key_id
     return credential
 
 
-def verify_api_key(x_api_key: str = Header(...)) -> str:
+def verify_api_key(x_api_key: str = Header(...), request: Request = None) -> str:
     """Backwards-compatible authentication dependency returning the client label."""
-    return authenticate_api_key(x_api_key).label
+    return authenticate_api_key(x_api_key, request).label
 
 
 def require_capability(capability: str):

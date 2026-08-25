@@ -62,11 +62,14 @@ from durable storage on every write, exactly like the diagnostic module.
 from __future__ import annotations
 
 import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable
 
 import config
+from analytics.contracts import UpstreamOutcome
+from analytics.record import record_upstream_poll
 from afl_json.client import (
     AflJsonAuthenticationError,
     AflJsonClient,
@@ -166,7 +169,8 @@ def _current_match_status(conn, match_id: int) -> str | None:
 
 
 def _capture_one(client: AflJsonClient, match_id: int, match_provider_id: str, *,
-                 clock: Callable[[], datetime]) -> dict[str, Any]:
+                 clock: Callable[[], datetime],
+                 interval_seconds: int = MatchCommentaryProductionSettings.interval_seconds) -> dict[str, Any]:
     """Poll and persist one match's production commentary.
 
     Mirrors ``scheduler.match_commentary_capture._capture_one``'s outcome
@@ -176,6 +180,8 @@ def _capture_one(client: AflJsonClient, match_id: int, match_provider_id: str, *
     helper, matching this module's "new, narrowly-scoped production path"
     stance (see ``afl_json.match_commentary`` module docstring).
     """
+    started = time.monotonic()
+    lifecycle_state: str | None = None
     outcome: str | None
     try:
         response = client.request(MATCH_COMMENTARY_ENDPOINT, path_parameters={"match_provider_id": match_provider_id})
@@ -208,7 +214,9 @@ def _capture_one(client: AflJsonClient, match_id: int, match_provider_id: str, *
         response, outcome = None, "http_error"
 
     def op(conn):
+        nonlocal lifecycle_state
         local_status = _current_match_status(conn, match_id)
+        lifecycle_state = local_status
         observed_at = clock().isoformat()
         if outcome is not None:
             return persist_poll_outcome(
@@ -239,7 +247,30 @@ def _capture_one(client: AflJsonClient, match_id: int, match_provider_id: str, *
             match_id, match_provider_id, result["poll_sequence"], result["new_event_count"],
             len(result["possible_edits"]),
         )
+    duration_ms = (time.monotonic() - started) * 1000
+    record_upstream_poll(
+        resource="match_commentary", match_id=match_id, match_provider_id=match_provider_id,
+        observed_at=clock(), lifecycle_state=lifecycle_state, configured_interval_seconds=interval_seconds,
+        duration_ms=duration_ms, outcome=_analytics_outcome(result["outcome"]),
+        changed=(result["new_event_count"] > 0) if result["outcome"] == "success" else None,
+        change_magnitude=result.get("new_event_count") if result["outcome"] == "success" else None,
+    )
     return {"match_id": match_id, "match_provider_id": match_provider_id, **result}
+
+
+_ANALYTICS_OUTCOME_MAP = {
+    "success": UpstreamOutcome.SUCCESS,
+    "not_published": UpstreamOutcome.NOT_PUBLISHED,
+    "auth_error": UpstreamOutcome.AUTH_ERROR,
+    "transport_error": UpstreamOutcome.TRANSPORT_ERROR,
+    "invalid_response": UpstreamOutcome.INVALID_RESPONSE,
+    "http_error": UpstreamOutcome.HTTP_ERROR,
+    "malformed_payload": UpstreamOutcome.MALFORMED_PAYLOAD,
+}
+
+
+def _analytics_outcome(outcome: str) -> UpstreamOutcome:
+    return _ANALYTICS_OUTCOME_MAP.get(outcome, UpstreamOutcome.ERROR)
 
 
 def poll_match_commentary(*, client: AflJsonClient | None = None,
@@ -267,7 +298,8 @@ def poll_match_commentary(*, client: AflJsonClient | None = None,
     results: list[dict[str, Any]] = []
     for match_id, match_provider_id in matches:
         try:
-            results.append(_capture_one(active_client, match_id, match_provider_id, clock=clock_fn))
+            results.append(_capture_one(active_client, match_id, match_provider_id, clock=clock_fn,
+                                        interval_seconds=settings.interval_seconds))
         except AflJsonError as exc:
             log.warning(
                 "commentaryFeed production capture failed match_id=%s match_provider_id=%s error=%s",
