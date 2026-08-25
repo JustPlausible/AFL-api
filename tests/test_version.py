@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_authoritative_version():
-    assert __version__ == "0.6.0"
+    assert __version__ == "0.7.0"
 
 
 def test_minimal_version_import_does_not_load_runtime_stack():
@@ -25,7 +25,7 @@ def test_minimal_version_import_does_not_load_runtime_stack():
         [sys.executable, "-c", command], cwd=ROOT, text=True,
         capture_output=True, check=True,
     )
-    assert result.stdout == "0.6.0\n"
+    assert result.stdout == "0.7.0\n"
 
 
 def test_cli_version_is_script_friendly_and_skips_runtime_imports(tmp_path):
@@ -50,4 +50,4 @@ def test_fastapi_openapi_metadata_uses_authoritative_version(tmp_path):
         text=True, capture_output=True, check=True,
     )
     assert result.stderr == ""
-    assert result.stdout.strip() == '{"app": "0.6.0", "openapi": "0.6.0"}'
+    assert result.stdout.strip() == '{"app": "0.7.0", "openapi": "0.7.0"}'

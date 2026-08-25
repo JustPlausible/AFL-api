@@ -2,7 +2,7 @@
 # AFL_API_TAG is operator-selected; replace this example default with the
 # reviewed release or commit identifier recorded for the deployment.
 x-afl-image: &afl-image
-  image: "${AFL_API_IMAGE:-afl-api}:${AFL_API_TAG:-0.5.0-example}"
+  image: "${AFL_API_IMAGE:-afl-api}:${AFL_API_TAG:-0.7.0-example}"
 
 name: afl-api
 

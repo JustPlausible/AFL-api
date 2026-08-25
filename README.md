@@ -15,8 +15,8 @@ or exports. Consumer-specific scoring rules, fantasy-league management,
 presentation, and client workflows belong in separate downstream applications,
 not in this repository.
 
-**Current version: 0.5.0.** See the [v0.5.0 release notes](docs/releases/v0.5.0.md),
-[upgrade runbook](docs/operations/release_runbook_v0_5_0.md), and
+**Current version: 0.7.0.** See the [v0.7.0 release notes](docs/releases/v0.7.0.md),
+[release runbook](docs/operations/release_runbook.md), and
 [operational source policy](docs/operational_source_policy.md). Runtime code
 reads the authoritative declaration in [`version.py`](version.py).
 
