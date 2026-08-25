@@ -240,7 +240,7 @@ def _capture_one(client: AflJsonClient, round_id: int, round_provider_id: str, *
     record_upstream_poll(
         resource="match_rosters", observed_at=clock(), configured_interval_seconds=interval_seconds,
         duration_ms=duration_ms, outcome=UpstreamOutcome.SUCCESS,
-        changed=summary.rosters_written > 0, change_magnitude=summary.selections_written,
+        changed=summary.state_changed, change_magnitude=summary.change_magnitude,
         note=f"round_provider_id={round_provider_id}",
     )
     return {"round_id": round_id, "round_provider_id": round_provider_id, "outcome": "success",

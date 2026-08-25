@@ -86,8 +86,19 @@ def compare_rosters(previous: RosterCollectionResult,
     replacement_safe = current.status is RosterStatus.PUBLISHED
     if not replacement_safe:
         return RosterChanges([], [], [], [], False)
-    before = {_selection_key(item): item for item in previous.selections}
-    after = {_selection_key(item): item for item in current.selections}
+    authoritative = {
+        (roster["match_provider_id"], team["team_provider_id"], collection)
+        for roster in current.rosters
+        for team in roster["teams"]
+        for collection in team.get("replacement_authoritative_collections", ())
+    }
+    def is_authoritative(item: Mapping[str, Any]) -> bool:
+        return (
+            item.get("match_provider_id"), item.get("team_provider_id"),
+            item.get("source_collection"),
+        ) in authoritative
+    before = {_selection_key(item): item for item in previous.selections if is_authoritative(item)}
+    after = {_selection_key(item): item for item in current.selections if is_authoritative(item)}
     added = [after[key] for key in sorted(after.keys() - before.keys())]
     removed = [before[key] for key in sorted(before.keys() - after.keys())]
     changed: list[dict[str, Any]] = []
@@ -125,6 +136,8 @@ class RosterPersistenceSummary:
     rosters_written: int = 0
     selections_written: int = 0
     context_written: int = 0
+    state_changed: bool = False
+    change_magnitude: int = 0
     unmatched_matches: tuple[str, ...] = ()
     unmatched_teams: tuple[tuple[str, str], ...] = ()
 
@@ -196,14 +209,16 @@ def persist_match_rosters(conn: sqlite3.Connection, result: RosterCollectionResu
     Champion Data team id is never discarded merely because canonical team
     resolution is not yet possible (mirrors player resolution below).
 
-    Selected positions and each of the five context collections
+    List-observed selected positions and each list-observed context collection
     (``CONTEXT_TYPES``) are replaced in place per ``(match_provider_id,
     team_provider_id)`` (context additionally scoped per ``context_type``):
     a row present in the new observation is upserted (preserving
     ``first_observed_at``, refreshing everything else including a
     re-resolved ``canonical_player_id`` so a crosswalk added after first
     observation self-heals on the next valid publish); a row no longer
-    present is deleted. This is a current-state projection, not an
+    present is deleted. Missing, null and non-list collection shapes are not
+    replacement-authoritative and leave that collection untouched. This is a
+    current-state projection, not an
     append-only history -- see module docstring "Current-state, not
     append-only history". A selection/context record with no Champion Data
     player id at all (never observed in committed evidence, but structurally
@@ -224,6 +239,7 @@ def persist_match_rosters(conn: sqlite3.Connection, result: RosterCollectionResu
     rosters_written = 0
     selections_written = 0
     context_written = 0
+    change_magnitude = 0
     unmatched_matches: list[str] = []
     unmatched_teams: list[tuple[str, str]] = []
 
@@ -270,16 +286,21 @@ def persist_match_rosters(conn: sqlite3.Connection, result: RosterCollectionResu
             rosters_written += 1
 
             records = selections_by_key.get((match_provider_id, team_provider_id), [])
+            authoritative = set(team.get("replacement_authoritative_collections", ()))
             selection_records = [
                 item for item in records
                 if item.get("record_kind") == "selection" and item.get("champion_data_player_id")
             ]
-            selections_written += _replace_selections(
-                conn, match_id=match_id, match_provider_id=match_provider_id,
-                team_provider_id=team_provider_id, canonical_team_id=canonical_team_id,
-                side=side, records=selection_records, observed_at=observed_at,
-                collector_version=collector_version,
-            )
+            if "positions" in authoritative:
+                change_magnitude += _selection_change_count(
+                    conn, match_provider_id, team_provider_id, selection_records
+                )
+                selections_written += _replace_selections(
+                    conn, match_id=match_id, match_provider_id=match_provider_id,
+                    team_provider_id=team_provider_id, canonical_team_id=canonical_team_id,
+                    side=side, records=selection_records, observed_at=observed_at,
+                    collector_version=collector_version,
+                )
 
             context_by_type: dict[str, list[dict[str, Any]]] = defaultdict(list)
             for item in records:
@@ -289,6 +310,12 @@ def persist_match_rosters(conn: sqlite3.Connection, result: RosterCollectionResu
                 if collection in CONTEXT_TYPES:
                     context_by_type[collection].append(item)
             for context_type in CONTEXT_TYPES:
+                if context_type not in authoritative:
+                    continue
+                change_magnitude += _context_change_count(
+                    conn, match_provider_id, team_provider_id, context_type,
+                    context_by_type.get(context_type, []),
+                )
                 context_written += _replace_context(
                     conn, match_id=match_id, match_provider_id=match_provider_id,
                     team_provider_id=team_provider_id, canonical_team_id=canonical_team_id,
@@ -299,9 +326,54 @@ def persist_match_rosters(conn: sqlite3.Connection, result: RosterCollectionResu
 
     return RosterPersistenceSummary(
         rosters_written=rosters_written, selections_written=selections_written,
-        context_written=context_written, unmatched_matches=tuple(unmatched_matches),
+        context_written=context_written, state_changed=change_magnitude > 0,
+        change_magnitude=change_magnitude, unmatched_matches=tuple(unmatched_matches),
         unmatched_teams=tuple(unmatched_teams),
     )
+
+
+def _selection_change_count(conn: sqlite3.Connection, match_provider_id: str,
+                            team_provider_id: str,
+                            records: list[dict[str, Any]]) -> int:
+    """Count semantic selection changes against durable current state."""
+    before = {
+        row[0]: (row[1], row[2], row[3], row[4])
+        for row in conn.execute(
+            "SELECT player_provider_id, canonical_player_id, position, jumper_number, captain "
+            "FROM cfs_match_roster_selections WHERE match_provider_id=? AND team_provider_id=?",
+            (match_provider_id, team_provider_id),
+        )
+    }
+    after = {
+        record["champion_data_player_id"]: (
+            resolve_canonical_player(conn, record["champion_data_player_id"]),
+            record.get("selection_state"), _coerce_int(record.get("jumper_number")),
+            _coerce_bool(record.get("captain")),
+        )
+        for record in records
+    }
+    return sum(before.get(key) != after.get(key) for key in before.keys() | after.keys())
+
+
+def _context_change_count(conn: sqlite3.Connection, match_provider_id: str,
+                          team_provider_id: str, context_type: str,
+                          records: list[dict[str, Any]]) -> int:
+    """Count semantic changes for one authoritative context collection."""
+    before = {
+        row[0]: (row[1], row[2])
+        for row in conn.execute(
+            "SELECT player_provider_id, canonical_player_id, reason "
+            "FROM cfs_match_roster_context WHERE match_provider_id=? AND team_provider_id=? "
+            "AND context_type=?", (match_provider_id, team_provider_id, context_type),
+        )
+    }
+    after = {
+        record["champion_data_player_id"]: (
+            resolve_canonical_player(conn, record["champion_data_player_id"]), record.get("reason"),
+        )
+        for record in records
+    }
+    return sum(before.get(key) != after.get(key) for key in before.keys() | after.keys())
 
 
 def _replace_selections(conn: sqlite3.Connection, *, match_id: int, match_provider_id: str,
@@ -542,6 +614,13 @@ def _normalise_team(team: Mapping[str, Any], side: str, source_order: int) -> di
         "team_status": team.get("teamStatus"),
         "side": side,
         "source_order": source_order,
+        # Only an observed list has verified replacement semantics. Keep this
+        # fact separate from the normalised records: an absent, null or
+        # unresolved-shaped collection can otherwise look exactly like an
+        # authoritative empty list after normalisation.
+        "replacement_authoritative_collections": tuple(
+            key for key in optional_fields if isinstance(team.get(key), list)
+        ),
         "provider_fields": {
             # Retain all verified context/change collections at team scope as
             # their non-player fields are not yet exhaustively understood.

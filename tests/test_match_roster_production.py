@@ -407,6 +407,74 @@ def test_later_valid_pre_match_update_supersedes_prior_selection_state(db):
     assert home_players == {"CD_I1", "CD_I6"}
 
 
+@pytest.mark.parametrize("positions", [None, {"unresolved": True}, "unresolved", 7])
+def test_non_list_positions_observation_preserves_prior_selection(db, positions):
+    initial = _collect("match_rosters_available.json")
+    persist_match_rosters(db, initial, observed_at="2026-07-25T08:00:00+00:00")
+    db.commit()
+
+    partial = _fixture("match_rosters_available.json")
+    partial[0]["matchRoster"]["homeTeam"]["positions"] = positions
+    result = MatchRosterCollector(_FakeClient(partial)).collect(ROUND_PROVIDER_ID)
+    persist_match_rosters(db, result, observed_at="2026-07-25T08:15:00+00:00")
+    db.commit()
+
+    assert db.execute(
+        "SELECT COUNT(*) FROM cfs_match_roster_selections "
+        "WHERE team_provider_id=? AND player_provider_id='CD_I1'", (HOME_PROVIDER_ID,),
+    ).fetchone()[0] == 1
+
+
+def test_missing_positions_observation_preserves_prior_selection(db):
+    initial = _collect("match_rosters_available.json")
+    persist_match_rosters(db, initial, observed_at="2026-07-25T08:00:00+00:00")
+    partial = _fixture("match_rosters_available.json")
+    del partial[0]["matchRoster"]["homeTeam"]["positions"]
+    result = MatchRosterCollector(_FakeClient(partial)).collect(ROUND_PROVIDER_ID)
+    persist_match_rosters(db, result, observed_at="2026-07-25T08:15:00+00:00")
+    db.commit()
+    assert db.execute(
+        "SELECT COUNT(*) FROM cfs_match_roster_selections "
+        "WHERE team_provider_id=? AND player_provider_id='CD_I1'", (HOME_PROVIDER_ID,),
+    ).fetchone()[0] == 1
+
+
+def test_authoritative_empty_positions_replaces_prior_selection(db):
+    initial = _collect("match_rosters_available.json")
+    persist_match_rosters(db, initial, observed_at="2026-07-25T08:00:00+00:00")
+    replacement = _fixture("match_rosters_available.json")
+    replacement[0]["matchRoster"]["homeTeam"]["positions"] = []
+    result = MatchRosterCollector(_FakeClient(replacement)).collect(ROUND_PROVIDER_ID)
+    summary = persist_match_rosters(db, result, observed_at="2026-07-25T08:15:00+00:00")
+    db.commit()
+    assert db.execute(
+        "SELECT COUNT(*) FROM cfs_match_roster_selections WHERE team_provider_id=?",
+        (HOME_PROVIDER_ID,),
+    ).fetchone()[0] == 0
+    assert summary.state_changed is True
+
+
+@pytest.mark.parametrize("collection", ["ins", "outs", "lateChanges", "clubDebuts", "milestones"])
+def test_non_list_context_observation_preserves_prior_collection(db, collection):
+    payload = _fixture("match_rosters_available.json")
+    # Give every collection one verified record so the same preservation
+    # assertion covers all five separately persisted context projections.
+    player = payload[0]["matchRoster"]["homeTeam"]["ins"][0]
+    payload[0]["matchRoster"]["homeTeam"][collection] = [player]
+    initial = MatchRosterCollector(_FakeClient(payload)).collect(ROUND_PROVIDER_ID)
+    persist_match_rosters(db, initial, observed_at="2026-07-25T08:00:00+00:00")
+
+    partial = json.loads(json.dumps(payload))
+    partial[0]["matchRoster"]["homeTeam"][collection] = {"unresolved": True}
+    result = MatchRosterCollector(_FakeClient(partial)).collect(ROUND_PROVIDER_ID)
+    persist_match_rosters(db, result, observed_at="2026-07-25T08:15:00+00:00")
+    db.commit()
+    assert db.execute(
+        "SELECT COUNT(*) FROM cfs_match_roster_context "
+        "WHERE team_provider_id=? AND context_type=?", (HOME_PROVIDER_ID, collection),
+    ).fetchone()[0] == 1
+
+
 def test_null_unavailable_observation_does_not_erase_prior_valid_roster(db):
     result = _collect("match_rosters_available.json")
     persist_match_rosters(db, result, observed_at="2026-07-25T08:00:00+00:00")
@@ -464,5 +532,9 @@ def test_repeated_identical_published_observation_is_idempotent(db):
     assert first.rosters_written == second.rosters_written
     assert first.selections_written == second.selections_written
     assert first.context_written == second.context_written
+    assert first.state_changed is True
+    assert first.change_magnitude > 0
+    assert second.state_changed is False
+    assert second.change_magnitude == 0
     assert db.execute("SELECT COUNT(*) FROM cfs_match_roster_selections").fetchone()[0] == 4
     assert db.execute("SELECT COUNT(*) FROM cfs_match_roster_context").fetchone()[0] == 2

@@ -228,9 +228,17 @@ def test_repeated_identical_poll_is_idempotent(db, monkeypatch):
     _enabled(monkeypatch)
     payload = _fixture("match_rosters_available.json")
     client = FakeClient({ROUND_PROVIDER_ID: [payload, payload]})
+    telemetry = []
+    monkeypatch.setattr(
+        "scheduler.match_roster_production.record_upstream_poll",
+        lambda **values: telemetry.append(values),
+    )
     poll_match_rosters(client=client, clock=lambda: NOW)
     poll_match_rosters(client=client, clock=lambda: NOW + timedelta(minutes=15))
     assert conn.execute("SELECT COUNT(*) FROM cfs_match_roster_selections").fetchone()[0] == 4
+    assert [item["changed"] for item in telemetry] == [True, False]
+    assert telemetry[0]["change_magnitude"] > 0
+    assert telemetry[1]["change_magnitude"] == 0
 
 
 def test_continues_after_one_round_fails(db, monkeypatch):
