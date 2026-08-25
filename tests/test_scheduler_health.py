@@ -6,6 +6,7 @@ import config
 from db.migration_runner import migrate_database
 from scheduler import api
 from scheduler.scheduled_tasks import scheduler
+from version import __version__
 
 
 def _db(tmp_path, monkeypatch):
@@ -33,7 +34,7 @@ def test_healthy_scheduler_reports_healthy_with_no_diagnostics(tmp_path, monkeyp
     assert body["registry_accessible"] is True
     assert body["diagnostics"] == []
     assert isinstance(body["job_count"], int)
-    assert body["version"]
+    assert body["version"] == __version__ == "0.7.0"
 
 
 def test_healthy_scheduler_with_empty_job_registry_is_still_healthy(tmp_path, monkeypatch):

@@ -46,7 +46,7 @@ def test_schedule_page_shows_healthy_scheduler(tmp_path, monkeypatch):
     admin, client = _client(tmp_path, monkeypatch)
     monkeypatch.setattr("admin.httpx.get", _fake_get(health_payload={
         "state": "healthy", "scheduler_running": True, "database_accessible": True,
-        "registry_accessible": True, "job_count": 3, "diagnostics": [], "version": "0.6.0",
+        "registry_accessible": True, "job_count": 3, "diagnostics": [], "version": "0.7.0",
     }))
 
     response = client.get("/schedule", headers=_auth())
@@ -60,7 +60,7 @@ def test_schedule_page_shows_healthy_with_zero_jobs_distinctly(tmp_path, monkeyp
     admin, client = _client(tmp_path, monkeypatch)
     monkeypatch.setattr("admin.httpx.get", _fake_get(health_payload={
         "state": "healthy", "scheduler_running": True, "database_accessible": True,
-        "registry_accessible": True, "job_count": 0, "diagnostics": [], "version": "0.6.0",
+        "registry_accessible": True, "job_count": 0, "diagnostics": [], "version": "0.7.0",
     }))
 
     response = client.get("/schedule", headers=_auth())
@@ -74,7 +74,7 @@ def test_schedule_page_shows_starting_state(tmp_path, monkeypatch):
     admin, client = _client(tmp_path, monkeypatch)
     monkeypatch.setattr("admin.httpx.get", _fake_get(health_payload={
         "state": "starting", "scheduler_running": False, "database_accessible": True,
-        "registry_accessible": True, "job_count": 0, "diagnostics": ["scheduler_not_running"], "version": "0.6.0",
+        "registry_accessible": True, "job_count": 0, "diagnostics": ["scheduler_not_running"], "version": "0.7.0",
     }))
 
     response = client.get("/schedule", headers=_auth())
@@ -89,7 +89,7 @@ def test_schedule_page_shows_unhealthy_dependency_failure(tmp_path, monkeypatch)
     monkeypatch.setattr("admin.httpx.get", _fake_get(health_payload={
         "state": "unhealthy", "scheduler_running": True, "database_accessible": False,
         "registry_accessible": False, "job_count": 0,
-        "diagnostics": ["database_unavailable", "registry_unreadable"], "version": "0.6.0",
+        "diagnostics": ["database_unavailable", "registry_unreadable"], "version": "0.7.0",
     }, health_status=503))
 
     response = client.get("/schedule", headers=_auth())
@@ -137,7 +137,7 @@ def test_schedule_page_shows_unavailable_when_healthy_state_missing_job_count(tm
     monkeypatch.setattr("admin.httpx.get", _fake_get(health_payload={
         "state": "healthy", "scheduler_running": True,
         "database_accessible": True, "registry_accessible": True,
-        "diagnostics": [], "version": "0.6.0",
+        "diagnostics": [], "version": "0.7.0",
         # job_count intentionally omitted
     }))
 
@@ -155,7 +155,7 @@ def test_schedule_page_shows_unavailable_when_healthy_state_contradicts_flags(tm
     monkeypatch.setattr("admin.httpx.get", _fake_get(health_payload={
         "state": "healthy", "scheduler_running": True,
         "database_accessible": False, "registry_accessible": True,
-        "job_count": 0, "diagnostics": [], "version": "0.6.0",
+        "job_count": 0, "diagnostics": [], "version": "0.7.0",
     }))
 
     response = client.get("/schedule", headers=_auth())
@@ -169,7 +169,7 @@ def test_schedule_page_shows_unavailable_on_unexpected_http_status(tmp_path, mon
     monkeypatch.setattr("admin.httpx.get", _fake_get(health_payload={
         "state": "healthy", "scheduler_running": True,
         "database_accessible": True, "registry_accessible": True,
-        "job_count": 0, "diagnostics": [], "version": "0.6.0",
+        "job_count": 0, "diagnostics": [], "version": "0.7.0",
     }, health_status=500))
 
     response = client.get("/schedule", headers=_auth())
@@ -184,7 +184,7 @@ def test_is_valid_scheduler_health_accepts_well_formed_contract():
     assert admin_module._is_valid_scheduler_health({
         "state": "unhealthy", "scheduler_running": True,
         "database_accessible": False, "registry_accessible": True,
-        "job_count": 0, "diagnostics": ["database_unavailable"], "version": "0.6.0",
+        "job_count": 0, "diagnostics": ["database_unavailable"], "version": "0.7.0",
     })
 
 
@@ -194,7 +194,7 @@ def test_is_valid_scheduler_health_rejects_boolean_job_count():
     assert not admin_module._is_valid_scheduler_health({
         "state": "healthy", "scheduler_running": True,
         "database_accessible": True, "registry_accessible": True,
-        "job_count": True, "diagnostics": [], "version": "0.6.0",
+        "job_count": True, "diagnostics": [], "version": "0.7.0",
     })
 
 

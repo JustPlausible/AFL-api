@@ -31,7 +31,7 @@ health, or other operational state.
 ```json
 {
   "name": "AFL-api",
-  "version": "0.5.0",
+  "version": "0.7.0",
   "documentation": "/docs"
 }
 ```

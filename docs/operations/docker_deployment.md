@@ -99,6 +99,6 @@ read/write permissions for every service.
   schema, replace its demonstration values, and never commit `.env` contents.
 
 For release gates, safe SQLite backup/restore, verification, and rollback, use
-the active [v0.5.0 release runbook](release_runbook_v0_5_0.md), especially its
+the active [reusable release runbook](release_runbook.md), especially its
 backup and rollback procedures; do not substitute this overview for that
 runbook.
