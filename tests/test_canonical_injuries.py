@@ -20,9 +20,9 @@ def database(tmp_path):
     conn.execute("INSERT INTO afl_competitions VALUES (1,'CD_C014','AFL','AFL','{}','{}','now')")
     conn.execute("INSERT INTO afl_seasons(afl_id,provider_id,competition_id,year,is_current,updated_at) VALUES (85,'CD_S2026014',1,2026,NULL,'now')")
     conn.executemany(
-        "INSERT INTO afl_teams(afl_id,provider_id,season_id,name,abbreviation,updated_at) VALUES (?,?,?,?,?,'now')",
-        [(1, "CD_T10", 85, "Adelaide Crows", "ADEL"),
-         (12, "CD_T50", 85, "Essendon Bombers", "ESS")],
+        "INSERT INTO afl_teams(afl_id,provider_id,name,abbreviation,updated_at) VALUES (?,?,?,?,'now')",
+        [(1, "CD_T10", "Adelaide Crows", "ADEL"),
+         (12, "CD_T50", "Essendon Bombers", "ESS")],
     )
     conn.executemany("INSERT INTO afl_team_seasons VALUES (85,?,'now','now')", [(1,), (12,)])
     conn.commit()

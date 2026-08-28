@@ -28,8 +28,8 @@ def _seed_season(conn, *, is_current=1, current_round_number=1, year=2026, seaso
     )
     for team, provider in ((10, "CD_T1"), (11, "CD_T2")):
         conn.execute(
-            "INSERT INTO afl_teams VALUES(?,?,?,?,?,?,?,?,?, '{}','{}','{}',?)",
-            (team, provider, season_id, provider, provider, provider, provider, provider, "AFL", now),
+            "INSERT INTO afl_teams VALUES(?,?,?,?,?,?,?,?, '{}','{}','{}',?)",
+            (team, provider, provider, provider, provider, provider, provider, "AFL", now),
         )
         conn.execute("INSERT INTO afl_team_seasons VALUES(?,?,?,?)", (season_id, team, now, now))
     conn.commit()

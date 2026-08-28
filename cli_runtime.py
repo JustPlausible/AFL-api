@@ -404,6 +404,7 @@ def handle_bootstrap_afl_season(args):
     from config import AFL_SEASON_YEAR
     from db.connection import get_db_connection
     from db.scrape_runs import audited_scrape_run
+    from db.team_seasons import count_team_participants
 
     conn = get_db_connection()
     try:
@@ -420,9 +421,7 @@ def handle_bootstrap_afl_season(args):
             audit["rows_read"] = summary.records_read + player_summary.records_read
             audit["rows_written"] = summary.inserted + summary.updated + player_summary.rows_written
             persisted_counts = {
-                "teams": conn.execute(
-                    "SELECT COUNT(*) FROM afl_teams WHERE season_id=?", (result.season_id,)
-                ).fetchone()[0],
+                "teams": count_team_participants(conn, result.season_id),
                 "rounds": conn.execute(
                     "SELECT COUNT(*) FROM rounds WHERE season_id=?", (result.season_id,)
                 ).fetchone()[0],

@@ -40,8 +40,8 @@ def _seed_metadata(conn):
     )
     for team_id, provider in ((HOME_TEAM_ID, "CD_T1"), (AWAY_TEAM_ID, "CD_T2")):
         conn.execute(
-            "INSERT INTO afl_teams VALUES(?,?,?,?,?,?,?,?, 'MEN','{}','{}','{}',?)",
-            (team_id, provider, SEASON_ID, provider, provider, provider, provider, provider, NOW),
+            "INSERT INTO afl_teams VALUES(?,?,?,?,?,?,?, 'MEN','{}','{}','{}',?)",
+            (team_id, provider, provider, provider, provider, provider, provider, NOW),
         )
     conn.execute(
         "INSERT INTO rounds(round_id,round_label,season_id,competition_id,provider_id,round_number) "

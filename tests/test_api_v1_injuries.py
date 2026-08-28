@@ -35,11 +35,11 @@ def _seed_teams(conn):
         (SEASON_ID, NOW),
     )
     conn.executemany(
-        "INSERT INTO afl_teams(afl_id,provider_id,season_id,name,abbreviation,updated_at) "
-        "VALUES(?,?,?,?,?,?)",
+        "INSERT INTO afl_teams(afl_id,provider_id,name,abbreviation,updated_at) "
+        "VALUES(?,?,?,?,?)",
         [
-            (COLLINGWOOD_TEAM_ID, "CD_T3", SEASON_ID, "Collingwood", "COLL", NOW),
-            (ESSENDON_TEAM_ID, "CD_T12", SEASON_ID, "Essendon", "ESS", NOW),
+            (COLLINGWOOD_TEAM_ID, "CD_T3", "Collingwood", "COLL", NOW),
+            (ESSENDON_TEAM_ID, "CD_T12", "Essendon", "ESS", NOW),
         ],
     )
 

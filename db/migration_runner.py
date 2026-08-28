@@ -160,6 +160,14 @@ def migrate_database(db_path: Path | str | None = None, migrations_dir: Path = M
     conn = sqlite3.connect(resolved, timeout=30, isolation_level=None)
     try:
         conn.execute("PRAGMA foreign_keys = ON")
+        preflight_applied = _applied(conn)
+        needs_fk_rebuild = any(
+            migration.identifier not in preflight_applied
+            and getattr(migration.module, "REQUIRES_FOREIGN_KEYS_OFF", False)
+            for migration in migrations
+        )
+        if needs_fk_rebuild:
+            conn.execute("PRAGMA foreign_keys = OFF")
         # Hold one startup writer claim while inspecting and advancing the
         # schema. Savepoints retain the historical per-migration rollback
         # boundary while preventing a concurrent process from classifying or
@@ -204,6 +212,10 @@ def migrate_database(db_path: Path | str | None = None, migrations_dir: Path = M
                 # matching the runner's established partial-progress contract.
                 conn.execute("COMMIT")
                 raise MigrationError(f"Migration {migration.identifier} ({migration.description}) failed: {exc}") from exc
+        if needs_fk_rebuild:
+            violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+            if violations:
+                raise MigrationError(f"Foreign-key violations after schema rebuild: {violations}")
         conn.execute("COMMIT")
         return ran
     finally:

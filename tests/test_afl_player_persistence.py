@@ -25,7 +25,7 @@ def database(tmp_path):
             (season_id, provider, 1, year, "now"),
         )
     conn.execute(
-        "INSERT INTO afl_teams(afl_id,provider_id,season_id,name,updated_at) VALUES (10,'CD_T1',86,'Cats','now')"
+        "INSERT INTO afl_teams(afl_id,provider_id,name,updated_at) VALUES (10,'CD_T1','Cats','now')"
     )
     conn.executemany(
         "INSERT INTO afl_team_seasons VALUES (?,?,?,?)", ((85, 10, "now", "now"), (86, 10, "now", "now")),
@@ -138,7 +138,7 @@ def test_legitimate_same_season_team_change_replaces_stale_team(database):
     Team B here is itself a resolved, source-backed observation.
     """
     database.execute(
-        "INSERT INTO afl_teams(afl_id,provider_id,season_id,name,updated_at) VALUES (11,'CD_T2',86,'Dogs','now')"
+        "INSERT INTO afl_teams(afl_id,provider_id,name,updated_at) VALUES (11,'CD_T2','Dogs','now')"
     )
     database.execute("INSERT INTO afl_team_seasons VALUES (85,11,'now','now')")
     database.commit()
@@ -175,7 +175,7 @@ def test_historical_seasons_isolated_from_same_season_team_refresh(database):
         "VALUES (87,'CD_S3',1,2027,'now')"
     )
     database.execute(
-        "INSERT INTO afl_teams(afl_id,provider_id,season_id,name,updated_at) VALUES (11,'CD_T2',87,'Dogs','now')"
+        "INSERT INTO afl_teams(afl_id,provider_id,name,updated_at) VALUES (11,'CD_T2','Dogs','now')"
     )
     database.executemany(
         "INSERT INTO afl_team_seasons VALUES (?,?,?,?)", ((87, 10, "now", "now"), (87, 11, "now", "now")),

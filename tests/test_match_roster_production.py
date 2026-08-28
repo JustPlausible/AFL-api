@@ -88,8 +88,8 @@ def db(tmp_path):
         "VALUES(?,?,1,'Cats','Dogs','SCHEDULED','now')", (MATCH_ID, MATCH_PROVIDER_ID),
     )
     conn.executemany(
-        "INSERT INTO afl_teams(afl_id,provider_id,season_id,name,abbreviation,updated_at) "
-        "VALUES(?,?,85,?,?,'now')",
+        "INSERT INTO afl_teams(afl_id,provider_id,name,abbreviation,updated_at) "
+        "VALUES(?,?,?,?,'now')",
         [(HOME_TEAM_ID, HOME_PROVIDER_ID, "Cats", "CAT"), (AWAY_TEAM_ID, AWAY_PROVIDER_ID, "Dogs", "DOG")],
     )
     conn.commit()

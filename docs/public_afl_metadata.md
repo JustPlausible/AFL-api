@@ -18,6 +18,13 @@ canonical players, separate provider mappings, and player-season membership.
 It prints metadata and player counts, diagnostics, missing team-link counts and
 the player collection state. Repeating it is safe.
 
+`afl_teams` stores stable club identity (`afl_id` and provider crosswalk plus
+display metadata); it has no season ownership. `afl_team_seasons` is the sole
+source of truth for participation in a competition season. Consequently,
+bootstrapping 2025, 2024, and 2023 in any order retains all three sets of
+memberships, while repeatedly bootstrapping one season remains idempotent.
+Player membership uses the same `(competition_season_id, team_id)` relationship.
+
 Recommended new-installation settings are `AFL_COMPETITION_CODE=AFL`,
 `AFL_COMPETITION_PROVIDER_ID=CD_C014`, and `AFL_SEASON_YEAR=2026`. An explicit
 `--bootstrap-afl-season YEAR`, `--afl-competition-code`, or

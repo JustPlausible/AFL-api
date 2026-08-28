@@ -104,7 +104,7 @@ def db(tmp_path, monkeypatch):
         (NOW.isoformat(), NOW.isoformat()),
     )
     conn.execute(
-        "INSERT INTO afl_teams VALUES(10,'CD_T10',73,'Home Team','HT','Home','Home','Home','MEN','{}','{}','{}',?)",
+        "INSERT INTO afl_teams VALUES(10,'CD_T10','Home Team','HT','Home','Home','Home','MEN','{}','{}','{}',?)",
         (NOW.isoformat(),),
     )
     conn.commit()

@@ -32,7 +32,7 @@ def database(tmp_path, *, status="CONCLUDED", stats=True, one_sided=False,
     conn.execute("INSERT INTO afl_competitions VALUES(1,'CD_C014','AFL','AFL','{}','{}',?)", (now,))
     conn.execute("INSERT INTO afl_seasons VALUES(85,'CD_S85',1,'2026','2026',2026,1,1,NULL,NULL,'{}','{}',?)", (now,))
     for team, provider in ((10, "CD_T1"), (11, "CD_T2")):
-        conn.execute("INSERT INTO afl_teams VALUES(?,?,85,?,?,?,?,?,?, '{}','{}','{}',?)",
+        conn.execute("INSERT INTO afl_teams VALUES(?,?,?,?,?,?,?,?, '{}','{}','{}',?)",
                      (team, provider, provider, provider, provider, provider, provider, "AFL", now))
         conn.execute("INSERT INTO afl_team_seasons VALUES(85,?,?,?)", (team, now, now))
     conn.execute("INSERT INTO rounds(round_id,round_label,season_id,competition_id,provider_id,round_number) VALUES(101,'Round 1',85,1,'CD_R1',1)")
@@ -280,7 +280,7 @@ def test_historical_stats_for_continuing_player_are_not_a_2026_finding(tmp_path)
     now = NOW.isoformat()
     conn.execute("INSERT INTO afl_seasons VALUES(84,'CD_S84',1,'2025','2025',2025,0,24,NULL,NULL,'{}','{}',?)", (now,))
     for team, provider in ((12, "CD_T2025A"), (13, "CD_T2025B")):
-        conn.execute("INSERT INTO afl_teams VALUES(?,?,84,?,?,?,?,?,?, '{}','{}','{}',?)",
+        conn.execute("INSERT INTO afl_teams VALUES(?,?,?,?,?,?,?,?, '{}','{}','{}',?)",
                      (team, provider, provider, provider, provider, provider, provider, "AFL", now))
         conn.execute("INSERT INTO afl_team_seasons VALUES(84,?,?,?)", (team, now, now))
     conn.execute("INSERT INTO rounds(round_id,round_label,season_id,competition_id,provider_id,round_number) VALUES(100,'Round 1',84,1,'CD_R2025',1)")

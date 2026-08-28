@@ -122,7 +122,7 @@ def persist_afl_metadata(conn: sqlite3.Connection, result: CollectionResult) -> 
         for team in result.teams:
             save("afl_teams", "afl_id", {
                 "afl_id": team["afl_id"], "provider_id": team.get("provider_id"),
-                "season_id": season["afl_id"], "name": team.get("name"),
+                "name": team.get("name"),
                 "abbreviation": team.get("abbreviation"), "nickname": team.get("nickname"),
                 "display_name": team.get("displayName"), "short_name": team.get("shortName"),
                 "team_type": team.get("team_type"), "metadata_json": _json(team.get("metadata")),

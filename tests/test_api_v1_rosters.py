@@ -60,10 +60,10 @@ def _seed_base(conn):
         (MATCH_ID, MATCH_PROVIDER_ID, ROUND_ID, NOW, SEASON_ID, NOW),
     )
     conn.executemany(
-        "INSERT INTO afl_teams VALUES(?,?,?,?,?,?,?,?,'MEN','{}','{}','{}',?)",
+        "INSERT INTO afl_teams VALUES(?,?,?,?,?,?,?,'MEN','{}','{}','{}',?)",
         [
-            (HOME_TEAM_ID, HOME_PROVIDER_ID, SEASON_ID, "Cats", "CAT", "Cats", "Cats", "Cats", NOW),
-            (AWAY_TEAM_ID, AWAY_PROVIDER_ID, SEASON_ID, "Dogs", "DOG", "Dogs", "Dogs", "Dogs", NOW),
+            (HOME_TEAM_ID, HOME_PROVIDER_ID, "Cats", "CAT", "Cats", "Cats", "Cats", NOW),
+            (AWAY_TEAM_ID, AWAY_PROVIDER_ID, "Dogs", "DOG", "Dogs", "Dogs", "Dogs", NOW),
         ],
     )
     conn.execute(

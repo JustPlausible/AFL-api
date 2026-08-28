@@ -100,8 +100,8 @@ def db(tmp_path, monkeypatch):
         (501, "champion_data", "CD_I291351", NOW.isoformat(), NOW.isoformat()),
     )
     conn.execute(
-        "INSERT INTO afl_teams VALUES(?,'CD_T80',?,'Hawthorn','HAW','Hawks','Hawthorn','Hawthorn','MEN','{}','{}','{}',?)",
-        (80, 73, NOW.isoformat()),
+        "INSERT INTO afl_teams VALUES(?,'CD_T80','Hawthorn','HAW','Hawks','Hawthorn','Hawthorn','MEN','{}','{}','{}',?)",
+        (80, NOW.isoformat()),
     )
     conn.commit()
     yield conn, path
