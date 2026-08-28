@@ -210,6 +210,18 @@ def migrate_database(db_path: Path | str | None = None, migrations_dir: Path = M
                 conn.execute(f"RELEASE SAVEPOINT {savepoint}")
                 # Preserve successfully released earlier migration savepoints,
                 # matching the runner's established partial-progress contract.
+                # A rebuild performed with FK enforcement disabled must be
+                # checked before that partial progress can become durable.  The
+                # successful-run check below would otherwise be skipped when a
+                # later migration fails.
+                if needs_fk_rebuild:
+                    violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+                    if violations:
+                        raise MigrationError(
+                            "Foreign-key violations after schema rebuild while "
+                            f"handling failure of migration {migration.identifier} "
+                            f"({migration.description}): {violations}"
+                        ) from exc
                 conn.execute("COMMIT")
                 raise MigrationError(f"Migration {migration.identifier} ({migration.description}) failed: {exc}") from exc
         if needs_fk_rebuild:

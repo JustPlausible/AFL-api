@@ -92,6 +92,64 @@ def test_failed_migration_rolls_back_table_and_record_but_keeps_prior(tmp_path):
     assert conn.execute("SELECT migration_id FROM schema_migrations").fetchall() == [("0001",)]
 
 
+def test_failed_later_migration_does_not_commit_fk_violating_rebuild(tmp_path):
+    d = tmp_path / "m"; d.mkdir()
+    (d / "0001_rebuild.py").write_text(
+        'MIGRATION_ID="0001"\n'
+        'DESCRIPTION="FK-sensitive rebuild"\n'
+        'REQUIRES_FOREIGN_KEYS_OFF=True\n'
+        'def migrate(conn):\n'
+        '    conn.execute("CREATE TABLE parents(id INTEGER PRIMARY KEY)")\n'
+        '    conn.execute("CREATE TABLE children(parent_id INTEGER REFERENCES parents(id))")\n'
+        '    conn.execute("INSERT INTO children VALUES(42)")\n'
+    )
+    (d / "0002_fail.py").write_text(
+        'MIGRATION_ID="0002"\n'
+        'DESCRIPTION="later failure"\n'
+        'def migrate(conn):\n'
+        '    raise RuntimeError("boom")\n'
+    )
+    db = tmp_path / "invalid.db"
+
+    with pytest.raises(MigrationError, match="Foreign-key violations after schema rebuild"):
+        migrate_database(db, d)
+
+    conn = sqlite3.connect(db)
+    assert "children" not in {
+        row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_failed_later_migration_commits_valid_fk_rebuild_progress(tmp_path):
+    d = tmp_path / "m"; d.mkdir()
+    (d / "0001_rebuild.py").write_text(
+        'MIGRATION_ID="0001"\n'
+        'DESCRIPTION="FK-sensitive rebuild"\n'
+        'REQUIRES_FOREIGN_KEYS_OFF=True\n'
+        'def migrate(conn):\n'
+        '    conn.execute("CREATE TABLE parents(id INTEGER PRIMARY KEY)")\n'
+        '    conn.execute("CREATE TABLE children(parent_id INTEGER REFERENCES parents(id))")\n'
+        '    conn.execute("INSERT INTO parents VALUES(1)")\n'
+        '    conn.execute("INSERT INTO children VALUES(1)")\n'
+    )
+    (d / "0002_fail.py").write_text(
+        'MIGRATION_ID="0002"\n'
+        'DESCRIPTION="later failure"\n'
+        'def migrate(conn):\n'
+        '    raise RuntimeError("boom")\n'
+    )
+    db = tmp_path / "valid.db"
+
+    with pytest.raises(MigrationError, match="Migration 0002 .* failed: boom"):
+        migrate_database(db, d)
+
+    conn = sqlite3.connect(db)
+    assert conn.execute("SELECT parent_id FROM children").fetchall() == [(1,)]
+    assert conn.execute("SELECT migration_id FROM schema_migrations").fetchall() == [("0001",)]
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
 def test_incompatible_or_partial_database_fails(tmp_path):
     db = tmp_path / "partial.db"
     conn = sqlite3.connect(db)
