@@ -10,6 +10,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timezone
 
+from afl_json.match_data_exceptions import review_stats_not_expected, revoke_stats_not_expected
 from afl_json.season_report import ReportStatus
 from db.migration_runner import migrate_database
 from operations.dashboard import HealthState
@@ -443,3 +444,178 @@ def test_player_detail_unknown_player_returns_none(tmp_path):
     conn.commit()
 
     assert _reporter(conn).player_detail(999) is None
+
+
+# -- reviewed stats_not_expected exceptions (Issue #233, building on #231/#232) --
+
+def _seed_statless_concluded_match(conn, match_id, provider_id, *, score_home=0, score_away=0,
+                                   with_rosters=True, with_commentary=True, with_interchange=True):
+    """A concluded match with no authoritative CFS player-stat rows -- the
+    real-world shape of the reviewed match 847 (Issue #231): CONCLUDED,
+    0-0, no player statistics ever collected. Rosters/commentary/interchange
+    are seeded by default so tests can isolate the player-statistics dataset
+    from unrelated completeness rules."""
+    _seed_base(conn)
+    conn.execute(
+        "INSERT INTO matches(match_id,match_provider_id,round_id,home_team,away_team,venue,status,"
+        "start_time_utc,season_id,home_team_id,away_team_id,score_home,score_away) "
+        "VALUES(?,?,101,'A','B','MCG','CONCLUDED','2015-07-04T00:00:00+00:00',85,10,11,?,?)",
+        (match_id, provider_id, score_home, score_away),
+    )
+    _seed_player(conn, 1, "Home Player", 10)
+    _seed_player(conn, 21, "Away Player", 11)
+    if with_rosters:
+        _seed_roster(conn, match_id, provider_id, "home", "CD_T1", 1)
+        _seed_roster(conn, match_id, provider_id, "away", "CD_T2", 21)
+    if with_commentary:
+        _seed_commentary(conn, match_id, provider_id, 1, "CD_T1")
+    if with_interchange:
+        _seed_interchange(conn, match_id, provider_id, 1, "CD_T1", "home")
+
+
+def test_match_detail_active_stats_not_expected_exception_is_reviewed_not_missing(tmp_path):
+    """Regression: Issue #233 / real-world match 847 (Issue #231). An active
+    stats_not_expected review must present player statistics as REVIEWED --
+    never MISSING -- expose the reason code, display reason and evidence, and
+    never fabricate player-stat rows. Score, lifecycle and unrelated datasets
+    are untouched."""
+    conn = _connect(tmp_path)
+    _seed_statless_concluded_match(conn, 847, "CD_M20150141408")
+    conn.commit()
+    review_stats_not_expected(
+        conn, match_id=847, reason_code="abandoned",
+        display_reason="Match abandoned and not played.",
+        evidence_url="https://www.afl.com.au/news/197577/crows-clash-with-geelong-abandoned-remainder-of-round-14-to-go-ahead",
+        evidence_note="Bruno confirms play was suspended and never resumed.",
+        actor="operator", clock=lambda: NOW,
+    )
+    conn.commit()
+
+    detail = _reporter(conn).match_detail(847)
+
+    stats = next(d for d in detail.datasets if d.key == "player_statistics")
+    assert stats.state == HealthState.REVIEWED
+    assert stats.reviewed_exception is not None
+    assert stats.reviewed_exception.reason_code == "abandoned"
+    assert stats.reviewed_exception.display_reason == "Match abandoned and not played."
+    assert stats.reviewed_exception.evidence_url.startswith("https://www.afl.com.au/")
+    assert stats.reviewed_exception.evidence_note == "Bruno confirms play was suspended and never resumed."
+    assert detail.player_stats == []
+    assert detail.lifecycle == "CONCLUDED"
+    assert detail.score_home == 0 and detail.score_away == 0
+    assert detail.overall_state != HealthState.MISSING
+
+
+def test_match_detail_statless_concluded_match_without_review_is_missing(tmp_path):
+    """The ordinary (unreviewed) case must be unaffected: ``847`` without a
+    recorded review stays actionable, exactly as before Issue #233."""
+    conn = _connect(tmp_path)
+    _seed_statless_concluded_match(conn, 847, "CD_M20150141408")
+    conn.commit()
+
+    detail = _reporter(conn).match_detail(847)
+
+    stats = next(d for d in detail.datasets if d.key == "player_statistics")
+    assert stats.state == HealthState.MISSING
+    assert stats.reviewed_exception is None
+
+
+def test_match_detail_revoked_stats_exception_restores_missing_interpretation(tmp_path):
+    """Revoking the review must immediately restore the ordinary missing/
+    actionable interpretation -- the reviewed disposition never permanently
+    reclassifies the match."""
+    conn = _connect(tmp_path)
+    _seed_statless_concluded_match(conn, 847, "CD_M20150141408")
+    conn.commit()
+    review_stats_not_expected(
+        conn, match_id=847, reason_code="abandoned",
+        display_reason="Match abandoned and not played.", actor="operator", clock=lambda: NOW,
+    )
+    conn.commit()
+    pre_revoke = _reporter(conn).match_detail(847)
+    assert next(d for d in pre_revoke.datasets if d.key == "player_statistics").state == HealthState.REVIEWED
+
+    revoke_stats_not_expected(conn, match_id=847, actor="operator", clock=lambda: NOW)
+    conn.commit()
+
+    detail = _reporter(conn).match_detail(847)
+    stats = next(d for d in detail.datasets if d.key == "player_statistics")
+    assert stats.state == HealthState.MISSING
+    assert stats.reviewed_exception is None
+
+
+def test_match_detail_reviewed_stats_exception_does_not_suppress_unrelated_warnings(tmp_path):
+    """The reviewed disposition must not generalise into suppressing every
+    missing-dataset warning: rosters/commentary/interchange keep their
+    ordinary completeness rule and still surface as attention-needed."""
+    conn = _connect(tmp_path)
+    _seed_statless_concluded_match(conn, 847, "CD_M20150141408",
+                                   with_rosters=False, with_commentary=False, with_interchange=False)
+    conn.commit()
+    review_stats_not_expected(
+        conn, match_id=847, reason_code="abandoned",
+        display_reason="Match abandoned and not played.", actor="operator", clock=lambda: NOW,
+    )
+    conn.commit()
+
+    detail = _reporter(conn).match_detail(847)
+
+    stats = next(d for d in detail.datasets if d.key == "player_statistics")
+    assert stats.state == HealthState.REVIEWED
+    rosters = next(d for d in detail.datasets if d.key == "rosters")
+    commentary = next(d for d in detail.datasets if d.key == "commentary")
+    interchange = next(d for d in detail.datasets if d.key == "interchange")
+    assert rosters.state == HealthState.ATTENTION
+    assert commentary.state == HealthState.ATTENTION
+    assert interchange.state == HealthState.ATTENTION
+    # The worst unrelated dataset still drives the overall badge -- reviewing
+    # the stats exception never hides an otherwise-genuine gap.
+    assert detail.overall_state == HealthState.ATTENTION
+
+
+def test_match_detail_reviewed_stats_exception_preserves_historical_scrape_evidence(tmp_path):
+    """A previous partial/failed collection attempt remains visible historical
+    audit evidence -- the reviewed disposition only changes how the current
+    absence is interpreted, it never invalidates prior evidence."""
+    conn = _connect(tmp_path)
+    _seed_statless_concluded_match(conn, 847, "CD_M20150141408")
+    conn.execute(
+        "INSERT INTO scrape_runs(run_id,scrape_type,target_type,target_identifier,trigger_source,"
+        "status,started_at,rows_written) VALUES('r1','season_match_player_stats','match',"
+        "'CD_M20150141408','cli','partial',?,0)", (NOW.isoformat(),),
+    )
+    conn.commit()
+    review_stats_not_expected(
+        conn, match_id=847, reason_code="abandoned",
+        display_reason="Match abandoned and not played.", actor="operator", clock=lambda: NOW,
+    )
+    conn.commit()
+
+    detail = _reporter(conn).match_detail(847)
+
+    assert detail.provider_evidence.latest_scrape_status == "partial"
+    assert detail.provider_evidence.latest_scrape_rows_written == 0
+    stats = next(d for d in detail.datasets if d.key == "player_statistics")
+    assert stats.state == HealthState.REVIEWED
+
+
+def test_match_detail_authoritative_stats_present_ignore_stale_exception(tmp_path):
+    """If authoritative stats are actually present, a (now stale) active
+    review must not be presented as REVIEWED -- real data takes precedence
+    and the ordinary finality rule applies, exactly as for any other match."""
+    conn = _connect(tmp_path)
+    _seed_base(conn)
+    _insert_match(conn, 8001, "CD_M1", "CONCLUDED", "2026-03-01T00:00:00+00:00")
+    _seed_full_stats_coverage(conn, "CD_M1")
+    conn.commit()
+    review_stats_not_expected(
+        conn, match_id=8001, reason_code="other",
+        display_reason="Stale review.", actor="operator", clock=lambda: NOW,
+    )
+    conn.commit()
+
+    detail = _reporter(conn).match_detail(8001)
+
+    stats = next(d for d in detail.datasets if d.key == "player_statistics")
+    assert stats.state == HealthState.HEALTHY
+    assert len(detail.player_stats) == 40

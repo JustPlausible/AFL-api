@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from fastapi.testclient import TestClient
 
 import config
+from afl_json.match_data_exceptions import review_stats_not_expected, revoke_stats_not_expected
 from db.migration_runner import migrate_database
 
 NOW = datetime(2026, 8, 28, 6, 0, tzinfo=timezone.utc)
@@ -124,6 +125,46 @@ def _seed_full_match(conn, match_id=8001, provider_id="CD_M1", status="CONCLUDED
         "canonical_player_id,team_provider_id,canonical_team_id,side,on_bench,interchange_count,"
         "first_observed_at,last_observed_at,last_transition_at,collector_version) "
         "VALUES(?,?,'CD_P1',1,'CD_T1',10,'home',0,2,?,?,?,'test')",
+        (match_id, provider_id, now, now, now),
+    )
+
+
+def _seed_statless_concluded_match(conn, match_id, provider_id, *, score_home=0, score_away=0):
+    """A concluded match with no authoritative CFS player-stat rows but full
+    rosters/commentary/interchange coverage -- isolates the player-statistics
+    dataset for reviewed-exception rendering tests (Issue #233), matching the
+    real-world shape of match 847 (Issue #231)."""
+    _seed_base(conn)
+    conn.execute(
+        "INSERT INTO matches(match_id,match_provider_id,round_id,home_team,away_team,venue,status,"
+        "start_time_utc,season_id,home_team_id,away_team_id,score_home,score_away) "
+        "VALUES(?,?,101,'A','B','MCG','CONCLUDED','2015-07-04T00:00:00+00:00',85,10,11,?,?)",
+        (match_id, provider_id, score_home, score_away),
+    )
+    _seed_player(conn, 1, "Home Player", 10)
+    _seed_player(conn, 21, "Away Player", 11)
+    now = NOW.isoformat()
+    for side, team_provider, team_id in (("home", "CD_T1", 10), ("away", "CD_T2", 11)):
+        conn.execute(
+            "INSERT INTO cfs_match_rosters(match_id,match_provider_id,round_provider_id,team_provider_id,"
+            "canonical_team_id,side,team_status,match_status_at_observation,source_last_updated,"
+            "first_observed_at,last_observed_at,collector_version) "
+            "VALUES(?,?,'CD_R1',?,?,?,'CONFIRMED','CONCLUDED',?,?,?,'test')",
+            (match_id, provider_id, team_provider, team_id, side, now, now, now),
+        )
+    conn.execute(
+        "INSERT INTO match_commentary_events(match_id,match_provider_id,event_fingerprint,slot_key,"
+        "period_number,period_seconds,comment,score_event,player_provider_id,canonical_player_id,"
+        "team_provider_id,canonical_team_id,source_index,first_observed_at,last_observed_at,"
+        "raw_event_json,collector_version) "
+        "VALUES(?,?,'fp1','slot1',1,30,'Play stopped.',0,'CD_P1',1,'CD_T1',10,0,?,?,'{}','test')",
+        (match_id, provider_id, now, now),
+    )
+    conn.execute(
+        "INSERT INTO match_interchange_state(match_id,match_provider_id,player_provider_id,"
+        "canonical_player_id,team_provider_id,canonical_team_id,side,on_bench,interchange_count,"
+        "first_observed_at,last_observed_at,last_transition_at,collector_version) "
+        "VALUES(?,?,'CD_P1',1,'CD_T1',10,'home',0,0,?,?,?,'test')",
         (match_id, provider_id, now, now, now),
     )
 
@@ -324,3 +365,128 @@ def test_data_explorer_never_triggers_upstream_requests(tmp_path, monkeypatch):
     ):
         response = client.get(path, headers=_auth())
         assert response.status_code == 200
+
+
+# -- reviewed stats_not_expected exceptions (Issue #233, building on #231/#232) --
+
+def test_data_explorer_match_detail_renders_reviewed_stats_exception(tmp_path, monkeypatch):
+    """Primary regression case: Issue #233 / real-world match 847 (Issue #231).
+    An active stats_not_expected review must render "Not expected (reviewed)"
+    with the reason code, display reason and evidence URL, never "Missing",
+    while lifecycle and score stay untouched."""
+    def seed(conn):
+        _seed_statless_concluded_match(conn, 847, "CD_M20150141408")
+        conn.commit()
+        review_stats_not_expected(
+            conn, match_id=847, reason_code="abandoned",
+            display_reason="Match abandoned and not played.",
+            evidence_url=("https://www.afl.com.au/news/197577/crows-clash-with-geelong-"
+                          "abandoned-remainder-of-round-14-to-go-ahead"),
+            actor="operator", clock=lambda: NOW,
+        )
+        conn.commit()
+
+    admin, client = _client(tmp_path, monkeypatch, seed=seed)
+    _no_upstream(monkeypatch, admin)
+
+    response = client.get("/data-explorer/matches/847", headers=_auth())
+
+    assert response.status_code == 200
+    assert "Not expected (reviewed)" in response.text
+    assert "abandoned" in response.text
+    assert "Match abandoned and not played." in response.text
+    assert ("https://www.afl.com.au/news/197577/crows-clash-with-geelong-"
+            "abandoned-remainder-of-round-14-to-go-ahead") in response.text
+    assert "No authoritative player statistics captured yet" not in response.text
+    assert "Missing" not in response.text
+    assert "CONCLUDED" in response.text
+    assert "0" in response.text  # 0-0 score preserved
+
+
+def test_data_explorer_round_detail_reviewed_match_is_not_missing(tmp_path, monkeypatch):
+    """The round-level match card must also reflect the reviewed disposition,
+    not the raw "Missing" state, once reviewed."""
+    def seed(conn):
+        _seed_statless_concluded_match(conn, 847, "CD_M20150141408")
+        conn.commit()
+        review_stats_not_expected(
+            conn, match_id=847, reason_code="abandoned",
+            display_reason="Match abandoned and not played.", actor="operator", clock=lambda: NOW,
+        )
+        conn.commit()
+
+    admin, client = _client(tmp_path, monkeypatch, seed=seed)
+    _no_upstream(monkeypatch, admin)
+
+    response = client.get("/data-explorer/seasons/85/rounds/101", headers=_auth())
+
+    assert response.status_code == 200
+    assert "Not expected (reviewed)" in response.text
+    assert "Missing" not in response.text
+
+
+def test_data_explorer_match_detail_statless_without_review_still_shows_missing(tmp_path, monkeypatch):
+    """Unreviewed concluded/statless matches keep the ordinary "Missing"
+    presentation -- only an active review changes it."""
+    admin, client = _client(
+        tmp_path, monkeypatch,
+        seed=lambda conn: (_seed_statless_concluded_match(conn, 847, "CD_M20150141408"), conn.commit()),
+    )
+    _no_upstream(monkeypatch, admin)
+
+    response = client.get("/data-explorer/matches/847", headers=_auth())
+
+    assert response.status_code == 200
+    assert "Missing" in response.text
+    assert "Not expected (reviewed)" not in response.text
+
+
+def test_data_explorer_match_detail_revoked_review_restores_missing(tmp_path, monkeypatch):
+    """Revoking the review must immediately restore the ordinary missing
+    presentation."""
+    def seed(conn):
+        _seed_statless_concluded_match(conn, 847, "CD_M20150141408")
+        conn.commit()
+        review_stats_not_expected(
+            conn, match_id=847, reason_code="abandoned",
+            display_reason="Match abandoned and not played.", actor="operator", clock=lambda: NOW,
+        )
+        revoke_stats_not_expected(conn, match_id=847, actor="operator", clock=lambda: NOW)
+        conn.commit()
+
+    admin, client = _client(tmp_path, monkeypatch, seed=seed)
+    _no_upstream(monkeypatch, admin)
+
+    response = client.get("/data-explorer/matches/847", headers=_auth())
+
+    assert response.status_code == 200
+    assert "Missing" in response.text
+    assert "Not expected (reviewed)" not in response.text
+
+
+def test_data_explorer_match_detail_reviewed_exception_preserves_historical_scrape_evidence(tmp_path, monkeypatch):
+    """A previous partial collection run remains visible as historical audit
+    evidence even once the absence is reviewed and explained."""
+    def seed(conn):
+        _seed_statless_concluded_match(conn, 847, "CD_M20150141408")
+        conn.execute(
+            "INSERT INTO scrape_runs(run_id,scrape_type,target_type,target_identifier,trigger_source,"
+            "status,started_at,rows_written) VALUES('r1','season_match_player_stats','match',"
+            "'CD_M20150141408','cli','partial',?,0)", (NOW.isoformat(),),
+        )
+        conn.commit()
+        review_stats_not_expected(
+            conn, match_id=847, reason_code="abandoned",
+            display_reason="Match abandoned and not played.", actor="operator", clock=lambda: NOW,
+        )
+        conn.commit()
+
+    admin, client = _client(tmp_path, monkeypatch, seed=seed)
+    _no_upstream(monkeypatch, admin)
+
+    response = client.get("/data-explorer/matches/847", headers=_auth())
+
+    assert response.status_code == 200
+    assert "partial" in response.text
+    assert "0 row(s) written" in response.text
+    assert "Not expected (reviewed)" in response.text

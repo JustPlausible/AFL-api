@@ -56,6 +56,20 @@ Admin:
   `snapshot_authority`/coverage rules), the same predicate the `/api/v1`
   player-stats resource uses for its `final`/`partial`/`not_available`
   lifecycle.
+* **Reviewed player-statistics exceptions** (Issue #233, building on the
+  reviewed-exception model from Issue #231/#232): if a concluded match has no
+  authoritative player-statistics snapshot *and* an active
+  `afl_json.match_data_exceptions.active_stats_exception` (`stats_not_expected`)
+  review, the player-statistics dataset reads **Not expected (reviewed)**
+  instead of **Missing**, mirroring the exact condition
+  `afl_json.season_report` applies for its `match.stats_not_expected` finding.
+  The reason code, human-readable display reason, and evidence URL/note are
+  shown alongside it. This never fabricates player-stat rows, never changes
+  `matches.status`/scores/provider JSON, and never affects any other dataset —
+  rosters, commentary and interchange keep their ordinary presence rule. A
+  historical partial/failed collection run for the same match stays visible
+  under "Provider identifiers & evidence" regardless. Revoking the review
+  immediately restores the ordinary Missing interpretation.
 
 Templates only ever render an already-determined `state` and `state_summary`
 — they never re-derive completeness from raw counts.
@@ -69,6 +83,7 @@ The states shown are:
 | **Missing** | The match has concluded and the dataset is still absent — a genuine gap, not a timing issue. |
 | **Upcoming** | The match has not started yet, so the dataset is **not yet expected** — never shown as a failure. |
 | **Needs attention** | A live/in-progress match's dataset is empty so far — ambiguous, not yet a confirmed problem. |
+| **Not expected (reviewed)** | Player statistics only: a concluded match has no authoritative snapshot, but an operator has recorded and an active `stats_not_expected` review explaining why (e.g. the match was abandoned). Distinct from both Complete (no data exists) and Missing (nothing explains the absence). |
 | **Unsupported / unknown** | No authoritative rule exists yet to judge this dataset (or it is present only as secondary diagnostic evidence). |
 
 This is the key distinction the explorer is designed to make clear: a future

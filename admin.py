@@ -129,6 +129,7 @@ _DATA_EXPLORER_STATE_LABELS = {
     HealthState.MISSING: "Missing", HealthState.STALE: "Stale",
     HealthState.UPCOMING: "Upcoming", HealthState.ATTENTION: "Needs attention",
     HealthState.FAILED: "Failed", HealthState.UNKNOWN: "Unsupported / unknown",
+    HealthState.REVIEWED: "Not expected (reviewed)",
 }
 templates.env.globals["state_label"] = lambda s: _DATA_EXPLORER_STATE_LABELS.get(s, str(s.value).title())
 templates.env.globals["time_ago"] = lambda value: _format_log_age(_parse_iso_utc(value))

@@ -38,6 +38,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+from afl_json.match_data_exceptions import active_stats_exception
 from afl_json.match_interchange import current_state_rows as interchange_current_state_rows
 from afl_json.match_status import normalise_match_status
 from afl_json.player_stats import CANONICAL_STAT_FIELDS
@@ -77,7 +78,8 @@ _CHECKPOINT_ORDER = ("BASELINE", "QT", "HT", "3QT", "FT", "CONCLUDED")
 # ``OperationsDashboardReporter._overall_state``, generalised to one match).
 _STATE_PRECEDENCE = (
     HealthState.FAILED, HealthState.MISSING, HealthState.ATTENTION, HealthState.PARTIAL,
-    HealthState.STALE, HealthState.UNKNOWN, HealthState.UPCOMING, HealthState.HEALTHY,
+    HealthState.STALE, HealthState.UNKNOWN, HealthState.UPCOMING, HealthState.REVIEWED,
+    HealthState.HEALTHY,
 )
 
 
@@ -165,6 +167,20 @@ class RoundDetail:
 
 
 @dataclass(frozen=True, slots=True)
+class ReviewedExceptionView:
+    """An active, human-reviewed dataset exception (Issue #231/#232), projected
+    for Admin display. Never implies the underlying provider facts changed --
+    see ``afl_json.match_data_exceptions``."""
+    exception_type: str
+    reason_code: str
+    display_reason: str
+    evidence_url: str | None
+    evidence_note: str | None
+    reviewed_by: str
+    reviewed_at: str
+
+
+@dataclass(frozen=True, slots=True)
 class DatasetState:
     key: str
     label: str
@@ -172,6 +188,7 @@ class DatasetState:
     summary: str
     count: int | None = None
     last_observed_utc: str | None = None
+    reviewed_exception: ReviewedExceptionView | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -329,8 +346,21 @@ def _presence_summary(state: HealthState, count: int, noun: str, lifecycle: str 
     return f"{count} {noun} observed."
 
 
-def _stats_dataset_state(finality, lifecycle: str | None) -> tuple[HealthState, str]:
-    """Player-statistics state, reusing the shared CFS finality predicate."""
+def _stats_dataset_state(finality, lifecycle: str | None, exception=None) -> tuple[HealthState, str]:
+    """Player-statistics state, reusing the shared CFS finality predicate.
+
+    ``exception`` is the active ``stats_not_expected`` reviewed disposition for
+    this match (``afl_json.match_data_exceptions.active_stats_exception``), if
+    any. Mirrors the exact condition ``afl_json.season_report`` applies for its
+    ``match.stats_not_expected`` finding (Issue #231/#232): a concluded match
+    with no authoritative snapshot and an active review is REVIEWED, never
+    MISSING -- the reviewed disposition overrides the *interpretation* of the
+    absence, it does not fabricate a snapshot.
+    """
+    if lifecycle == "CONCLUDED" and not finality.has_authoritative_snapshot and exception is not None:
+        return HealthState.REVIEWED, (
+            f"Not expected (reviewed): {exception.display_reason} [reason: {exception.reason_code}]"
+        )
     if lifecycle == "CONCLUDED":
         if finality.has_satisfactory_concluded_coverage:
             return HealthState.HEALTHY, (
@@ -560,9 +590,16 @@ class DataExplorerReporter:
     def _match_dataset_states(self, *, match_id: int, match_provider_id: str | None,
                               lifecycle: str | None) -> list[DatasetState]:
         finality = authoritative_stats_finality_for_match(self.conn, match_provider_id)
-        stats_state, stats_summary = _stats_dataset_state(finality, lifecycle)
+        exception = active_stats_exception(self.conn, match_id)
+        reviewed_view = None if exception is None else ReviewedExceptionView(
+            exception_type=exception.exception_type, reason_code=exception.reason_code,
+            display_reason=exception.display_reason, evidence_url=exception.evidence_url,
+            evidence_note=exception.evidence_note, reviewed_by=exception.created_by,
+            reviewed_at=exception.updated_at,
+        )
+        stats_state, stats_summary = _stats_dataset_state(finality, lifecycle, exception)
         states = [DatasetState("player_statistics", "Player statistics", stats_state, stats_summary,
-                                count=finality.authoritative_rows)]
+                                count=finality.authoritative_rows, reviewed_exception=reviewed_view)]
 
         team_rows = current_roster_teams(self.conn, match_id)
         roster_state = dataset_presence_state(lifecycle, len(team_rows))

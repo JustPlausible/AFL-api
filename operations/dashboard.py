@@ -63,6 +63,11 @@ class HealthState(str, Enum):
     FAILED = "failed"
     UPCOMING = "upcoming"
     UNKNOWN = "unknown"
+    # A human-reviewed disposition (e.g. stats_not_expected) explains an
+    # otherwise-missing dataset -- distinct from HEALTHY (data was collected)
+    # and MISSING/ATTENTION (nothing explains the absence). See
+    # afl_json.match_data_exceptions and Issue #233.
+    REVIEWED = "reviewed"
 
 
 _STATE_STYLE = {
@@ -74,6 +79,7 @@ _STATE_STYLE = {
     HealthState.MISSING: "secondary",
     HealthState.FAILED: "danger",
     HealthState.UNKNOWN: "secondary",
+    HealthState.REVIEWED: "info",
 }
 
 
