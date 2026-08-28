@@ -572,13 +572,24 @@ def handle_report_afl_season(args):
 
 def handle_report_stats_absence_candidates(args):
     from afl_json.match_data_exceptions import detect_stats_absence_candidates
+    from afl_json.season_report import list_persisted_afl_seasons
     from db.connection import get_read_only_db_connection
     conn = get_read_only_db_connection()
     try:
-        season = conn.execute("SELECT afl_id FROM afl_seasons WHERE year=?", (args.report_stats_absence_candidates,)).fetchone()
-        if season is None:
+        seasons = list_persisted_afl_seasons(
+            conn, competition_code=args.afl_competition_code,
+            competition_provider_id=args.afl_competition_provider_id,
+        )
+        matching = [item for item in seasons
+                    if item.year == args.report_stats_absence_candidates]
+        if not matching:
             raise ValueError(f"season {args.report_stats_absence_candidates} is not persisted")
-        candidates = detect_stats_absence_candidates(conn, season_id=season[0])
+        if len(matching) != 1:
+            raise ValueError(
+                f"season {args.report_stats_absence_candidates} is ambiguous for configured competition"
+            )
+        season = matching[0]
+        candidates = detect_stats_absence_candidates(conn, season_id=season.season_id)
     finally:
         conn.close()
     print(json.dumps({"season": args.report_stats_absence_candidates,
@@ -598,7 +609,7 @@ def handle_review_stats_not_expected(args):
             actor=args.reviewed_by,
         )
         conn.commit()
-        print(json.dumps(dict(row), indent=2))
+        print(json.dumps(asdict(row), indent=2))
     finally:
         conn.close()
 

@@ -283,7 +283,9 @@ class SeasonSynchronizer:
                     if match.match_id in options.match_ids
                 }
                 summary.explicit_matches_unsatisfied = sum(
-                    requested_outcomes.get(match_id) not in {"collected", "already_complete"}
+                    requested_outcomes.get(match_id) not in {
+                        "collected", "already_complete", "stats_not_expected",
+                    }
                     for match_id in options.match_ids
                 )
             material = (summary.failed + summary.unavailable_unpublished + summary.empty
@@ -425,7 +427,7 @@ class SeasonSynchronizer:
                 match_id=match_id, provider_id=provider_id,
                 round_number=round_number, lifecycle=lifecycle,
                 outcome="stats_not_expected",
-                diagnostic=exception["display_reason"],
+                diagnostic=exception.display_reason,
             )
             return True
 

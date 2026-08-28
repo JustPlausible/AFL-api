@@ -111,10 +111,12 @@ def test_reviewed_stats_not_expected_is_safe_and_not_recollected(tmp_path):
     conn.commit()
 
     result = sync.run(season=2026, competition_code="AFL",
-                      competition_provider_id="CD_C1")
+                      competition_provider_id="CD_C1",
+                      options=SeasonSyncOptions(match_ids=(8001,)))
 
     assert result.outcome == "success"
     assert result.stats_not_expected == 1
+    assert result.explicit_matches_unsatisfied == 0
     assert result.matches[0].outcome == "stats_not_expected"
     assert Collector.calls == []
     assert conn.execute("SELECT COUNT(*) FROM cfs_player_stats").fetchone()[0] == 0

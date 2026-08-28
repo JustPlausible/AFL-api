@@ -160,6 +160,14 @@ def test_normal_concluded_match_with_stats_is_not_absence_candidate(tmp_path):
     assert detect_stats_absence_candidates(conn, season_id=85) == []
 
 
+@pytest.mark.parametrize("alias", ["COMPLETED", "FINAL"])
+def test_stats_absence_candidates_use_normalized_concluded_aliases(tmp_path, alias):
+    from afl_json.match_data_exceptions import detect_stats_absence_candidates
+    _, conn = database(tmp_path, status=alias, stats=False)
+    candidates = detect_stats_absence_candidates(conn, season_id=85)
+    assert [(item.match_id, item.lifecycle) for item in candidates] == [(8001, "CONCLUDED")]
+
+
 def test_future_match_nullable_membership_and_missing_provider_are_classified(tmp_path):
     _, conn = database(tmp_path, status="SCHEDULED", stats=False, provider_id=None,
                        membership_team=None)
