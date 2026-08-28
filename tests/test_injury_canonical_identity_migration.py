@@ -50,8 +50,8 @@ def _seed_minimal_afl_hierarchy(conn, team_ids: list[int]) -> None:
         "VALUES (85,'CD_S2026014',1,2026,NULL,'now')"
     )
     conn.executemany(
-        "INSERT INTO afl_teams(afl_id,provider_id,season_id,name,abbreviation,updated_at) "
-        "VALUES (?,?,85,?,?,'now')",
+        "INSERT INTO afl_teams(afl_id,provider_id,name,abbreviation,updated_at) "
+        "VALUES (?,?,?,?,'now')",
         [(team_id, f"CD_T{team_id}", f"Team {team_id}", f"T{team_id}") for team_id in team_ids],
     )
 

@@ -55,7 +55,7 @@ def test_duplicate_identifier_rejected(tmp_path):
 
 def test_fresh_creation_idempotency_records_and_schema(tmp_path):
     db = tmp_path / "fresh.db"
-    assert migrate_database(db) == ["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015", "0016", "0017", "0018", "0019", "0020", "0021", "0022", "0023", "0024"]
+    assert migrate_database(db) == ["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015", "0016", "0017", "0018", "0019", "0020", "0021", "0022", "0023", "0024", "0025"]
     assert migrate_database(db) == []
     conn = sqlite3.connect(db)
     tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")}
@@ -64,7 +64,7 @@ def test_fresh_creation_idempotency_records_and_schema(tmp_path):
     assert "match_time_label" in cols(conn, "matches")
     assert any(r[2] for r in conn.execute("PRAGMA index_list(scrape_log)") if r[1] == "idx_scrape_log_match_scraped_at")
     rows = conn.execute("SELECT migration_id, description, checksum, applied_at FROM schema_migrations ORDER BY migration_id").fetchall()
-    assert [r[0] for r in rows] == ["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015", "0016", "0017", "0018", "0019", "0020", "0021", "0022", "0023", "0024"]
+    assert [r[0] for r in rows] == ["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015", "0016", "0017", "0018", "0019", "0020", "0021", "0022", "0023", "0024", "0025"]
     assert all(r[1] and r[2] and r[3] for r in rows)
 
 
@@ -92,6 +92,64 @@ def test_failed_migration_rolls_back_table_and_record_but_keeps_prior(tmp_path):
     assert conn.execute("SELECT migration_id FROM schema_migrations").fetchall() == [("0001",)]
 
 
+def test_failed_later_migration_does_not_commit_fk_violating_rebuild(tmp_path):
+    d = tmp_path / "m"; d.mkdir()
+    (d / "0001_rebuild.py").write_text(
+        'MIGRATION_ID="0001"\n'
+        'DESCRIPTION="FK-sensitive rebuild"\n'
+        'REQUIRES_FOREIGN_KEYS_OFF=True\n'
+        'def migrate(conn):\n'
+        '    conn.execute("CREATE TABLE parents(id INTEGER PRIMARY KEY)")\n'
+        '    conn.execute("CREATE TABLE children(parent_id INTEGER REFERENCES parents(id))")\n'
+        '    conn.execute("INSERT INTO children VALUES(42)")\n'
+    )
+    (d / "0002_fail.py").write_text(
+        'MIGRATION_ID="0002"\n'
+        'DESCRIPTION="later failure"\n'
+        'def migrate(conn):\n'
+        '    raise RuntimeError("boom")\n'
+    )
+    db = tmp_path / "invalid.db"
+
+    with pytest.raises(MigrationError, match="Foreign-key violations after schema rebuild"):
+        migrate_database(db, d)
+
+    conn = sqlite3.connect(db)
+    assert "children" not in {
+        row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_failed_later_migration_commits_valid_fk_rebuild_progress(tmp_path):
+    d = tmp_path / "m"; d.mkdir()
+    (d / "0001_rebuild.py").write_text(
+        'MIGRATION_ID="0001"\n'
+        'DESCRIPTION="FK-sensitive rebuild"\n'
+        'REQUIRES_FOREIGN_KEYS_OFF=True\n'
+        'def migrate(conn):\n'
+        '    conn.execute("CREATE TABLE parents(id INTEGER PRIMARY KEY)")\n'
+        '    conn.execute("CREATE TABLE children(parent_id INTEGER REFERENCES parents(id))")\n'
+        '    conn.execute("INSERT INTO parents VALUES(1)")\n'
+        '    conn.execute("INSERT INTO children VALUES(1)")\n'
+    )
+    (d / "0002_fail.py").write_text(
+        'MIGRATION_ID="0002"\n'
+        'DESCRIPTION="later failure"\n'
+        'def migrate(conn):\n'
+        '    raise RuntimeError("boom")\n'
+    )
+    db = tmp_path / "valid.db"
+
+    with pytest.raises(MigrationError, match="Migration 0002 .* failed: boom"):
+        migrate_database(db, d)
+
+    conn = sqlite3.connect(db)
+    assert conn.execute("SELECT parent_id FROM children").fetchall() == [(1,)]
+    assert conn.execute("SELECT migration_id FROM schema_migrations").fetchall() == [("0001",)]
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
 def test_incompatible_or_partial_database_fails(tmp_path):
     db = tmp_path / "partial.db"
     conn = sqlite3.connect(db)
@@ -103,7 +161,7 @@ def test_incompatible_or_partial_database_fails(tmp_path):
 def test_v030_baseline_preserves_rows_and_upgrades_api_keys(tmp_path):
     db = tmp_path / "old.db"
     make_v030_db(db, "afl_test_plaintext")
-    assert migrate_database(db) == ["0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015", "0016", "0017", "0018", "0019", "0020", "0021", "0022", "0023", "0024"]
+    assert migrate_database(db) == ["0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015", "0016", "0017", "0018", "0019", "0020", "0021", "0022", "0023", "0024", "0025"]
     conn = sqlite3.connect(db)
     assert conn.execute("SELECT name FROM clubs WHERE code='ADE'").fetchone()[0] == "Adelaide Crows"
     assert conn.execute("SELECT full_name FROM players WHERE afl_id=1").fetchone()[0] == "One Player"
@@ -120,7 +178,7 @@ def test_init_db_and_migrate_cli_from_other_cwd(tmp_path):
         result = subprocess.run([sys.executable, "-m", module], cwd=tmp_path, env=env, text=True, capture_output=True)
         assert result.returncode == 0, result.stderr + result.stdout
     conn = sqlite3.connect(db)
-    assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 24
+    assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 25
 
 
 def test_baseline_classifier_rejects_incomplete_table(tmp_path):

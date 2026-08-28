@@ -26,7 +26,7 @@ def _seed_base(conn):
     )
     for team, provider in ((10, "CD_T1"), (11, "CD_T2")):
         conn.execute(
-            "INSERT INTO afl_teams VALUES(?,?,85,?,?,?,?,?,?, '{}','{}','{}',?)",
+            "INSERT INTO afl_teams VALUES(?,?,?,?,?,?,?,?, '{}','{}','{}',?)",
             (team, provider, f"Team {team}", f"T{team}", provider, provider, provider, "AFL", now),
         )
         conn.execute("INSERT INTO afl_team_seasons VALUES(85,?,?,?)", (team, now, now))

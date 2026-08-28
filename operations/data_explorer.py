@@ -59,6 +59,7 @@ from api.routes_v1 import (
     _season_memberships as api_season_memberships,
     _team_projection as api_team_projection,
 )
+from db.team_seasons import count_team_participants
 from operations.dashboard import (
     DEFAULT_COMPETITION_CODE,
     DEFAULT_COMPETITION_PROVIDER_ID,
@@ -408,16 +409,15 @@ class DataExplorerReporter:
         for season in seasons:
             counts = self.conn.execute(
                 "SELECT (SELECT COUNT(*) FROM rounds WHERE season_id=?) AS rounds,"
-                "(SELECT COUNT(*) FROM matches WHERE season_id=?) AS matches,"
-                "(SELECT COUNT(*) FROM afl_team_seasons ts JOIN afl_teams t ON t.afl_id=ts.team_id "
-                "WHERE ts.competition_season_id=? AND t.season_id=?) AS teams",
-                (season.season_id, season.season_id, season.season_id, season.season_id),
+                "(SELECT COUNT(*) FROM matches WHERE season_id=?) AS matches",
+                (season.season_id, season.season_id),
             ).fetchone()
             report = self._season_report(season.year)
             items.append(SeasonListItem(
                 season_id=season.season_id, year=season.year, name=season.name,
                 is_current=season.is_current, round_count=counts["rounds"],
-                match_count=counts["matches"], team_count=counts["teams"],
+                match_count=counts["matches"],
+                team_count=count_team_participants(self.conn, season.season_id),
                 status=report.status.value, status_summary=_status_summary(report),
             ))
         return items

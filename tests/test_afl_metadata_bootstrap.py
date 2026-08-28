@@ -6,6 +6,7 @@ import pytest
 
 from afl_json import CollectionResult, persist_afl_metadata
 from db.migration_runner import migrate_database
+from db.team_seasons import count_team_participants
 
 
 def collected(*, venue="MCG", status="SCHEDULED", provider_ids=True, current_season_afl_id=85):
@@ -94,6 +95,52 @@ def test_repeat_is_unchanged_and_fixture_change_is_updated(database):
     assert (changed.inserted, changed.updated, changed.unchanged) == (0, 1, 4)
     assert database.execute("SELECT venue, status FROM matches").fetchone() == ("Docklands", "CONCLUDED")
     assert database.execute("SELECT COUNT(*) FROM matches").fetchone()[0] == 1
+
+
+def test_sequential_historical_bootstraps_preserve_shared_team_memberships(database):
+    """Regression for #229: stable clubs may participate in many seasons."""
+    seasons = (
+        collected_season(85, 2025, current_season_afl_id=86, team_id=10,
+                         round_id=105, match_id=1005),
+        collected_season(84, 2024, current_season_afl_id=86, team_id=10,
+                         round_id=104, match_id=1004),
+        collected_season(83, 2023, current_season_afl_id=86, team_id=10,
+                         round_id=103, match_id=1003),
+    )
+    expected_memberships = set()
+    canonical_identity = None
+    for snapshot in seasons:
+        persist_afl_metadata(database, snapshot)
+        season_id = snapshot.season["afl_id"]
+        expected_memberships.add((season_id, 10))
+        assert count_team_participants(database, season_id) == len(snapshot.teams)
+        assert set(database.execute(
+            "SELECT competition_season_id,team_id FROM afl_team_seasons"
+        )) == expected_memberships
+        identity = database.execute(
+            "SELECT afl_id,provider_id FROM afl_teams WHERE afl_id=10"
+        ).fetchone()
+        canonical_identity = canonical_identity or identity
+        assert identity == canonical_identity == (10, "CD_T10")
+
+    repeated = persist_afl_metadata(database, seasons[-1])
+    assert (repeated.inserted, repeated.updated, repeated.unchanged) == (0, 0, 5)
+    assert set(database.execute(
+        "SELECT competition_season_id,team_id FROM afl_team_seasons"
+    )) == expected_memberships
+
+    from afl_json.season_report import SeasonCompletenessReporter
+    from operations.data_explorer import DataExplorerReporter
+
+    database.row_factory = sqlite3.Row
+    explorer_counts = {item.season_id: item.team_count
+                       for item in DataExplorerReporter(database).list_seasons()}
+    for snapshot in seasons:
+        season_id = snapshot.season["afl_id"]
+        report_count = SeasonCompletenessReporter(database).report(
+            snapshot.season["year"]
+        ).aggregates["teams"]
+        assert explorer_counts[season_id] == report_count == len(snapshot.teams)
 
 
 def test_missing_optional_provider_identifiers_are_retained_as_null(database):

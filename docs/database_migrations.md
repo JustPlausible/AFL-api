@@ -73,12 +73,21 @@ are unique inside their namespace; contradictory mappings fail instead of
 being reassigned. `competition_season_players` retains one canonical player
 membership per AFL competition season, with an optional composite foreign key
 to `afl_team_seasons`. The minimal team-season table prevents historical player
-membership from depending on the mutable `afl_teams.season_id` compatibility
-column. Existing `players`, `player_stats`, and `cfs_player_stats` behavior is
+membership from depending on a single-season attribute of canonical team
+identity (the obsolete attribute is removed by migration `0025`). Existing
+`players`, `player_stats`, and `cfs_player_stats` behavior is
 preserved; CFS statistic observations gain a nullable canonical-player link.
 The tables are deliberately not migrated into one another. Their distinct keys,
 provenance, authority, and future-migration requirements are defined by the
 [player-stat storage contract](architecture/player_stats_storage_contract.md).
+
+Migration `0025` removes the superseded `afl_teams.season_id` column with an
+atomic SQLite table rebuild. Canonical `afl_id` and `provider_id` values are
+copied unchanged, child foreign keys continue to target `afl_teams`, and
+existing `afl_team_seasons` and `competition_season_players` rows are
+preserved. All historical participation queries use `afl_team_seasons`; a
+canonical-team join may validate identity but never adds a second season
+predicate from the identity table.
 
 `persist_player_seasons` (`afl_json/player_persistence.py`) is the sole write
 path for `competition_season_players`, used identically by season bootstrap

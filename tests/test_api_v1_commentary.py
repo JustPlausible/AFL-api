@@ -56,8 +56,8 @@ def _seed_base(conn):
         (PLAYER_ID, "champion_data", "CD_I291351", NOW, NOW),
     )
     conn.execute(
-        "INSERT INTO afl_teams VALUES(?,'CD_T80',?,'Hawthorn','HAW','Hawks','Hawthorn','Hawthorn','MEN','{}','{}','{}',?)",
-        (TEAM_ID, SEASON_ID, NOW),
+        "INSERT INTO afl_teams VALUES(?,'CD_T80','Hawthorn','HAW','Hawks','Hawthorn','Hawthorn','MEN','{}','{}','{}',?)",
+        (TEAM_ID, NOW),
     )
 
 

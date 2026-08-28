@@ -10,6 +10,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable
 
+from db.team_seasons import count_team_participants
+
 from .match_status import normalise_match_status
 
 
@@ -316,10 +318,7 @@ class SeasonCompletenessReporter:
                                        season_id=result.metadata.competition_season_id, **values))
 
     def _gather(self, result: SeasonReport, season_id: int) -> None:
-        teams = self.conn.execute(
-            "SELECT COUNT(*) FROM afl_team_seasons ts JOIN afl_teams t ON t.afl_id=ts.team_id "
-            "WHERE ts.competition_season_id=? AND t.season_id=?", (season_id, season_id)
-        ).fetchone()[0]
+        teams = count_team_participants(self.conn, season_id)
         rounds = self.conn.execute("SELECT COUNT(*) FROM rounds WHERE season_id=?", (season_id,)).fetchone()[0]
         match_rows = self.conn.execute(
             "SELECT m.match_id,m.match_provider_id,m.round_id,m.home_team_id,m.away_team_id,"

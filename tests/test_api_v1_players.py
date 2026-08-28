@@ -41,9 +41,9 @@ def _seed_seasons(conn, *, current_season_id=CURRENT_SEASON_ID, other_season_id=
         (other_season_id, NOW),
     )
     conn.execute(
-        "INSERT INTO afl_teams VALUES(?,'CD_T1',?,'Collingwood','COLL','Magpies','Collingwood',"
+        "INSERT INTO afl_teams VALUES(?,'CD_T1','Collingwood','COLL','Magpies','Collingwood',"
         "'Collingwood','MEN','{}','{}','{}',?)",
-        (TEAM_ID, current_season_id, NOW),
+        (TEAM_ID, NOW),
     )
     conn.execute("INSERT INTO afl_team_seasons VALUES(?,?,?,?)", (current_season_id, TEAM_ID, NOW, NOW))
 
@@ -589,9 +589,9 @@ def _seed_future_season(conn, *, future_season_id=FUTURE_SEASON_ID, team_id=TEAM
         (future_season_id, NOW),
     )
     conn.execute(
-        "INSERT INTO afl_teams VALUES(?,'CD_T2',?,'Essendon','ESS','Bombers','Essendon',"
+        "INSERT INTO afl_teams VALUES(?,'CD_T2','Essendon','ESS','Bombers','Essendon',"
         "'Essendon','MEN','{}','{}','{}',?)",
-        (team_id, future_season_id, NOW),
+        (team_id, NOW),
     )
     conn.execute("INSERT INTO afl_team_seasons VALUES(?,?,?,?)", (future_season_id, team_id, NOW, NOW))
 
