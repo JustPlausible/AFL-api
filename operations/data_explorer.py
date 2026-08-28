@@ -38,12 +38,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from afl_json.match_commentary import event_rows as commentary_event_rows
 from afl_json.match_interchange import current_state_rows as interchange_current_state_rows
 from afl_json.match_status import normalise_match_status
 from afl_json.player_stats import CANONICAL_STAT_FIELDS
 from afl_json.rosters import current_roster_context, current_roster_selections, current_roster_teams
 from afl_json.season_report import (
+    MIN_CONCLUDED_AUTHORITATIVE_PLAYER_ROWS,
     SeasonCompletenessReporter,
     authoritative_stats_finality_for_match,
     list_persisted_afl_seasons,
@@ -337,9 +337,15 @@ def _stats_dataset_state(finality, lifecycle: str | None) -> tuple[HealthState, 
                 "two-sided and final."
             )
         if finality.has_authoritative_snapshot:
+            if finality.is_partial_authoritative_snapshot:
+                return HealthState.PARTIAL, (
+                    f"{finality.authoritative_rows} authoritative row(s), but mixed-authority or "
+                    "one-sided."
+                )
             return HealthState.PARTIAL, (
-                f"{finality.authoritative_rows} authoritative row(s), but mixed-authority or "
-                "one-sided."
+                f"Only {finality.authoritative_rows} authoritative player row(s) captured for a "
+                f"two-sided final snapshot -- suspiciously low coverage (expected at least "
+                f"{MIN_CONCLUDED_AUTHORITATIVE_PLAYER_ROWS})."
             )
         return HealthState.MISSING, "Concluded match has no authoritative player-statistics snapshot yet."
     if lifecycle in ("LIVE", "POSTGAME"):
@@ -355,6 +361,10 @@ def _stats_dataset_state(finality, lifecycle: str | None) -> tuple[HealthState, 
 
 def _fixture_dataset_state(*, match_provider_id: str | None, home_team_id: int | None,
                            away_team_id: int | None, lifecycle: str | None) -> DatasetState:
+    """``home_team_id``/``away_team_id`` must be the *resolved* canonical team id (the
+    joined ``afl_teams.afl_id``), not the raw ``matches.home_team_id``/``away_team_id``
+    foreign key -- a non-null foreign key that fails to resolve to a canonical team is
+    exactly the case this check exists to catch."""
     issues = []
     if home_team_id is None or away_team_id is None:
         issues.append("a participating team is unresolved")
@@ -458,6 +468,12 @@ class DataExplorerReporter:
             if not round_matches:
                 state = HealthState.UNKNOWN
                 summary = "No matches are scheduled for this round yet."
+            elif state is HealthState.HEALTHY and concluded == 0 and live == 0 and scheduled == 0:
+                # Every persisted match has an unrecognised lifecycle (e.g. a placeholder
+                # status) -- lifecycle counts give no evidence either way, so this must
+                # never read as "Complete" just because no findings exist yet.
+                state = HealthState.UNKNOWN
+                summary = "Match lifecycle could not be recognised for this round; completeness cannot be judged."
             elif state is HealthState.UPCOMING:
                 summary = "Round has not started; results and statistics are not yet expected."
             elif state is HealthState.HEALTHY:
@@ -515,7 +531,7 @@ class DataExplorerReporter:
             lifecycle = normalise_match_status(row["status"])
             datasets = [
                 _fixture_dataset_state(match_provider_id=row["match_provider_id"],
-                                       home_team_id=row["home_team_id"], away_team_id=row["away_team_id"],
+                                       home_team_id=row["home_id"], away_team_id=row["away_id"],
                                        lifecycle=lifecycle),
                 *self._match_dataset_states(match_id=row["match_id"], match_provider_id=row["match_provider_id"],
                                             lifecycle=lifecycle),
@@ -603,8 +619,8 @@ class DataExplorerReporter:
         lifecycle = normalise_match_status(row["status"])
         match_provider_id = row["match_provider_id"]
         datasets = [
-            _fixture_dataset_state(match_provider_id=match_provider_id, home_team_id=row["home_team_id"],
-                                   away_team_id=row["away_team_id"], lifecycle=lifecycle),
+            _fixture_dataset_state(match_provider_id=match_provider_id, home_team_id=row["home_id"],
+                                   away_team_id=row["away_id"], lifecycle=lifecycle),
             *self._match_dataset_states(match_id=match_id, match_provider_id=match_provider_id, lifecycle=lifecycle),
         ]
         overall_state, overall_summary = _overall_state(datasets)
@@ -695,21 +711,41 @@ class DataExplorerReporter:
     def _commentary_preview(self, match_id: int,
                             teams: dict[int, tuple[str | None, str | None]],
                             ) -> tuple[list[CommentaryEventView], int]:
-        all_events = commentary_event_rows(self.conn, match_id=match_id)
-        total = len(all_events)
-        preview = list(reversed(all_events[-COMMENTARY_PREVIEW_LIMIT:]))
+        """The most recent ``COMMENTARY_PREVIEW_LIMIT`` events plus the true total count.
+
+        Deliberately does not call ``afl_json.match_commentary.event_rows`` (the
+        function backing ``/api/v1/matches/{match_id}/commentary``): that helper
+        loads and JSON-parses every event for the match before any slicing could
+        happen, which would defeat the point of a bounded preview for a match with
+        a long commentary history. Instead this applies the identical ordering
+        that helper uses (chronological, oldest-first), reversed, with ``LIMIT``
+        in SQL, and selects only the columns this preview actually renders.
+        """
+        total = self.conn.execute(
+            "SELECT COUNT(*) FROM match_commentary_events WHERE match_id=?", (match_id,)
+        ).fetchone()[0]
+        preview_rows = self.conn.execute(
+            "SELECT id, period_number, period_seconds, comment, score_event, "
+            "canonical_player_id, canonical_team_id, first_observed_at "
+            "FROM match_commentary_events WHERE match_id=? "
+            "ORDER BY period_number IS NULL DESC, period_number DESC, "
+            "period_seconds IS NULL DESC, period_seconds DESC, source_index ASC, id DESC "
+            "LIMIT ?",
+            (match_id, COMMENTARY_PREVIEW_LIMIT),
+        ).fetchall()
         player_names = self._player_name_lookup(
-            {row["canonical_player_id"] for row in preview if row["canonical_player_id"] is not None})
+            {row["canonical_player_id"] for row in preview_rows if row["canonical_player_id"] is not None})
         events = [
             CommentaryEventView(
                 id=row["id"], period_number=row["period_number"], period_seconds=row["period_seconds"],
-                comment=row["comment"], score_event=row["score_event"],
+                comment=row["comment"],
+                score_event=(bool(row["score_event"]) if row["score_event"] is not None else None),
                 player_name=player_names.get(row["canonical_player_id"]),
                 team_name=(teams.get(row["canonical_team_id"], (None, None))[0]
                           if row["canonical_team_id"] is not None else None),
                 observed_at=row["first_observed_at"],
             )
-            for row in preview
+            for row in preview_rows
         ]
         return events, total
 

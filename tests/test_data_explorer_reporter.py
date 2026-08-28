@@ -186,6 +186,104 @@ def test_season_detail_distinguishes_upcoming_round_from_findings(tmp_path):
     assert "not yet expected" in round_item.state_summary.lower()
 
 
+def test_season_detail_unknown_lifecycle_round_is_not_reported_complete(tmp_path):
+    """A round whose only match has an unrecognised (e.g. placeholder) status must
+    never read as "Complete" just because no findings exist yet -- there is simply
+    no lifecycle evidence to judge it by (regression: PR #228 review)."""
+    conn = _connect(tmp_path)
+    _seed_base(conn)
+    _insert_match(conn, 8001, "CD_M1", "PLACEHOLDER", "2026-03-01T00:00:00+00:00")
+    conn.commit()
+
+    detail = _reporter(conn).season_detail(85)
+
+    round_item = detail.rounds[0]
+    assert round_item.concluded_count == 0
+    assert round_item.live_count == 0
+    assert round_item.scheduled_count == 0
+    assert round_item.state == HealthState.UNKNOWN
+    assert "could not be recognised" in round_item.state_summary.lower()
+
+
+def test_fixture_dataset_state_flags_unresolved_team_identity(tmp_path):
+    """A non-null home_team_id/away_team_id that fails to resolve to a canonical
+    team must not be reported as a complete fixture (regression: PR #228 review)."""
+    conn = _connect(tmp_path)
+    _seed_base(conn)
+    conn.execute(
+        "INSERT INTO matches(match_id,match_provider_id,round_id,home_team,away_team,venue,status,"
+        "start_time_utc,season_id,home_team_id,away_team_id) "
+        "VALUES(8001,'CD_M1',101,'A','B','MCG','CONCLUDED','2026-03-01T00:00:00+00:00',85,999,11)"
+    )
+    conn.commit()
+
+    detail = _reporter(conn).match_detail(8001)
+
+    fixture = next(d for d in detail.datasets if d.key == "fixture")
+    assert fixture.state == HealthState.ATTENTION
+    assert "unresolved" in fixture.summary.lower()
+    assert detail.home.name is None
+
+
+def test_match_detail_stats_distinguishes_suspicious_coverage_from_one_sided(tmp_path):
+    """A two-sided, uniformly-final snapshot with too few rows is suspiciously low
+    coverage, distinct from a genuinely mixed-authority/one-sided snapshot
+    (regression: PR #228 review)."""
+    conn = _connect(tmp_path)
+    _seed_base(conn)
+
+    _insert_match(conn, 8001, "CD_M1", "CONCLUDED", "2026-03-01T00:00:00+00:00")
+    _seed_player(conn, 1, "Home Player", 10)
+    _seed_player(conn, 2, "Away Player", 11)
+    _seed_stats(conn, "CD_M1", 1, "home", "CD_T1")
+    _seed_stats(conn, "CD_M1", 2, "away", "CD_T2")
+
+    _insert_match(conn, 8002, "CD_M2", "CONCLUDED", "2026-03-01T00:00:00+00:00")
+    for player_id in range(3, 23):
+        _seed_player(conn, player_id, f"Home Only {player_id}", 10)
+        _seed_stats(conn, "CD_M2", player_id, "home", "CD_T1")
+    conn.commit()
+
+    low_coverage = _reporter(conn).match_detail(8001)
+    low_coverage_stats = next(d for d in low_coverage.datasets if d.key == "player_statistics")
+    assert low_coverage_stats.state == HealthState.PARTIAL
+    assert "suspiciously low coverage" in low_coverage_stats.summary.lower()
+    assert "mixed-authority" not in low_coverage_stats.summary.lower()
+
+    one_sided = _reporter(conn).match_detail(8002)
+    one_sided_stats = next(d for d in one_sided.datasets if d.key == "player_statistics")
+    assert one_sided_stats.state == HealthState.PARTIAL
+    assert "mixed-authority or one-sided" in one_sided_stats.summary.lower()
+
+
+def test_match_detail_commentary_preview_is_bounded_ordered_and_totalled(tmp_path):
+    """The commentary preview must stay bounded to the most recent
+    COMMENTARY_PREVIEW_LIMIT events -- never hydrate the whole match history
+    (regression: PR #228 review)."""
+    conn = _connect(tmp_path)
+    _seed_base(conn)
+    _insert_match(conn, 8001, "CD_M1", "LIVE", "2026-03-01T00:00:00+00:00")
+    now = NOW.isoformat()
+    for period_number in range(1, 26):
+        conn.execute(
+            "INSERT INTO match_commentary_events(match_id,match_provider_id,event_fingerprint,slot_key,"
+            "period_number,period_seconds,comment,score_event,source_index,first_observed_at,"
+            "last_observed_at,raw_event_json,collector_version) "
+            "VALUES(8001,'CD_M1',?,?,?,0,?,0,0,?,?,'{}','test')",
+            (f"fp{period_number}", f"slot{period_number}", period_number,
+             f"Event {period_number}", now, now),
+        )
+    conn.commit()
+
+    detail = _reporter(conn).match_detail(8001)
+
+    assert detail.commentary_total_count == 25
+    assert len(detail.commentary_events) == 20
+    # Newest-first: the highest period_number (most recently persisted) comes first.
+    assert detail.commentary_events[0].period_number == 25
+    assert detail.commentary_events[-1].period_number == 6
+
+
 def test_round_detail_full_match_is_healthy(tmp_path):
     conn = _connect(tmp_path)
     _seed_base(conn)
