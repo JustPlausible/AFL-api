@@ -33,6 +33,14 @@
         </div>
         <p class="small text-muted mb-0">{{ dataset.summary }}</p>
         {% if dataset.last_observed_utc %}<p class="small text-muted mb-0">Last observed: {{ time_ago(dataset.last_observed_utc) or dataset.last_observed_utc }}</p>{% endif %}
+        {% if dataset.reviewed_exception %}
+        <hr class="my-2">
+        <p class="small mb-1"><strong>Reason:</strong> <code>{{ dataset.reviewed_exception.reason_code }}</code></p>
+        <p class="small mb-1">{{ dataset.reviewed_exception.display_reason }}</p>
+        {% if dataset.reviewed_exception.evidence_url %}<p class="small mb-1"><a href="{{ dataset.reviewed_exception.evidence_url }}" target="_blank" rel="noopener noreferrer">Evidence &#8599;</a></p>{% endif %}
+        {% if dataset.reviewed_exception.evidence_note %}<p class="small text-muted mb-0">{{ dataset.reviewed_exception.evidence_note }}</p>{% endif %}
+        <p class="small text-muted mb-0">Reviewed by {{ dataset.reviewed_exception.reviewed_by }} &middot; {{ time_ago(dataset.reviewed_exception.reviewed_at) or dataset.reviewed_exception.reviewed_at }}</p>
+        {% endif %}
       </div>
     </div>
     {% endfor %}
@@ -69,8 +77,18 @@
   </div>
 </section>
 
+{% set stats_dataset = (match.datasets | selectattr('key', 'equalto', 'player_statistics') | first) %}
 <section class="mb-4" aria-labelledby="stats-heading">
   <h2 id="stats-heading" class="h5">Player statistics</h2>
+  {% if stats_dataset and stats_dataset.reviewed_exception and stats_dataset.state.value == 'reviewed' %}
+  <div class="alert alert-info" role="status">
+    <p class="mb-1 fw-semibold">Not expected (reviewed)</p>
+    <p class="mb-1">Reason: <code>{{ stats_dataset.reviewed_exception.reason_code }}</code></p>
+    <p class="mb-1">{{ stats_dataset.reviewed_exception.display_reason }}</p>
+    {% if stats_dataset.reviewed_exception.evidence_url %}<p class="mb-1"><a href="{{ stats_dataset.reviewed_exception.evidence_url }}" target="_blank" rel="noopener noreferrer">Evidence &#8599;</a></p>{% endif %}
+    {% if stats_dataset.reviewed_exception.evidence_note %}<p class="small text-muted mb-0">{{ stats_dataset.reviewed_exception.evidence_note }}</p>{% endif %}
+  </div>
+  {% endif %}
   {% if match.player_stats %}
   <div class="table-responsive"><table class="table table-sm bg-white">
     <thead><tr><th>Player</th><th>Side</th><th>G</th><th>B</th><th>K</th><th>H</th><th>D</th><th>M</th><th>T</th><th>HO</th><th>Authority</th></tr></thead>
@@ -91,7 +109,7 @@
   {% if match.period_checkpoints %}
   <p class="small text-muted mb-0">Quarter/period checkpoints: {% for cp in match.period_checkpoints %}{{ cp.marker }} ({{ cp.player_count }} players){% if not loop.last %} &middot; {% endif %}{% endfor %}</p>
   {% endif %}
-  {% else %}<p class="small text-muted">No authoritative player statistics captured yet for this match.</p>{% endif %}
+  {% elif not (stats_dataset and stats_dataset.state.value == 'reviewed') %}<p class="small text-muted">No authoritative player statistics captured yet for this match.</p>{% endif %}
 </section>
 
 <section class="mb-4" aria-labelledby="commentary-heading">
