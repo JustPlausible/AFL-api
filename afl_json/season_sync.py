@@ -14,6 +14,7 @@ from db.scrape_runs import (TRIGGER_CLI, complete_scrape_run, fail_scrape_run,
 
 from .bootstrap import BootstrapSummary, persist_afl_metadata
 from .match_status import normalise_match_status, reconcile_match_status
+from .match_data_exceptions import active_stats_exception
 from .player_persistence import PlayerPersistenceSummary, persist_player_seasons
 from .player_stats import (MatchPlayerStatsCollector, PlayerStatsStatus,
                            upsert_player_stats)
@@ -23,6 +24,7 @@ class SeasonSyncDecisionReason(str, Enum):
     """Stable audit vocabulary for decisions made before collection."""
 
     ALREADY_COMPLETE = "already_complete"
+    STATS_NOT_EXPECTED = "stats_not_expected"
     SCHEDULED = "scheduled"
     LIVE_OR_POSTGAME = "live_or_postgame"
     FUTURE_PLACEHOLDER = "future_placeholder"
@@ -34,6 +36,7 @@ class SeasonSyncDecisionReason(str, Enum):
 
 SAFE_DECISION_REASONS = frozenset({
     SeasonSyncDecisionReason.ALREADY_COMPLETE,
+    SeasonSyncDecisionReason.STATS_NOT_EXPECTED,
     SeasonSyncDecisionReason.SCHEDULED,
     SeasonSyncDecisionReason.LIVE_OR_POSTGAME,
     SeasonSyncDecisionReason.FUTURE_PLACEHOLDER,
@@ -135,6 +138,7 @@ class SeasonSyncResult:
     unresolved_lifecycle: int = 0
     skipped_missing_provider_identity: int = 0
     already_complete_unchanged: int = 0
+    stats_not_expected: int = 0
     collected_successfully: int = 0
     unavailable_unpublished: int = 0
     empty: int = 0
@@ -279,7 +283,9 @@ class SeasonSynchronizer:
                     if match.match_id in options.match_ids
                 }
                 summary.explicit_matches_unsatisfied = sum(
-                    requested_outcomes.get(match_id) not in {"collected", "already_complete"}
+                    requested_outcomes.get(match_id) not in {
+                        "collected", "already_complete", "stats_not_expected",
+                    }
                     for match_id in options.match_ids
                 )
             material = (summary.failed + summary.unavailable_unpublished + summary.empty
@@ -411,6 +417,17 @@ class SeasonSynchronizer:
                 round_number=round_number, lifecycle=lifecycle,
                 rows_unchanged=concluded_rows,
                 diagnostic="authoritative statistics are already complete",
+            )
+            return True
+        exception = active_stats_exception(self.conn, match_id)
+        if not concluded_rows and exception is not None:
+            summary.stats_not_expected += 1
+            self._append_decision(
+                summary, SeasonSyncDecisionReason.STATS_NOT_EXPECTED,
+                match_id=match_id, provider_id=provider_id,
+                round_number=round_number, lifecycle=lifecycle,
+                outcome="stats_not_expected",
+                diagnostic=exception.display_reason,
             )
             return True
 

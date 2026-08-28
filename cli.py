@@ -30,6 +30,9 @@ OPERATION_FLAGS = {
     "bootstrap_afl_season": "--bootstrap-afl-season",
     "sync_afl_season": "--sync-afl-season",
     "report_afl_season": "--report-afl-season",
+    "report_stats_absence_candidates": "--report-stats-absence-candidates",
+    "review_stats_not_expected": "--review-stats-not-expected",
+    "revoke_stats_not_expected": "--revoke-stats-not-expected",
     "collect_match_rosters": "--collect-match-rosters",
     "collect_match_player_stats": "--collect-match-player-stats",
     "import_clubs": "--import-clubs",
@@ -127,6 +130,20 @@ def create_parser() -> argparse.ArgumentParser:
                                 help="Bootstrap and synchronise concluded CFS match statistics for a season")
     _add_operation_argument(metadata_group, "report_afl_season", type=int, metavar="YEAR",
                                 help="Read-only completeness report for a persisted canonical AFL season")
+    _add_operation_argument(metadata_group, "report_stats_absence_candidates", type=int, metavar="YEAR",
+                            help="Report concluded matches with suspiciously absent authoritative statistics")
+    review_group = parser.add_argument_group("Human-reviewed match dataset dispositions")
+    _add_operation_argument(review_group, "review_stats_not_expected", type=positive_match_id,
+                            metavar="AFL_MATCH_ID", help="Create or update a reviewed stats-not-expected disposition")
+    _add_operation_argument(review_group, "revoke_stats_not_expected", type=positive_match_id,
+                            metavar="AFL_MATCH_ID", help="Revoke a reviewed stats-not-expected disposition")
+    review_group.add_argument("--reason-code", choices=("abandoned", "cancelled", "forfeit",
+                              "not_played", "historical_data_unavailable",
+                              "provider_data_unavailable", "other"))
+    review_group.add_argument("--display-reason")
+    review_group.add_argument("--evidence-url")
+    review_group.add_argument("--evidence-note")
+    review_group.add_argument("--reviewed-by", default="cli-operator")
     metadata_group.add_argument("--afl-season", default=AFL_SEASON_YEAR, metavar="SEASON",
                                 help="Select a season by year, AFL ID, provider ID or exact name")
     metadata_group.add_argument("--afl-competition-code", default=AFL_COMPETITION_CODE, metavar="CODE",
@@ -241,6 +258,12 @@ def handle_args(argv=None):
         parser.error("--round-from and --round-to must be supplied together")
     if args.round_from is not None and args.round_from > args.round_to:
         parser.error("--round-from cannot be greater than --round-to")
+    review_options = any((args.reason_code, args.display_reason, args.evidence_url,
+                          args.evidence_note))
+    if args.review_stats_not_expected and (not args.reason_code or not args.display_reason):
+        parser.error("--review-stats-not-expected requires --reason-code and --display-reason")
+    if review_options and not args.review_stats_not_expected:
+        parser.error("review evidence options require --review-stats-not-expected")
     args.match_id = list(dict.fromkeys(args.match_id))
     return args
 

@@ -104,6 +104,70 @@ def test_complete_finished_season_is_deterministic_and_legacy_is_not_authority(t
     assert legacy.status is ReportStatus.INCOMPLETE
 
 
+def test_reviewed_stats_not_expected_is_visible_complete_auditable_and_revocable(tmp_path):
+    from afl_json.match_data_exceptions import (detect_stats_absence_candidates,
+                                                review_stats_not_expected,
+                                                revoke_stats_not_expected)
+
+    _, conn = database(tmp_path, stats=False, provider_id="CD_M20150141408")
+    conn.execute("UPDATE matches SET match_id=847,score_home=0,score_away=0 WHERE match_id=8001")
+    conn.commit()
+
+    before = report(conn)
+    candidate = detect_stats_absence_candidates(conn, season_id=85)[0]
+    assert candidate.match_id == 847
+    assert candidate.lifecycle == "CONCLUDED"
+    assert candidate.evidence["score_is_zero_zero"] is True
+    assert "reason_code" not in candidate.evidence  # detection never invents a cause
+    assert "match.final_without_authoritative_stats" in codes(before)
+    assert before.status is ReportStatus.INCOMPLETE
+
+    evidence_url = "https://www.afl.com.au/news/197577/crows-clash-with-geelong-abandoned-remainder-of-round-14-to-go-ahead"
+    review_stats_not_expected(
+        conn, match_id=847, reason_code="abandoned",
+        display_reason="Match abandoned and not played.", evidence_url=evidence_url,
+        actor="regression-reviewer", clock=lambda: NOW,
+    )
+    conn.commit()
+    # Replaying the exact operator command is a no-op, including audit history.
+    review_stats_not_expected(
+        conn, match_id=847, reason_code="abandoned",
+        display_reason="Match abandoned and not played.", evidence_url=evidence_url,
+        actor="regression-reviewer", clock=lambda: NOW,
+    )
+    conn.commit()
+    after = report(conn)
+    assert after.status is ReportStatus.COMPLETE
+    assert after.aggregates["concluded_matches_with_authoritative_stats"] == 0
+    assert after.aggregates["concluded_matches_with_stats_not_expected"] == 1
+    finding = next(item for item in after.findings if item.code == "match.stats_not_expected")
+    assert finding.message == "Match abandoned and not played."
+    assert tuple(conn.execute("SELECT status,score_home,score_away FROM matches WHERE match_id=847").fetchone()) == ("CONCLUDED", 0, 0)
+    assert conn.execute("SELECT COUNT(*) FROM cfs_player_stats").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM match_data_exception_audit").fetchone()[0] == 1
+
+    assert revoke_stats_not_expected(conn, match_id=847, actor="regression-reviewer",
+                                     clock=lambda: NOW)
+    conn.commit()
+    revoked = report(conn)
+    assert revoked.status is ReportStatus.INCOMPLETE
+    assert "match.final_without_authoritative_stats" in codes(revoked)
+
+
+def test_normal_concluded_match_with_stats_is_not_absence_candidate(tmp_path):
+    from afl_json.match_data_exceptions import detect_stats_absence_candidates
+    _, conn = database(tmp_path, provider_id="CD_M20150141401")
+    assert detect_stats_absence_candidates(conn, season_id=85) == []
+
+
+@pytest.mark.parametrize("alias", ["COMPLETED", "FINAL"])
+def test_stats_absence_candidates_use_normalized_concluded_aliases(tmp_path, alias):
+    from afl_json.match_data_exceptions import detect_stats_absence_candidates
+    _, conn = database(tmp_path, status=alias, stats=False)
+    candidates = detect_stats_absence_candidates(conn, season_id=85)
+    assert [(item.match_id, item.lifecycle) for item in candidates] == [(8001, "CONCLUDED")]
+
+
 def test_future_match_nullable_membership_and_missing_provider_are_classified(tmp_path):
     _, conn = database(tmp_path, status="SCHEDULED", stats=False, provider_id=None,
                        membership_team=None)

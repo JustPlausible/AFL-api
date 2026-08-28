@@ -99,6 +99,29 @@ def test_first_run_rerun_and_refresh_are_idempotent(tmp_path):
     assert conn.execute("SELECT COUNT(*) FROM player_stats").fetchone()[0] == 0
 
 
+def test_reviewed_stats_not_expected_is_safe_and_not_recollected(tmp_path):
+    from afl_json.match_data_exceptions import review_stats_not_expected
+    conn, sync = setup(tmp_path, ("CONCLUDED",))
+    # Bootstrap once so the operator can review the canonical match.
+    sync.bootstrap(object(), conn, season=2026, competition_code="AFL",
+                   competition_provider_id="CD_C1")
+    conn.row_factory = sqlite3.Row
+    review_stats_not_expected(conn, match_id=8001, reason_code="not_played",
+                              display_reason="Match was not played.", actor="test")
+    conn.commit()
+
+    result = sync.run(season=2026, competition_code="AFL",
+                      competition_provider_id="CD_C1",
+                      options=SeasonSyncOptions(match_ids=(8001,)))
+
+    assert result.outcome == "success"
+    assert result.stats_not_expected == 1
+    assert result.explicit_matches_unsatisfied == 0
+    assert result.matches[0].outcome == "stats_not_expected"
+    assert Collector.calls == []
+    assert conn.execute("SELECT COUNT(*) FROM cfs_player_stats").fetchone()[0] == 0
+
+
 def test_selection_states_bounds_and_missing_provider_are_distinct(tmp_path):
     conn, sync = setup(tmp_path)
     result = sync.run(season=2026, competition_code="AFL", competition_provider_id="CD_C1")

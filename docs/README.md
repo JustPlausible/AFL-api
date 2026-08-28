@@ -29,6 +29,7 @@ for the reusable release summary and upgrade cautions.
 - [Public AFL metadata collection](public_afl_metadata.md)
 - [Match roster collection](match_rosters.md) — CFS `matchRosters` collector, canonical production persistence, replacement-safety rules, and the legacy HTML `lineups` authority boundary (Issue #219)
 - [Match player-stat collection](match_player_stats.md)
+- [Reviewed match data exceptions](match-data-exceptions.md) — candidate detection, auditable operator review, completeness, and revocation workflow
 - [Player-stat persistence and authority contract](architecture/player_stats_storage_contract.md)
 - [Consumer API workflow design](architecture/workflows/consumer_api_design.md) — human-led target for the complete versioned consumer surface
 - [Canonical CFS player-stat read API design](architecture/api/player_stats_api_design.md) — endpoint-specific implementation design for the first versioned player-stat resource
