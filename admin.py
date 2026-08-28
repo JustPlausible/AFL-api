@@ -20,6 +20,7 @@ from db.init_db import create_api_keys_table
 from db.connection import get_db_path, get_read_only_db_connection
 from afl_json.season_report import SeasonCompletenessReporter, list_persisted_afl_seasons
 from analytics.reporting import AnalyticsReporter
+from operations.dashboard import OperationsDashboardReporter, state_style
 from admin_csrf import csrf_input, require_csrf
 from logging_sources import (
     STATUS_AVAILABLE, STATUS_DISABLED, STATUS_NOT_CREATED, STATUS_UNAVAILABLE,
@@ -117,6 +118,7 @@ if not session_secret:
 
 app.state.csrf_secret = session_secret
 templates.env.globals["csrf_input"] = csrf_input
+templates.env.globals["state_style"] = state_style
 app.add_middleware(SessionMiddleware, secret_key=session_secret)
 
 @app.get("/", response_class=HTMLResponse)
@@ -365,6 +367,47 @@ def trigger_manual_job(request: Request, kind: str, round_id: str = Form(None), 
     except Exception:
         log("❌ Scheduler unavailable for manual trigger", "ERROR")
         return _manual_message(request, "❌ Scheduler service is unavailable. No manual job was queued.", 503)
+
+@app.get("/operations", response_class=HTMLResponse)
+def operations_dashboard(request: Request):
+    """Read-only Admin operations / data-health dashboard (Issue #225).
+
+    Reuses the already-validated scheduler health contract fetched for the
+    Scheduling page, and gathers everything else through a single read-only
+    connection so a slow or failing dashboard query can never contend with
+    ingestion. See docs/admin_operations_dashboard.md.
+
+    A database that cannot be opened (or fails partway through the report)
+    is itself a state this page must be able to show, not a 500: it renders
+    a controlled "database unavailable" message instead of raising.
+    """
+    scheduler_health = _fetch_scheduler_health()
+    try:
+        conn = get_read_only_db_connection()
+    except (FileNotFoundError, sqlite3.Error) as e:
+        log(f"❌ Operations dashboard could not open the database: {e}", "ERROR")
+        return templates.TemplateResponse(
+            request=request, name="operations.html",
+            context={"report": None, "database_error": "The configured database could not be opened."},
+            status_code=503,
+        )
+    try:
+        report = OperationsDashboardReporter(conn, database=get_db_path().name).report(
+            scheduler_health=scheduler_health,
+        )
+    except sqlite3.Error as e:
+        log(f"❌ Operations dashboard failed while building the report: {e}", "ERROR")
+        return templates.TemplateResponse(
+            request=request, name="operations.html",
+            context={"report": None, "database_error": "The database became unavailable while building this report."},
+            status_code=503,
+        )
+    finally:
+        conn.close()
+    return templates.TemplateResponse(
+        request=request, name="operations.html", context={"report": report, "database_error": None},
+    )
+
 
 @app.get("/tables", response_class=HTMLResponse)
 def show_tables(request: Request):

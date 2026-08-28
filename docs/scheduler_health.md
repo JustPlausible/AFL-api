@@ -138,6 +138,12 @@ page: a failure fetching `/scheduler/jobs` no longer needs to be the only
 signal of scheduler trouble, and a healthy-but-empty scheduler no longer looks
 identical to an unreachable one.
 
+The Admin Operations dashboard (`GET /operations`, Issue #225, see
+[Admin Operations Dashboard](admin_operations_dashboard.md)) reuses this same
+`admin._fetch_scheduler_health()` result for its own overview card — it never
+re-fetches or re-validates the contract, only maps the already-validated
+`state` field to its own health-state vocabulary.
+
 ## Non-goals
 
 This endpoint does not change job execution behaviour, scheduler

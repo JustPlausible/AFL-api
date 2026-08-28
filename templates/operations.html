@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% block title %}Operations · AFL API Admin{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <h1 class="h2">Operations</h1>
+  <p class="text-muted mb-0">Read-only operational visibility: is the AFL API healthy, is expected collection occurring, and where to look if not. This is not infrastructure monitoring and never mutates, repairs, or triggers anything -- see <span class="technical">docs/admin_operations_dashboard.md</span>.</p>
+</div>
+
+{% if not report %}
+<div class="alert alert-danger" role="alert">
+  <h2 class="h5 alert-heading">Database unavailable</h2>
+  <p class="mb-0">{{ database_error or "The database could not be reached, so this dashboard cannot be built right now." }} You can retry the page once the database is reachable again.</p>
+</div>
+{% else %}
+{% set overview = report.overview %}
+<section aria-labelledby="overview-heading" class="mb-4">
+  <div class="d-flex align-items-center gap-2 mb-3">
+    <h2 id="overview-heading" class="h4 mb-0">System overview</h2>
+    <span class="badge bg-{{ state_style(overview.overall_state) }} fs-6">{{ overview.overall_state.value|replace('_',' ')|title }}</span>
+  </div>
+  <div class="row g-3">
+    <div class="col-md-4">
+      <div class="card h-100 card-body">
+        <div class="text-muted small">Database</div>
+        <div><span class="badge bg-{{ state_style(overview.database_state) }}">{{ overview.database_state.value|replace('_',' ')|title }}</span></div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card h-100 card-body">
+        <div class="text-muted small">Scheduler</div>
+        <div class="mb-1"><span class="badge bg-{{ state_style(overview.scheduler_state) }}">{{ overview.scheduler_label }}</span></div>
+        <div class="small text-muted">{{ overview.scheduler_detail }}</div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card h-100 card-body">
+        <div class="text-muted small">Configured season / round</div>
+        {% if overview.season %}
+        <div>{{ overview.season.name }} ({{ overview.season.year }}){% if overview.season.is_current %} <span class="badge text-bg-primary">current</span>{% endif %}</div>
+        {% if overview.season.round %}
+        <div class="small text-muted">{{ overview.season.round.label }} &middot; {{ overview.season.round.window_state|replace('_',' ')|title }} &middot; {{ overview.season.round.match_count }} match(es)</div>
+        {% else %}
+        <div class="small text-muted">No rounds are persisted for this season.</div>
+        {% endif %}
+        {% else %}
+        <div class="text-muted">Unknown -- no season is marked current.</div>
+        {% endif %}
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card h-100 card-body">
+        <div class="text-muted small">Most recent successful collection</div>
+        <div>{{ overview.last_successful_collection_utc or "Unknown" }}</div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card h-100 card-body">
+        <div class="text-muted small">Job types currently failing</div>
+        <div class="fs-4 fw-semibold">{{ overview.failing_job_types }}</div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card h-100 card-body">
+        <div class="text-muted small">Attention items</div>
+        <div class="fs-4 fw-semibold">{{ overview.attention_count }}</div>
+      </div>
+    </div>
+  </div>
+  <p class="text-muted small mt-2 mb-0">Generated {{ overview.generated_at_utc }} (UTC).</p>
+</section>
+
+<section aria-labelledby="attention-heading" class="mb-4">
+  <h2 id="attention-heading" class="h4">Attention</h2>
+  {% if report.attention %}
+  <div class="table-responsive"><table class="table table-sm table-bordered bg-white">
+    <thead><tr><th>Severity</th><th>Source</th><th>Code</th><th>Finding</th><th></th></tr></thead>
+    <tbody>{% for item in report.attention %}<tr>
+      <td><span class="badge {% if item.severity.value == 'error' %}text-bg-danger{% elif item.severity.value == 'warning' %}text-bg-warning{% else %}text-bg-info{% endif %}">{{ item.severity.value }}</span></td>
+      <td class="technical">{{ item.source }}</td>
+      <td class="technical">{{ item.code }}</td>
+      <td>{{ item.message }}</td>
+      <td>{% if item.link %}<a href="{{ item.link }}">Investigate</a>{% endif %}</td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+  {% if overview.attention_count > report.attention|length %}
+  <p class="text-muted small">Showing the {{ report.attention|length }} highest-priority of {{ overview.attention_count }} finding(s).</p>
+  {% endif %}
+  {% else %}<div class="alert alert-success mb-0">No findings require attention right now.</div>{% endif %}
+</section>
+
+<section aria-labelledby="datasets-heading" class="mb-4">
+  <h2 id="datasets-heading" class="h4">Dataset health</h2>
+  <div class="table-responsive"><table class="table table-sm table-striped bg-white">
+    <thead><tr><th>Dataset</th><th>State</th><th>Summary</th><th class="text-end">Count</th><th>Last observed (UTC)</th><th></th></tr></thead>
+    <tbody>{% for dataset in report.datasets %}<tr>
+      <td>{{ dataset.label }}</td>
+      <td><span class="badge bg-{{ state_style(dataset.state) }}">{{ dataset.state.value|replace('_',' ')|title }}</span></td>
+      <td>{{ dataset.summary }}{% if dataset.detail %}<div class="small text-muted">{{ dataset.detail }}</div>{% endif %}</td>
+      <td class="text-end">{{ dataset.count if dataset.count is not none else "—" }}</td>
+      <td class="technical">{{ dataset.last_observed_utc or "—" }}</td>
+      <td>{% if dataset.link %}<a href="{{ dataset.link }}">Details</a>{% endif %}</td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+
+<section aria-labelledby="scheduler-activity-heading" class="mb-4">
+  <h2 id="scheduler-activity-heading" class="h4">Scheduler &amp; collector activity</h2>
+  <h3 class="h6 text-muted">By job type</h3>
+  {% if report.scheduler_activity %}
+  <div class="table-responsive mb-3"><table class="table table-sm table-striped bg-white">
+    <thead><tr><th>Job type</th><th>State</th><th class="text-end">Total</th><th class="text-end">Pending</th><th class="text-end">Running</th><th class="text-end">Succeeded</th><th class="text-end">Failed</th><th class="text-end">Skipped</th><th>Last success (UTC)</th><th>Next scheduled (UTC)</th></tr></thead>
+    <tbody>{% for row in report.scheduler_activity %}<tr>
+      <td>{{ row.label }}</td>
+      <td><span class="badge bg-{{ state_style(row.state) }}">{{ row.state.value|replace('_',' ')|title }}</span></td>
+      <td class="text-end">{{ row.total }}</td>
+      <td class="text-end">{{ row.pending }}</td>
+      <td class="text-end">{{ row.running }}</td>
+      <td class="text-end">{{ row.succeeded }}</td>
+      <td class="text-end">{{ row.failed }}</td>
+      <td class="text-end">{{ row.skipped }}</td>
+      <td class="technical">{{ row.last_success_utc or "—" }}</td>
+      <td class="technical">{{ row.next_scheduled_utc or "—" }}</td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+  {% else %}<div class="empty-state mb-3"><p class="text-muted mb-0">No scheduler job registry activity is persisted yet.</p></div>{% endif %}
+
+  <h3 class="h6 text-muted">Player statistics collection windows{% if overview.season %} ({{ overview.season.year }}){% endif %}</h3>
+  {% if report.match_window_activity %}
+  <div class="table-responsive mb-3"><table class="table table-sm table-striped bg-white">
+    <thead><tr><th>Status</th><th class="text-end">Count</th><th class="text-end">Currently failing</th><th>Last success (UTC)</th><th>Next due (UTC)</th></tr></thead>
+    <tbody>{% for row in report.match_window_activity %}<tr>
+      <td class="technical">{{ row.status }}</td>
+      <td class="text-end">{{ row.count }}</td>
+      <td class="text-end">{{ row.failing }}</td>
+      <td class="technical">{{ row.last_success_utc or "—" }}</td>
+      <td class="technical">{{ row.next_due_utc or "—" }}</td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+  {% else %}<div class="empty-state mb-3"><p class="text-muted mb-0">No durable player-statistics collection windows are planned.</p></div>{% endif %}
+
+  <h3 class="h6 text-muted">Diagnostic capture profiles</h3>
+  <p class="mb-2"><span class="badge {% if report.diagnostic_profiles.enabled %}text-bg-success{% else %}text-bg-secondary{% endif %}">{% if report.diagnostic_profiles.enabled %}Diagnostics enabled{% else %}Diagnostics disabled{% endif %}</span></p>
+  {% if report.diagnostic_profiles.profiles %}
+  <div class="table-responsive"><table class="table table-sm table-striped bg-white">
+    <thead><tr><th>Profile</th><th>Selected</th><th>Interval (s)</th></tr></thead>
+    <tbody>{% for profile in report.diagnostic_profiles.profiles %}<tr>
+      <td class="technical">{{ profile.name }}</td>
+      <td>{% if profile.selected %}<span class="badge text-bg-success">yes</span>{% else %}<span class="badge text-bg-secondary">no</span>{% endif %}</td>
+      <td>{{ profile.interval_seconds if profile.interval_seconds is not none else "—" }}{% if profile.error %} <span class="text-danger small">({{ profile.error }})</span>{% endif %}</td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+  {% else %}<div class="empty-state"><p class="text-muted mb-0">No diagnostic profiles are registered.</p></div>{% endif %}
+</section>
+{% endif %}
+{% endblock %}

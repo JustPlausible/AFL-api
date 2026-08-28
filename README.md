@@ -463,6 +463,7 @@ MIT
 - [Documentation index](docs/README.md)
 - [Administrator CSRF protection](docs/admin_csrf.md)
 - [Admin manual scheduler triggers](docs/admin_manual_triggers.md)
+- [Admin Operations Dashboard](docs/admin_operations_dashboard.md)
 - [API key storage migration](docs/api_key_migration.md)
 - [SQLite database migrations](docs/database_migrations.md)
 - [Scheduler registry and restart recovery](docs/scheduler_registry.md)
