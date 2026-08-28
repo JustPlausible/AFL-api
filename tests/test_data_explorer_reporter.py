@@ -619,3 +619,7 @@ def test_match_detail_authoritative_stats_present_ignore_stale_exception(tmp_pat
     stats = next(d for d in detail.datasets if d.key == "player_statistics")
     assert stats.state == HealthState.HEALTHY
     assert len(detail.player_stats) == 40
+    # Regression (PR #234 review): a stale active exception must not surface
+    # once real stats exist -- the reviewed reason must not display alongside
+    # a HEALTHY/PARTIAL badge.
+    assert stats.reviewed_exception is None

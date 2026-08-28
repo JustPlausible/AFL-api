@@ -591,13 +591,17 @@ class DataExplorerReporter:
                               lifecycle: str | None) -> list[DatasetState]:
         finality = authoritative_stats_finality_for_match(self.conn, match_provider_id)
         exception = active_stats_exception(self.conn, match_id)
-        reviewed_view = None if exception is None else ReviewedExceptionView(
+        stats_state, stats_summary = _stats_dataset_state(finality, lifecycle, exception)
+        # Only attach the exception view when it actually explains the state
+        # (REVIEWED). A stale active exception left in place after real stats
+        # were collected must not surface alongside a HEALTHY/PARTIAL badge --
+        # real data takes precedence, and so does its presentation.
+        reviewed_view = None if exception is None or stats_state != HealthState.REVIEWED else ReviewedExceptionView(
             exception_type=exception.exception_type, reason_code=exception.reason_code,
             display_reason=exception.display_reason, evidence_url=exception.evidence_url,
             evidence_note=exception.evidence_note, reviewed_by=exception.created_by,
             reviewed_at=exception.updated_at,
         )
-        stats_state, stats_summary = _stats_dataset_state(finality, lifecycle, exception)
         states = [DatasetState("player_statistics", "Player statistics", stats_state, stats_summary,
                                 count=finality.authoritative_rows, reviewed_exception=reviewed_view)]
 
