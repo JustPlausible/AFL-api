@@ -114,3 +114,35 @@ def test_startup_succeeds_with_no_registry_rows(tmp_path, monkeypatch):
     _db(tmp_path, monkeypatch)
     sched = BackgroundScheduler(timezone=timezone.utc)
     assert registry.reconcile_scheduler(sched)["re_registered"] == 0
+
+
+def test_job_type_activity_summary_excludes_per_attempt_stat_polling_rows(tmp_path, monkeypatch):
+    """cfs_player_stats_poll inserts a new row per attempt and is never pruned (Issue #225 review).
+
+    A long-superseded failed attempt must not make the job type look
+    permanently failing; its current state is read from match_stat_windows
+    instead, so it is excluded from this aggregate entirely.
+    """
+    import sqlite3
+    path = _db(tmp_path, monkeypatch)
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "INSERT INTO scheduler_job_registry(job_id,job_type,status,last_attempt_time,updated_at) "
+        "VALUES('mw_1_v1_a1','cfs_player_stats_poll','failed',?,?)", (now, now),
+    )
+    conn.execute(
+        "INSERT INTO scheduler_job_registry(job_id,job_type,status,last_success_time,updated_at) "
+        "VALUES('mw_1_v1_a2','cfs_player_stats_poll','succeeded',?,?)", (now, now),
+    )
+    conn.execute(
+        "INSERT INTO scheduler_job_registry(job_id,job_type,status,last_success_time,updated_at) "
+        "VALUES('injuries_daily','injury','succeeded',?,?)", (now, now),
+    )
+    conn.commit()
+
+    summary = {row["job_type"]: row for row in registry.job_type_activity_summary(conn)}
+
+    assert "cfs_player_stats_poll" not in summary
+    assert summary["injury"]["failed"] == 0

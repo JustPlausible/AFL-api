@@ -194,6 +194,23 @@ def test_operations_dashboard_links_to_season_review(tmp_path, monkeypatch):
     assert "/season-review?season=2026" in response.text
 
 
+def test_operations_dashboard_renders_controlled_error_when_database_missing(tmp_path, monkeypatch):
+    """A database that cannot be opened must render a controlled 503 state, not crash (Issue #225 review)."""
+    monkeypatch.setenv("ADMIN_USERNAME", "admin")
+    monkeypatch.setenv("ADMIN_PASSWORD", "password")
+    monkeypatch.setenv("SESSION_SECRET", "test-session-secret")
+    monkeypatch.setattr(config, "DB_PATH", str(tmp_path / "does-not-exist.db"))
+    import admin
+    admin = importlib.reload(admin)
+    client = TestClient(admin.app)
+    monkeypatch.setattr(admin.httpx, "get", _healthy_scheduler_get)
+
+    response = client.get("/operations", headers=_auth())
+
+    assert response.status_code == 503
+    assert "Database unavailable" in response.text
+
+
 def test_overview_page_links_to_operations(tmp_path, monkeypatch):
     admin, client = _client(tmp_path, monkeypatch)
 

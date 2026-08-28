@@ -206,6 +206,16 @@ def job_type_activity_summary(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     so a read-only dashboard reporter can reuse one connection for every
     query it makes, never opening a write-capable connection just to read
     this table.
+
+    Excludes ``job_type='cfs_player_stats_poll'``: unlike every other job
+    type here, that one is not one row per logical job updated in place --
+    ``scheduler/player_stat_polling.py`` inserts a brand-new row (job id
+    includes the attempt count) for every polling attempt of a
+    ``match_stat_windows`` window, and rows are never pruned. Aggregating
+    those raw rows would make one long-superseded failed attempt look like a
+    permanently failing job type even after later attempts succeeded under a
+    different id. That job type's current, non-duplicated state is already
+    available per window via :func:`scheduler.match_windows.status_summary`.
     """
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
@@ -215,7 +225,8 @@ def job_type_activity_summary(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         "SUM(status='skipped') AS skipped, SUM(status='interrupted') AS interrupted, "
         "MAX(last_success_time) AS last_success_time, MAX(last_attempt_time) AS last_attempt_time, "
         "MIN(CASE WHEN status='pending' THEN scheduled_run_time END) AS next_scheduled_run_time "
-        "FROM scheduler_job_registry GROUP BY job_type ORDER BY job_type"
+        "FROM scheduler_job_registry WHERE job_type != 'cfs_player_stats_poll' "
+        "GROUP BY job_type ORDER BY job_type"
     ).fetchall()
     return [dict(row) for row in rows]
 

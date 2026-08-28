@@ -200,6 +200,28 @@ def test_injuries_missing_stale_and_fresh_are_distinguishable(tmp_path):
     assert _dataset(fresh_report, "injuries").state is HealthState.HEALTHY
 
 
+def test_injuries_fresh_authoritative_empty_result_is_healthy_not_missing(tmp_path):
+    """A successful scrape that authoritatively finds zero injuries retires every
+    current row (scraper/injuries/persistence.py); that must read as a fresh,
+    healthy empty result, not as missing collection (Issue #225 review)."""
+    conn = _db(tmp_path)
+    _registry_row(conn, job_id="injuries_daily", job_type="injury", status="succeeded",
+                  last_success_time=(NOW - timedelta(hours=1)).isoformat())
+
+    report = _report(conn)
+
+    injuries = _dataset(report, "injuries")
+    assert injuries.state is HealthState.HEALTHY
+    assert injuries.count == 0
+    assert not any(item.code == "dataset.injuries" for item in report.attention)
+
+
+def test_injuries_never_collected_is_still_missing(tmp_path):
+    conn = _db(tmp_path)
+    report = _report(conn)
+    assert _dataset(report, "injuries").state is HealthState.MISSING
+
+
 def test_scheduler_job_type_activity_summary_reports_failure_state(tmp_path):
     conn = _db(tmp_path)
     _registry_row(conn, job_id="injuries_daily", job_type="injury", status="succeeded",

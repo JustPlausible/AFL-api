@@ -618,25 +618,39 @@ class OperationsDashboardReporter:
         latest = _parse_utc(row["latest"]) if row else None
         total = row["total"] if row else 0
         registry = self.conn.execute(
-            "SELECT status, last_error_summary FROM scheduler_job_registry WHERE job_id = 'injuries_daily'"
+            "SELECT status, last_success_time, last_error_summary FROM scheduler_job_registry "
+            "WHERE job_id = 'injuries_daily'"
         ).fetchone()
+        last_success = _parse_utc(registry["last_success_time"]) if registry else None
+        # A successful scrape that authoritatively finds zero current injuries
+        # retires every previously-current row (observed-team authority; see
+        # scraper/injuries/persistence.py) -- an empty `injuries` table is
+        # then a valid, fresh result, not evidence of missing collection.
+        # Fall back to the job's own last_success_time as freshness evidence
+        # in that specific case.
+        fresh_empty_result = total == 0 and latest is None and last_success is not None
+        freshness = latest if latest is not None else (last_success if fresh_empty_result else None)
         link = "/table/injuries"
-        if latest is None:
+        if freshness is None:
             state = HealthState.MISSING if total == 0 else HealthState.UNKNOWN
-            summary = "No current injury records are persisted." if total == 0 else f"{total} current injury record(s); update time unavailable."
+            summary = ("No current injury records are persisted and no successful scheduled refresh is on record."
+                       if total == 0 else f"{total} current injury record(s); update time unavailable.")
         else:
-            age = now - latest
+            age = now - freshness
             if age <= INJURIES_STALE_AFTER:
                 state = HealthState.HEALTHY
             elif age <= INJURIES_MISSING_AFTER:
                 state = HealthState.STALE
             else:
                 state = HealthState.MISSING
-            summary = f"{total} current injury record(s); last updated {format_age(age)}."
+            if fresh_empty_result:
+                summary = f"0 current injury record(s); last successful refresh {format_age(age)} authoritatively reported none."
+            else:
+                summary = f"{total} current injury record(s); last updated {format_age(age)}."
         if registry is not None and registry["status"] == "failed" and state in (HealthState.HEALTHY, HealthState.STALE):
             state = HealthState.FAILED
             summary += f" Last scheduled refresh failed: {registry['last_error_summary'] or 'unknown error'}."
-        return DatasetHealth("injuries", "Injuries", state, summary, count=total, last_observed_utc=_iso(latest), link=link)
+        return DatasetHealth("injuries", "Injuries", state, summary, count=total, last_observed_utc=_iso(freshness), link=link)
 
     @staticmethod
     def _dataset_attention(datasets: list[DatasetHealth]) -> list[AttentionItem]:
