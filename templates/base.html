@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}AFL API Admin{% endblock %}</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js" defer></script>
   <style>
     :root { --admin-navy: #17324d; --admin-blue: #2563a6; }
     body { min-height: 100vh; }
@@ -29,15 +30,16 @@
         <a class="nav-link {% if path == '/' %}active{% endif %}" href="/" {% if path == '/' %}aria-current="page"{% endif %}>Overview</a>
         <a class="nav-link {% if path.startswith('/operations') %}active{% endif %}" href="/operations">Operations</a>
         <a class="nav-link {% if path.startswith('/schedule') or path.startswith('/scheduler') %}active{% endif %}" href="/schedule">Scheduling</a>
-        <a class="nav-link {% if path.startswith('/table') or path.startswith('/season-review') or path.startswith('/analytics') %}active{% endif %}" href="/tables">Data</a>
+        <a class="nav-link {% if path.startswith('/table') or path.startswith('/season-review') or path.startswith('/analytics') or path.startswith('/data-explorer') %}active{% endif %}" href="/tables">Data</a>
         <a class="nav-link {% if path.startswith('/logs') %}active{% endif %}" href="/logs">Logs &amp; diagnostics</a>
         <a class="nav-link {% if path.startswith('/setup') or path.startswith('/clubs-diff') %}active{% endif %}" href="/setup">System</a>
       </nav>
     </div>
   </header>
   <main class="container py-4">
-    {% if path.startswith('/table') or path.startswith('/season-review') or path.startswith('/analytics') %}
+    {% if path.startswith('/table') or path.startswith('/season-review') or path.startswith('/analytics') or path.startswith('/data-explorer') %}
     <nav class="nav nav-pills gap-2 mb-4" aria-label="Data views">
+      <a class="nav-link {% if path.startswith('/data-explorer') %}active{% endif %}" href="/data-explorer">Data Explorer</a>
       <a class="nav-link {% if path.startswith('/table') %}active{% endif %}" href="/tables">Tables</a>
       <a class="nav-link {% if path.startswith('/season-review') %}active{% endif %}" href="/season-review">Season Review</a>
       <a class="nav-link {% if path.startswith('/analytics') %}active{% endif %}" href="/analytics">Analytics</a>

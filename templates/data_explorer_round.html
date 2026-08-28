@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}{{ round.label }} · Data Explorer · AFL API Admin{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="/data-explorer">Data Explorer</a></li>
+  <li class="breadcrumb-item"><a href="/data-explorer/seasons/{{ round.season_id }}">{{ round.season_year }}</a></li>
+  <li class="breadcrumb-item active" aria-current="page">{{ round.label }}</li>
+</ol></nav>
+
+<div class="page-heading">
+  <h1 class="h2">{{ round.label }}</h1>
+  <p class="text-muted mb-0">
+    {% if round.start_time %}{{ round.start_time[:10] }}{% if round.end_time and round.end_time[:10] != round.start_time[:10] %} &ndash; {{ round.end_time[:10] }}{% endif %}{% endif %}
+    {% if round.byes %} &middot; Bye: {% for team in round.byes %}{{ team.name or team.abbreviation or ('Team ' ~ team.team_id) }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}
+  </p>
+</div>
+
+{% if round.matches %}
+<div class="row g-3">
+  {% for match in round.matches %}
+  <div class="col-12 col-lg-6">
+    <a class="card card-body text-decoration-none text-dark h-100" href="/data-explorer/matches/{{ match.match_id }}">
+      <div class="d-flex align-items-center justify-content-between mb-2">
+        <span class="fw-semibold">{{ match.home.name or 'TBD' }} v {{ match.away.name or 'TBD' }}</span>
+        <span class="badge text-bg-secondary">{{ match.lifecycle or match.status or 'Unknown' }}</span>
+      </div>
+      <div class="small text-muted mb-2">
+        {% if match.start_time_utc %}{{ match.start_time_utc[:16]|replace('T',' ') }} UTC{% endif %}
+        {% if match.venue %} &middot; {{ match.venue }}{% endif %}
+        {% if match.score_home is not none and match.score_away is not none %} &middot; {{ match.score_home }} &ndash; {{ match.score_away }}{% endif %}
+      </div>
+      <span class="badge text-bg-{{ state_style(match.state) }}" title="{{ match.state_summary }}">{{ state_label(match.state) }}</span>
+    </a>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty-state"><h2 class="h5">No matches scheduled</h2><p class="text-muted mb-0">This round has no persisted matches yet.</p></div>
+{% endif %}
+{% endblock %}

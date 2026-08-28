@@ -20,6 +20,7 @@ for the reusable release summary and upgrade cautions.
 - [Admin manual scheduler triggers](admin_manual_triggers.md)
 - [Admin Season Review](admin_season_review.md)
 - [Admin Operations Dashboard](admin_operations_dashboard.md) — read-only system health, dataset completeness, and scheduler activity overview (Issue #225)
+- [Admin AFL Data Explorer](admin_data_explorer.md) — read-only Season → Round → Match → Player inspection interface, with a shared completeness/state vocabulary (Issue #226)
 - [API key storage migration](api_key_migration.md)
 - [SQLite database migrations](database_migrations.md)
 - [Scheduler registry and restart recovery](scheduler_registry.md)

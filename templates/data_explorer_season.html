@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}{{ season.name }} · Data Explorer · AFL API Admin{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="/data-explorer">Data Explorer</a></li><li class="breadcrumb-item active" aria-current="page">{{ season.name }}</li></ol></nav>
+
+<div class="page-heading d-flex align-items-center gap-2 flex-wrap">
+  <h1 class="h2 mb-0">{{ season.name }}</h1>
+  {% if season.is_current %}<span class="badge text-bg-primary">Current season</span>{% endif %}
+  <span class="badge {% if season.status == 'complete' %}text-bg-success{% elif season.status == 'invalid' %}text-bg-danger{% else %}text-bg-warning{% endif %}">{{ season.status|replace('_',' ')|title }}</span>
+</div>
+<p class="text-muted">Read-only fixture view. Select a round to see its matches, or a match for full inspection detail. <a href="/season-review?season={{ season.year }}">Full season completeness report &rarr;</a></p>
+
+{% if season.rounds %}
+<div class="table-responsive">
+<table class="table table-sm bg-white align-middle">
+  <thead><tr><th>Round</th><th>Dates</th><th>Matches</th><th>Lifecycle</th><th>State</th></tr></thead>
+  <tbody>
+  {% for round in season.rounds %}
+    <tr>
+      <td><a href="/data-explorer/seasons/{{ season.season_id }}/rounds/{{ round.round_id }}" class="fw-semibold text-decoration-none">{{ round.label }}</a></td>
+      <td class="small text-muted">{% if round.start_time %}{{ round.start_time[:10] }}{% if round.end_time and round.end_time[:10] != round.start_time[:10] %} &ndash; {{ round.end_time[:10] }}{% endif %}{% else %}&mdash;{% endif %}</td>
+      <td>{{ round.match_count }}</td>
+      <td class="small text-muted">{{ round.concluded_count }} concluded &middot; {{ round.live_count }} live/post &middot; {{ round.scheduled_count }} scheduled</td>
+      <td><span class="badge text-bg-{{ state_style(round.state) }}" title="{{ round.state_summary }}">{{ state_label(round.state) }}</span></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<div class="empty-state"><h2 class="h5">No rounds persisted yet</h2><p class="text-muted mb-0">This season has no rounds in the local database.</p></div>
+{% endif %}
+
+<h2 class="h5 mt-4">Season counts</h2>
+<div class="table-responsive"><table class="table table-sm table-striped bg-white">
+  <tbody>{% for key, value in season.aggregates.items() %}<tr><th class="technical">{{ key }}</th><td>{% if value is mapping %}<span class="technical">{{ value|tojson }}</span>{% else %}{{ value }}{% endif %}</td></tr>{% endfor %}</tbody>
+</table></div>
+{% endblock %}
