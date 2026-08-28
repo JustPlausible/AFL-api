@@ -274,13 +274,38 @@ def format_age(delta: timedelta) -> str:
     return f"{days} day{'s' if days != 1 else ''} ago"
 
 
+def state_from_findings(findings) -> HealthState:
+    """Severity -> HealthState, the single decision this module and the Admin Data
+    Explorer (Issue #226) both apply to a set of already-selected findings."""
+    if any(item.severity is Severity.ERROR for item in findings):
+        return HealthState.FAILED
+    if any(item.severity is Severity.WARNING for item in findings):
+        return HealthState.ATTENTION
+    return HealthState.HEALTHY
+
+
 def _dataset_state_from_findings(findings, codes: frozenset[str]):
     relevant = [item for item in findings if item.code in codes]
-    if any(item.severity is Severity.ERROR for item in relevant):
-        return HealthState.FAILED, relevant
-    if any(item.severity is Severity.WARNING for item in relevant):
-        return HealthState.ATTENTION, relevant
-    return HealthState.HEALTHY, relevant
+    return state_from_findings(relevant), relevant
+
+
+def dataset_presence_state(lifecycle: str | None, count: int) -> HealthState:
+    """Shared lifecycle-aware "does this per-match dataset exist yet" rule.
+
+    Mirrors the same reasoning ``_lifecycle_scoped_dataset`` below applies at
+    round granularity (concluded-and-empty is a real gap; live/postgame-and-
+    empty is ambiguous rather than a confirmed problem; not-yet-started is
+    simply not yet expected), generalised to a single match/count pair so the
+    Admin Data Explorer (Issue #226) can reuse the identical rule at match
+    granularity instead of inventing a second completeness definition.
+    """
+    if lifecycle == "CONCLUDED":
+        return HealthState.HEALTHY if count > 0 else HealthState.ATTENTION
+    if lifecycle in ("LIVE", "POSTGAME"):
+        return HealthState.HEALTHY if count > 0 else HealthState.UNKNOWN
+    if lifecycle == "SCHEDULED":
+        return HealthState.UPCOMING if count == 0 else HealthState.HEALTHY
+    return HealthState.UNKNOWN
 
 
 class OperationsDashboardReporter:

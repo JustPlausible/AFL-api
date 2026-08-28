@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}{{ player.display_name or 'Player ' ~ player.canonical_player_id }} · Data Explorer · AFL API Admin{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="/data-explorer">Data Explorer</a></li><li class="breadcrumb-item active" aria-current="page">{{ player.display_name or 'Player ' ~ player.canonical_player_id }}</li></ol></nav>
+
+<div class="page-heading">
+  <h1 class="h2">{{ player.display_name or 'Player ' ~ player.canonical_player_id }}</h1>
+  {% if player.current_team %}<p class="text-muted mb-0">Currently listed with {{ player.current_team.name or ('Team ' ~ player.current_team.team_id) }}</p>{% endif %}
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-12 col-lg-6">
+    <div class="card card-body h-100">
+      <h2 class="h6">Identity &amp; provider identifiers</h2>
+      <dl class="row small mb-0">
+        <dt class="col-5">Canonical player ID</dt><dd class="col-7 technical">{{ player.canonical_player_id }}</dd>
+        <dt class="col-5">AFL player ID</dt><dd class="col-7 technical">{{ player.afl_player_id if player.afl_player_id is not none else '—' }}</dd>
+        <dt class="col-5">Champion Data player ID</dt><dd class="col-7 technical">{{ player.champion_data_player_id or '—' }}</dd>
+      </dl>
+    </div>
+  </div>
+  <div class="col-12 col-lg-6">
+    <div class="card card-body h-100">
+      <h2 class="h6">Season / team membership</h2>
+      {% if player.seasons %}
+      <ul class="list-unstyled mb-0 small">
+        {% for item in player.seasons %}
+        <li><a href="/data-explorer/seasons/{{ item.season_id }}">{{ item.name }}</a>: {{ item.team.name if item.team else 'Unresolved team' }}</li>
+        {% endfor %}
+      </ul>
+      {% else %}<p class="small text-muted mb-0">No known season membership.</p>{% endif %}
+    </div>
+  </div>
+</div>
+
+<section aria-labelledby="matches-heading">
+  <h2 id="matches-heading" class="h5">Recent match involvement</h2>
+  {% if player.recent_matches %}
+  <div class="table-responsive"><table class="table table-sm bg-white">
+    <thead><tr><th>Round</th><th>Opponent</th><th>Side</th><th>Status</th><th>Date</th></tr></thead>
+    <tbody>{% for item in player.recent_matches %}<tr>
+      <td><a href="/data-explorer/matches/{{ item.match_id }}">{{ item.round_label or ('Match ' ~ item.match_id) }}</a></td>
+      <td>{{ item.opponent.name if item.opponent else 'TBD' }}</td>
+      <td class="small text-muted">{{ item.side or '—' }}</td>
+      <td class="small text-muted">{{ item.status or '—' }}</td>
+      <td class="small text-muted">{% if item.start_time_utc %}{{ item.start_time_utc[:10] }}{% else %}—{% endif %}</td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+  {% else %}<p class="small text-muted">No recorded match statistics for this player yet.</p>{% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+{% block title %}{{ match.home.name or 'TBD' }} v {{ match.away.name or 'TBD' }} · Data Explorer · AFL API Admin{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="/data-explorer">Data Explorer</a></li>
+  {% if match.season_id %}<li class="breadcrumb-item"><a href="/data-explorer/seasons/{{ match.season_id }}">{{ match.season_year }}</a></li>{% endif %}
+  {% if match.season_id %}<li class="breadcrumb-item"><a href="/data-explorer/seasons/{{ match.season_id }}/rounds/{{ match.round_id }}">{{ match.round_label or ('Round ' ~ match.round_id) }}</a></li>{% endif %}
+  <li class="breadcrumb-item active" aria-current="page">{{ match.home.name or 'TBD' }} v {{ match.away.name or 'TBD' }}</li>
+</ol></nav>
+
+<div class="page-heading">
+  <h1 class="h2 mb-1">{{ match.home.name or 'TBD' }} <span class="text-muted fw-normal">v</span> {{ match.away.name or 'TBD' }}</h1>
+  <div class="d-flex align-items-center gap-2 flex-wrap mb-2">
+    <span class="badge text-bg-secondary">{{ match.lifecycle or match.status or 'Unknown lifecycle' }}</span>
+    <span class="badge text-bg-{{ state_style(match.overall_state) }}" title="{{ match.overall_state_summary }}">Overall: {{ state_label(match.overall_state) }}</span>
+    {% if match.score_home is not none and match.score_away is not none %}<span class="fw-semibold">{{ match.score_home }} &ndash; {{ match.score_away }}</span>{% endif %}
+  </div>
+  <p class="text-muted mb-0">
+    {% if match.start_time_utc %}{{ match.start_time_utc[:16]|replace('T',' ') }} UTC{% endif %}
+    {% if match.venue %} &middot; {{ match.venue }}{% endif %}
+  </p>
+</div>
+
+<section class="mb-4" aria-labelledby="dataset-health-heading">
+  <h2 id="dataset-health-heading" class="h5">Dataset completeness</h2>
+  <div class="row g-3">
+    {% for dataset in match.datasets %}
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="card card-body h-100">
+        <div class="d-flex align-items-center justify-content-between mb-1">
+          <span class="fw-semibold">{{ dataset.label }}</span>
+          <span class="badge text-bg-{{ state_style(dataset.state) }}">{{ state_label(dataset.state) }}</span>
+        </div>
+        <p class="small text-muted mb-0">{{ dataset.summary }}</p>
+        {% if dataset.last_observed_utc %}<p class="small text-muted mb-0">Last observed: {{ time_ago(dataset.last_observed_utc) or dataset.last_observed_utc }}</p>{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="mb-4" aria-labelledby="rosters-heading">
+  <h2 id="rosters-heading" class="h5">Rosters / lineups</h2>
+  <div class="row g-3">
+    {% for side, ref in (('home', match.home), ('away', match.away)) %}
+    {% set roster = match.rosters.get(side) %}
+    <div class="col-12 col-lg-6">
+      <div class="card card-body h-100">
+        <h3 class="h6">{{ ref.name or 'TBD' }}{% if roster and roster.team_status %} <span class="badge text-bg-light text-dark">{{ roster.team_status }}</span>{% endif %}</h3>
+        {% if roster %}
+        {% if roster.selections %}
+        <div class="table-responsive"><table class="table table-sm mb-2">
+          <thead><tr><th>Player</th><th>Position</th><th>#</th><th></th></tr></thead>
+          <tbody>{% for entry in roster.selections %}<tr>
+            <td>{% if entry.player.canonical_player_id %}<a href="/data-explorer/players/{{ entry.player.canonical_player_id }}">{{ entry.player.display_name or entry.player.champion_data_player_id }}</a>{% else %}{{ entry.player.display_name or entry.player.champion_data_player_id or '—' }}{% endif %}</td>
+            <td class="small text-muted">{{ entry.position or '—' }}</td>
+            <td class="small text-muted">{{ entry.jumper_number if entry.jumper_number is not none else '—' }}</td>
+            <td>{% if entry.captain %}<span class="badge text-bg-primary">C</span>{% endif %}</td>
+          </tr>{% endfor %}</tbody>
+        </table></div>
+        {% else %}<p class="small text-muted">No selections observed yet.</p>{% endif %}
+        {% for label, items in (('Ins', roster.ins), ('Outs', roster.outs), ('Late changes', roster.late_changes), ('Club debuts', roster.club_debuts), ('Milestones', roster.milestones)) %}
+        {% if items %}<p class="small mb-1"><strong>{{ label }}:</strong> {% for item in items %}{% if item.player.canonical_player_id %}<a href="/data-explorer/players/{{ item.player.canonical_player_id }}">{{ item.player.display_name or item.player.champion_data_player_id }}</a>{% else %}{{ item.player.display_name or item.player.champion_data_player_id }}{% endif %}{% if item.reason %} ({{ item.reason }}){% endif %}{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+        {% endfor %}
+        {% else %}<p class="small text-muted mb-0">No roster observation persisted for this side yet.</p>{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="mb-4" aria-labelledby="stats-heading">
+  <h2 id="stats-heading" class="h5">Player statistics</h2>
+  {% if match.player_stats %}
+  <div class="table-responsive"><table class="table table-sm bg-white">
+    <thead><tr><th>Player</th><th>Side</th><th>G</th><th>B</th><th>K</th><th>H</th><th>D</th><th>M</th><th>T</th><th>HO</th><th>Authority</th></tr></thead>
+    <tbody>{% for row in match.player_stats %}<tr>
+      <td>{% if row.player.canonical_player_id %}<a href="/data-explorer/players/{{ row.player.canonical_player_id }}">{{ row.player.display_name or row.player.champion_data_player_id }}</a>{% else %}{{ row.player.display_name or row.player.champion_data_player_id }}{% endif %}</td>
+      <td class="small text-muted">{{ row.team.name if row.team else row.side }}</td>
+      <td>{{ row.stats.goals if row.stats.goals is not none else '—' }}</td>
+      <td>{{ row.stats.behinds if row.stats.behinds is not none else '—' }}</td>
+      <td>{{ row.stats.kicks if row.stats.kicks is not none else '—' }}</td>
+      <td>{{ row.stats.handballs if row.stats.handballs is not none else '—' }}</td>
+      <td>{{ row.stats.disposals if row.stats.disposals is not none else '—' }}</td>
+      <td>{{ row.stats.marks if row.stats.marks is not none else '—' }}</td>
+      <td>{{ row.stats.tackles if row.stats.tackles is not none else '—' }}</td>
+      <td>{{ row.stats.hitouts if row.stats.hitouts is not none else '—' }}</td>
+      <td class="small text-muted">{% if row.snapshot_authority == 2 %}Final{% elif row.snapshot_authority == 1 %}Live{% else %}—{% endif %}</td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+  {% if match.period_checkpoints %}
+  <p class="small text-muted mb-0">Quarter/period checkpoints: {% for cp in match.period_checkpoints %}{{ cp.marker }} ({{ cp.player_count }} players){% if not loop.last %} &middot; {% endif %}{% endfor %}</p>
+  {% endif %}
+  {% else %}<p class="small text-muted">No authoritative player statistics captured yet for this match.</p>{% endif %}
+</section>
+
+<section class="mb-4" aria-labelledby="commentary-heading">
+  <h2 id="commentary-heading" class="h5">Commentary</h2>
+  {% if match.commentary_events %}
+  <p class="small text-muted">Showing the {{ match.commentary_events|length }} most recent of {{ match.commentary_total_count }} event(s).</p>
+  <ul class="list-group">
+    {% for event in match.commentary_events %}
+    <li class="list-group-item d-flex justify-content-between align-items-start">
+      <div>
+        <span class="small text-muted">{% if event.period_number is not none %}Q{{ event.period_number }}{% if event.period_seconds is not none %} +{{ event.period_seconds }}s{% endif %}{% endif %}</span>
+        <div>{{ event.comment or '—' }}</div>
+        <span class="small text-muted">{% if event.player_name %}{{ event.player_name }}{% endif %}{% if event.team_name %} &middot; {{ event.team_name }}{% endif %}</span>
+      </div>
+      {% if event.score_event %}<span class="badge text-bg-success">Score</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="small text-muted">No commentary captured yet for this match.</p>{% endif %}
+</section>
+
+<section class="mb-4" aria-labelledby="interchange-heading">
+  <h2 id="interchange-heading" class="h5">Interchange</h2>
+  {% if match.interchanges %}
+  <div class="table-responsive"><table class="table table-sm bg-white">
+    <thead><tr><th>Player</th><th>Side</th><th>On ground?</th><th>Interchanges</th><th>Bench reason</th><th>Observed</th></tr></thead>
+    <tbody>{% for row in match.interchanges %}<tr>
+      <td>{{ row.player_name or '—' }}</td>
+      <td class="small text-muted">{{ row.team_name or row.side }}</td>
+      <td>{% if row.on_bench %}<span class="badge text-bg-secondary">Bench</span>{% else %}<span class="badge text-bg-success">On ground</span>{% endif %}</td>
+      <td>{{ row.interchange_count if row.interchange_count is not none else '—' }}</td>
+      <td class="small text-muted">{{ row.bench_reason or '—' }}</td>
+      <td class="small text-muted">{{ time_ago(row.observed_at) or row.observed_at }}</td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+  {% else %}<p class="small text-muted">No interchange data captured yet for this match.</p>{% endif %}
+</section>
+
+<section aria-labelledby="evidence-heading">
+  <h2 id="evidence-heading" class="h5">Provider identifiers &amp; evidence</h2>
+  <p class="text-muted small">Secondary diagnostic information -- the canonical AFL view above is authoritative.</p>
+  <dl class="row small">
+    <dt class="col-sm-3">Champion Data match ID</dt><dd class="col-sm-9 technical">{{ match.provider_evidence.match_provider_id or '—' }}</dd>
+    <dt class="col-sm-3">Latest collection run</dt>
+    <dd class="col-sm-9">
+      {% if match.provider_evidence.latest_scrape_status %}
+      {{ match.provider_evidence.latest_scrape_status }} &middot; {{ time_ago(match.provider_evidence.latest_scrape_at) or match.provider_evidence.latest_scrape_at }}
+      {% if match.provider_evidence.latest_scrape_rows_written is not none %} &middot; {{ match.provider_evidence.latest_scrape_rows_written }} row(s) written{% endif %}
+      {% else %}No correlated collection run on record.{% endif %}
+    </dd>
+  </dl>
+  {% if match.provider_evidence.diagnostics %}
+  <button class="btn btn-sm btn-outline-secondary mb-2" type="button" data-bs-toggle="collapse" data-bs-target="#diagnostic-evidence">Show diagnostic evidence capture</button>
+  <div class="collapse" id="diagnostic-evidence">
+    <ul class="list-group">
+      {% for item in match.provider_evidence.diagnostics %}
+      <li class="list-group-item small">{{ item.label }}: {{ item.summary }}{% if item.last_observed_utc %} (last {{ time_ago(item.last_observed_utc) or item.last_observed_utc }}){% endif %}</li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

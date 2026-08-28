@@ -20,7 +20,8 @@ from db.init_db import create_api_keys_table
 from db.connection import get_db_path, get_read_only_db_connection
 from afl_json.season_report import SeasonCompletenessReporter, list_persisted_afl_seasons
 from analytics.reporting import AnalyticsReporter
-from operations.dashboard import OperationsDashboardReporter, state_style
+from operations.dashboard import HealthState, OperationsDashboardReporter, state_style
+from operations.data_explorer import DataExplorerReporter
 from admin_csrf import csrf_input, require_csrf
 from logging_sources import (
     STATUS_AVAILABLE, STATUS_DISABLED, STATUS_NOT_CREATED, STATUS_UNAVAILABLE,
@@ -119,6 +120,18 @@ if not session_secret:
 app.state.csrf_secret = session_secret
 templates.env.globals["csrf_input"] = csrf_input
 templates.env.globals["state_style"] = state_style
+
+# Human-facing labels for the shared HealthState vocabulary (Issue #226), kept
+# distinct from HealthState's own snake_case values -- templates only ever
+# render an already-determined label, never infer one.
+_DATA_EXPLORER_STATE_LABELS = {
+    HealthState.HEALTHY: "Complete", HealthState.PARTIAL: "Partial",
+    HealthState.MISSING: "Missing", HealthState.STALE: "Stale",
+    HealthState.UPCOMING: "Upcoming", HealthState.ATTENTION: "Needs attention",
+    HealthState.FAILED: "Failed", HealthState.UNKNOWN: "Unsupported / unknown",
+}
+templates.env.globals["state_label"] = lambda s: _DATA_EXPLORER_STATE_LABELS.get(s, str(s.value).title())
+templates.env.globals["time_ago"] = lambda value: _format_log_age(_parse_iso_utc(value))
 app.add_middleware(SessionMiddleware, secret_key=session_secret)
 
 @app.get("/", response_class=HTMLResponse)
@@ -453,6 +466,81 @@ def season_review(request: Request, season: str | None = Query(None)):
     )
 
 
+@app.get("/data-explorer", response_class=HTMLResponse)
+def data_explorer_seasons(request: Request):
+    """Read-only Admin AFL Data Explorer: season list (Issue #226).
+
+    Strictly observational, like Season Review: every view here reads only
+    already-persisted application data through a read-only connection and
+    never triggers scraping, collection, scheduler activity, or upstream
+    AFL/CFS requests.
+    """
+    conn = get_read_only_db_connection()
+    try:
+        seasons = DataExplorerReporter(conn, database=get_db_path().name).list_seasons()
+    finally:
+        conn.close()
+    return templates.TemplateResponse(
+        request=request, name="data_explorer_seasons.html", context={"seasons": seasons},
+    )
+
+
+@app.get("/data-explorer/seasons/{season_id}", response_class=HTMLResponse)
+def data_explorer_season(request: Request, season_id: int):
+    conn = get_read_only_db_connection()
+    try:
+        season = DataExplorerReporter(conn, database=get_db_path().name).season_detail(season_id)
+    finally:
+        conn.close()
+    if season is None:
+        raise HTTPException(status_code=404, detail="Season not found")
+    return templates.TemplateResponse(
+        request=request, name="data_explorer_season.html", context={"season": season},
+    )
+
+
+@app.get("/data-explorer/seasons/{season_id}/rounds/{round_id}", response_class=HTMLResponse)
+def data_explorer_round(request: Request, season_id: int, round_id: int):
+    conn = get_read_only_db_connection()
+    try:
+        round_detail = DataExplorerReporter(conn, database=get_db_path().name).round_detail(season_id, round_id)
+    finally:
+        conn.close()
+    if round_detail is None:
+        raise HTTPException(status_code=404, detail="Round not found")
+    return templates.TemplateResponse(
+        request=request, name="data_explorer_round.html", context={"round": round_detail},
+    )
+
+
+@app.get("/data-explorer/matches/{match_id}", response_class=HTMLResponse)
+def data_explorer_match(request: Request, match_id: int):
+    conn = get_read_only_db_connection()
+    try:
+        match = DataExplorerReporter(conn, database=get_db_path().name).match_detail(match_id)
+    finally:
+        conn.close()
+    if match is None:
+        raise HTTPException(status_code=404, detail="Match not found")
+    return templates.TemplateResponse(
+        request=request, name="data_explorer_match.html", context={"match": match},
+    )
+
+
+@app.get("/data-explorer/players/{player_id}", response_class=HTMLResponse)
+def data_explorer_player(request: Request, player_id: int):
+    conn = get_read_only_db_connection()
+    try:
+        player = DataExplorerReporter(conn, database=get_db_path().name).player_detail(player_id)
+    finally:
+        conn.close()
+    if player is None:
+        raise HTTPException(status_code=404, detail="Player not found")
+    return templates.TemplateResponse(
+        request=request, name="data_explorer_player.html", context={"player": player},
+    )
+
+
 @app.get("/analytics", response_class=HTMLResponse)
 def analytics_report(request: Request, since: str | None = Query(None), until: str | None = Query(None),
                      by_lifecycle: bool = Query(False)):
@@ -697,6 +785,16 @@ def _format_log_size(size_bytes: int | None) -> str | None:
             return f"{size:.0f} {unit}"
         size /= 1024
     return None  # pragma: no cover - unreachable, satisfies static analysis
+
+
+def _parse_iso_utc(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
 def _format_log_age(modified_at: datetime | None) -> str | None:
