@@ -34,6 +34,7 @@ def _season_sync_summary(result):
          f"selected={result.total_matches_discovered} eligible={result.eligible_matches} "
          f"collected={result.collected_successfully} "
          f"already_complete={result.already_complete_unchanged} "
+         f"stats_not_expected={result.stats_not_expected} "
          f"selection={result.selection_status}"),
         ("skipped: "
          f"scheduled={result.skipped_scheduled} "
@@ -57,6 +58,7 @@ def _season_sync_summary(result):
         if match.outcome not in {
             "collected", "already_complete", "scheduled", "live_or_postgame",
             "future_placeholder",
+            "stats_not_expected",
         }
     ]
     if actionable:
@@ -568,6 +570,53 @@ def handle_report_afl_season(args):
         raise SystemExit(code)
 
 
+def handle_report_stats_absence_candidates(args):
+    from afl_json.match_data_exceptions import detect_stats_absence_candidates
+    from db.connection import get_read_only_db_connection
+    conn = get_read_only_db_connection()
+    try:
+        season = conn.execute("SELECT afl_id FROM afl_seasons WHERE year=?", (args.report_stats_absence_candidates,)).fetchone()
+        if season is None:
+            raise ValueError(f"season {args.report_stats_absence_candidates} is not persisted")
+        candidates = detect_stats_absence_candidates(conn, season_id=season[0])
+    finally:
+        conn.close()
+    print(json.dumps({"season": args.report_stats_absence_candidates,
+                      "candidates": [item.to_dict() for item in candidates]}, indent=2))
+
+
+def handle_review_stats_not_expected(args):
+    from afl_json.match_data_exceptions import review_stats_not_expected
+    from db.connection import get_db_connection
+    conn = get_db_connection()
+    conn.row_factory = sqlite3.Row
+    try:
+        row = review_stats_not_expected(
+            conn, match_id=args.review_stats_not_expected,
+            reason_code=args.reason_code, display_reason=args.display_reason,
+            evidence_url=args.evidence_url, evidence_note=args.evidence_note,
+            actor=args.reviewed_by,
+        )
+        conn.commit()
+        print(json.dumps(dict(row), indent=2))
+    finally:
+        conn.close()
+
+
+def handle_revoke_stats_not_expected(args):
+    from afl_json.match_data_exceptions import revoke_stats_not_expected
+    from db.connection import get_db_connection
+    conn = get_db_connection()
+    conn.row_factory = sqlite3.Row
+    try:
+        revoked = revoke_stats_not_expected(conn, match_id=args.revoke_stats_not_expected,
+                                            actor=args.reviewed_by)
+        conn.commit()
+        print(json.dumps({"match_id": args.revoke_stats_not_expected, "revoked": revoked}))
+    finally:
+        conn.close()
+
+
 def handle_collect_afl_metadata(args):
     from afl_json import AflJsonClient, PublicAflCollector
     with AflJsonClient() as client:
@@ -611,6 +660,9 @@ HANDLERS = {
     "bootstrap_afl_season": handle_bootstrap_afl_season,
     "sync_afl_season": handle_sync_afl_season,
     "report_afl_season": handle_report_afl_season,
+    "report_stats_absence_candidates": handle_report_stats_absence_candidates,
+    "review_stats_not_expected": handle_review_stats_not_expected,
+    "revoke_stats_not_expected": handle_revoke_stats_not_expected,
     "collect_afl_metadata": handle_collect_afl_metadata,
 }
 

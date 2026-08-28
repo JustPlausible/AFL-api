@@ -12,6 +12,7 @@ from typing import Any, Callable
 
 from db.team_seasons import count_team_participants
 
+from .match_data_exceptions import detect_stats_absence_candidates
 from .match_status import normalise_match_status
 
 
@@ -304,6 +305,7 @@ class SeasonCompletenessReporter:
         return {
             "teams": 0, "rounds": 0, "matches": 0, "matches_by_status": {},
             "concluded_matches": 0, "concluded_matches_with_authoritative_stats": 0,
+            "concluded_matches_with_stats_not_expected": 0,
             "concluded_matches_with_partial_stats": 0,
             "concluded_matches_with_suspicious_player_count": 0,
             "authoritative_stat_rows": 0, "legacy_stat_rows": 0,
@@ -353,6 +355,13 @@ class SeasonCompletenessReporter:
                          if finality.has_authoritative_snapshot}
         partial_matches: set[int] = set()
         suspicious_matches: set[int] = set()
+        reviewed_exceptions = {
+            row["match_id"]: row for row in self.conn.execute(
+                "SELECT * FROM match_data_exceptions WHERE exception_type='stats_not_expected' "
+                "AND revoked_at IS NULL AND match_id IN "
+                "(SELECT match_id FROM matches WHERE season_id=?)", (season_id,)
+            ).fetchall()
+        }
         memberships = self.conn.execute(
             "SELECT COUNT(*) total,SUM(team_id IS NULL) missing FROM competition_season_players "
             "WHERE competition_season_id=?", (season_id,)
@@ -367,6 +376,9 @@ class SeasonCompletenessReporter:
             "concluded_matches": len(concluded),
             "concluded_matches_with_authoritative_stats": sum(
                 row["match_provider_id"] in authoritative for row in concluded),
+            "concluded_matches_with_stats_not_expected": sum(
+                row["match_id"] in reviewed_exceptions
+                and row["match_provider_id"] not in authoritative for row in concluded),
             "authoritative_stat_rows": sum(finality.authoritative_rows
                                            for finality in authoritative.values()),
             "legacy_stat_rows": legacy, "season_memberships": memberships["total"],
@@ -433,7 +445,18 @@ class SeasonCompletenessReporter:
                           evidence_source="matches(start_time_utc,venue)")
             stat = stats_by_match.get(row["match_provider_id"])
             finality = finality_by_match.get(row["match_provider_id"], authoritative_stats_finality_from_row(row["match_provider_id"], stat))
-            if lifecycle == "CONCLUDED" and not finality.has_authoritative_snapshot:
+            exception = reviewed_exceptions.get(row["match_id"])
+            if lifecycle == "CONCLUDED" and not finality.has_authoritative_snapshot and exception:
+                self._add(result, "match.stats_not_expected", Severity.INFO, "matches",
+                          exception["display_reason"], match_id=row["match_id"],
+                          expected="authoritative stats or explicit reviewed disposition",
+                          observed={"disposition": "stats_not_expected",
+                                    "reason_code": exception["reason_code"],
+                                    "provider_match_id": exception["provider_match_id"],
+                                    "evidence_url": exception["evidence_url"]},
+                          evidence_source="match_data_exceptions",
+                          remediation="Revoke the disposition if statistics should be required.")
+            elif lifecycle == "CONCLUDED" and not finality.has_authoritative_snapshot:
                 self._add(result, "match.final_without_authoritative_stats", Severity.WARNING, "matches",
                           "Concluded match has no authoritative CFS snapshot.", match_id=row["match_id"],
                           expected="snapshot_authority=2", observed=0,
@@ -468,6 +491,15 @@ class SeasonCompletenessReporter:
                           expected="snapshot_authority=1", observed=2, evidence_source="matches JOIN cfs_player_stats")
         result.aggregates["concluded_matches_with_partial_stats"] = len(partial_matches)
         result.aggregates["concluded_matches_with_suspicious_player_count"] = len(suspicious_matches)
+        candidate_by_match = {item.match_id: item for item in
+                              detect_stats_absence_candidates(self.conn, season_id=season_id)}
+        for match_id, candidate in candidate_by_match.items():
+            if match_id not in reviewed_exceptions:
+                self._add(result, "match.stats_absence_candidate", Severity.INFO, "statistics",
+                          "Concluded match has suspiciously absent authoritative statistics; no cause was inferred.",
+                          match_id=match_id, observed=candidate.evidence,
+                          evidence_source="matches+cfs_player_stats+scrape_runs",
+                          remediation="Review provider evidence and record a disposition only after human verification.")
         self._team_context_checks(result, season_id)
         self._identity_checks(result, season_id, provider_ids)
         self._audit_checks(result, concluded, stats_by_match)
