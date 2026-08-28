@@ -27,6 +27,7 @@
       {% set path = request.url.path %}
       <nav class="admin-nav nav flex-wrap gap-1" aria-label="Admin sections">
         <a class="nav-link {% if path == '/' %}active{% endif %}" href="/" {% if path == '/' %}aria-current="page"{% endif %}>Overview</a>
+        <a class="nav-link {% if path.startswith('/operations') %}active{% endif %}" href="/operations">Operations</a>
         <a class="nav-link {% if path.startswith('/schedule') or path.startswith('/scheduler') %}active{% endif %}" href="/schedule">Scheduling</a>
         <a class="nav-link {% if path.startswith('/table') or path.startswith('/season-review') or path.startswith('/analytics') %}active{% endif %}" href="/tables">Data</a>
         <a class="nav-link {% if path.startswith('/logs') %}active{% endif %}" href="/logs">Logs &amp; diagnostics</a>

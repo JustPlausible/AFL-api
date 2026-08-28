@@ -16,6 +16,7 @@ from __future__ import annotations
 import importlib
 import json
 import re
+import sqlite3
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -194,6 +195,30 @@ def registry_rows() -> list[dict[str, Any]]:
         cols = [d[0] for d in cur.description]
         return [dict(zip(cols, r)) for r in cur.fetchall()]
     finally: conn.close()
+
+def job_type_activity_summary(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Bounded per-job-type aggregate of the scheduler job registry (Issue #225).
+
+    A single ``GROUP BY job_type`` scan, whose cost is independent of how
+    many individual jobs have ever been queued or run -- unlike
+    :func:`registry_rows`, which returns every row and owns its own
+    connection. This function instead accepts a caller-supplied connection
+    so a read-only dashboard reporter can reuse one connection for every
+    query it makes, never opening a write-capable connection just to read
+    this table.
+    """
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT job_type, COUNT(*) AS total, "
+        "SUM(status='pending') AS pending, SUM(status='running') AS running, "
+        "SUM(status='succeeded') AS succeeded, SUM(status='failed') AS failed, "
+        "SUM(status='skipped') AS skipped, SUM(status='interrupted') AS interrupted, "
+        "MAX(last_success_time) AS last_success_time, MAX(last_attempt_time) AS last_attempt_time, "
+        "MIN(CASE WHEN status='pending' THEN scheduled_run_time END) AS next_scheduled_run_time "
+        "FROM scheduler_job_registry GROUP BY job_type ORDER BY job_type"
+    ).fetchall()
+    return [dict(row) for row in rows]
+
 
 def registry_readable() -> None:
     """Bounded readability probe for health checks.

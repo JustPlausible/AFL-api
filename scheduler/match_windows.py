@@ -353,3 +353,25 @@ def release_window(conn: sqlite3.Connection, window: str, token: str, *, now: da
 
 def inspection_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return [dict(r) for r in conn.execute("SELECT window_id, match_id, afl_match_id, match_provider_id, competition_id, season_id, lifecycle, collection_phase, status, next_due_at, cadence_profile, lease_owner, lease_claimed_at, lease_expires_at, last_attempted_at, last_successful_collection_at, last_successful_write_at, finality_state, attempt_count, consecutive_failure_count, reason_code FROM match_stat_windows ORDER BY next_due_at, match_id").fetchall()]
+
+
+def status_summary(conn: sqlite3.Connection, *, season_id: str | None = None) -> list[dict[str, Any]]:
+    """Bounded per-status aggregate of ``match_stat_windows`` (Issue #225).
+
+    A single ``GROUP BY status`` scan (``status`` is indexed) rather than
+    ``inspection_rows``'s unbounded per-window listing -- this is the
+    "existing summary mechanism" a dashboard should prefer over an
+    unbounded scan across every match window ever planned. ``season_id`` is
+    the AFL numeric season identifier (``afl_seasons.afl_id`` /
+    ``matches.season_id``), passed as text to match the column's stored
+    affinity; omit it to summarise across all seasons.
+    """
+    rows = conn.execute(
+        "SELECT status, COUNT(*) AS count, SUM(consecutive_failure_count > 0) AS failing, "
+        "MAX(last_successful_collection_at) AS last_success_at, "
+        "MIN(CASE WHEN status IN ('planned','due') THEN next_due_at END) AS next_due_at "
+        "FROM match_stat_windows WHERE (:season_id IS NULL OR season_id = :season_id) "
+        "GROUP BY status ORDER BY status",
+        {"season_id": season_id},
+    ).fetchall()
+    return [dict(row) for row in rows]
