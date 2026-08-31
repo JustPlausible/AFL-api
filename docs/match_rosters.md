@@ -1,5 +1,35 @@
 # Match roster collection
 
+## Manual persistent season backfill and repair
+
+Operators can deliberately repair canonical CFS roster state for one persisted
+season without changing the normal production schedule:
+
+```bash
+# one round
+python cli.py --sync-match-rosters 2026 --round 5
+
+# inclusive range
+python cli.py --sync-match-rosters 2026 --round-from 1 --round-to 9
+
+# whole season
+python cli.py --sync-match-rosters 2026
+```
+
+CFS roster collection is round-scoped, so the command makes exactly one AFL/CFS
+request for each selected canonical round, using its existing `CD_R...`
+provider ID. Historical and concluded rounds are intentionally eligible. A
+failure or unavailable response for one round is reported but does not prevent
+later selected rounds from being attempted; human and `--print-json` reports
+include aggregate row counts and actionable per-round outcomes.
+
+The production scheduler remains responsible for normal current/future roster
+collection. This command is only a manual historical backfill/repair path. It
+uses `MatchRosterCollector` and `persist_match_rosters` to write the canonical
+`cfs_match_rosters`, `cfs_match_roster_selections`, and
+`cfs_match_roster_context` tables. It never invokes or writes the legacy HTML
+`lineups`/`player_lineups` subsystem.
+
 Match rosters are team selections and change notices, not evidence of match
 participation or player statistics. Collect one Champion Data round through the
 existing authenticated CFS client:
