@@ -128,6 +128,29 @@ def test_missing_bounded_round_fails_before_collection():
     assert Collector.calls == []
 
 
+@pytest.mark.parametrize(("selectors", "message"), [
+    ({"round_number": 2, "round_from": 1, "round_to": 3},
+     "round_number cannot be combined"),
+    ({"round_number": 2, "round_from": 1},
+     "round_number cannot be combined"),
+    ({"round_number": 2, "round_to": 3},
+     "round_number cannot be combined"),
+    ({"round_from": 1}, "round_from and round_to must be supplied together"),
+    ({"round_to": 3}, "round_from and round_to must be supplied together"),
+    ({"round_from": 3, "round_to": 1}, "round_from cannot be greater than round_to"),
+])
+def test_reusable_sync_rejects_invalid_selectors_before_database_or_collection(
+    selectors, message,
+):
+    class QueryForbiddenConnection:
+        def execute(self, *_args, **_kwargs):
+            raise AssertionError("selector validation must happen before database access")
+
+    with pytest.raises(ValueError, match=message):
+        run(QueryForbiddenConnection(), **selectors)
+    assert Collector.calls == []
+
+
 def test_structured_result_contains_aggregates_and_rounds():
     Collector.outcomes = {"CD_R2": RosterStatus.EMPTY}
     payload = run(database((1, 2))).to_dict()

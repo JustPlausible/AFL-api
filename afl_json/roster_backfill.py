@@ -72,6 +72,13 @@ def sync_match_rosters(client, conn: sqlite3.Connection, *, year: int,
                        competition_code: str, competition_provider_id: str,
                        raw_directory=None) -> RosterBackfillResult:
     """Persist each selected canonical round independently, including concluded rounds."""
+    if round_number is not None and (round_from is not None or round_to is not None):
+        raise ValueError("round_number cannot be combined with round_from or round_to")
+    if (round_from is None) != (round_to is None):
+        raise ValueError("round_from and round_to must be supplied together")
+    if round_from is not None and round_from > round_to:
+        raise ValueError("round_from cannot be greater than round_to")
+
     seasons = conn.execute(
         "SELECT s.afl_id,s.name FROM afl_seasons s JOIN afl_competitions c "
         "ON c.afl_id=s.competition_id WHERE s.year=? AND (c.code=? OR c.provider_id=?)",
