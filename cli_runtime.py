@@ -544,6 +544,46 @@ def handle_sync_afl_season(args):
         raise SystemExit(1)
 
 
+def handle_sync_match_rosters(args):
+    from afl_json import AflJsonClient
+    from afl_json.roster_backfill import sync_match_rosters
+    from db.connection import get_db_connection
+    conn = get_db_connection()
+    try:
+        with AflJsonClient() as client:
+            result = sync_match_rosters(
+                client, conn, year=args.sync_match_rosters, round_number=args.round,
+                round_from=args.round_from, round_to=args.round_to,
+                competition_code=args.afl_competition_code,
+                competition_provider_id=args.afl_competition_provider_id,
+                raw_directory=args.afl_raw_directory)
+    except ValueError as exc:
+        print(f"Roster backfill selection error: {exc}", file=sys.stderr)
+        raise SystemExit(1) from None
+    finally:
+        conn.close()
+    payload = result.to_dict()
+    if args.print_json:
+        print(json.dumps(payload, indent=2, default=_json_default))
+    else:
+        totals = payload["aggregates"]
+        print(f"AFL match roster sync {result.requested_season}: {result.outcome}")
+        print(f"scope: {result.selection}; rounds selected={totals['rounds_selected']} "
+              f"published={totals['rounds_published']} unavailable={totals['rounds_unavailable']} "
+              f"conservative_empty={totals['rounds_conservative_empty']} failed={totals['rounds_failed']}")
+        print(f"rows: rosters={totals['roster_rows_written']} selections={totals['selection_rows_written']} "
+              f"context={totals['context_rows_written']}")
+        print(f"unmatched: matches={totals['unmatched_matches']} teams={totals['unmatched_teams']}")
+        exceptions = [item for item in result.rounds if item.outcome != "published"]
+        if exceptions:
+            print("rounds requiring attention: " + ", ".join(
+                f"R{item.round_number}={item.outcome}" + (f" ({item.error})" if item.error else "")
+                for item in exceptions))
+        print(f"overall outcome: {result.outcome}")
+    if result.outcome != "success":
+        raise SystemExit(1)
+
+
 def handle_report_afl_season(args):
     """Run the reusable reporter over a query-only SQLite connection."""
     from afl_json.season_report import (SeasonCompletenessReporter, exit_code,
@@ -670,6 +710,7 @@ HANDLERS = {
     "collect_match_rosters": handle_collect_match_rosters,
     "bootstrap_afl_season": handle_bootstrap_afl_season,
     "sync_afl_season": handle_sync_afl_season,
+    "sync_match_rosters": handle_sync_match_rosters,
     "report_afl_season": handle_report_afl_season,
     "report_stats_absence_candidates": handle_report_stats_absence_candidates,
     "review_stats_not_expected": handle_review_stats_not_expected,

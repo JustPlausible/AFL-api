@@ -29,6 +29,7 @@ OPERATION_FLAGS = {
     "collect_afl_data": "--collect-afl-data",
     "bootstrap_afl_season": "--bootstrap-afl-season",
     "sync_afl_season": "--sync-afl-season",
+    "sync_match_rosters": "--sync-match-rosters",
     "report_afl_season": "--report-afl-season",
     "report_stats_absence_candidates": "--report-stats-absence-candidates",
     "review_stats_not_expected": "--review-stats-not-expected",
@@ -128,6 +129,8 @@ def create_parser() -> argparse.ArgumentParser:
                                 help="Persist AFL metadata plus CFS players and season membership")
     _add_operation_argument(metadata_group, "sync_afl_season", metavar="SEASON",
                                 help="Bootstrap and synchronise concluded CFS match statistics for a season")
+    _add_operation_argument(metadata_group, "sync_match_rosters", type=int, metavar="YEAR",
+                                help="Persist canonical CFS rosters for selected rounds of an existing season")
     _add_operation_argument(metadata_group, "report_afl_season", type=int, metavar="YEAR",
                                 help="Read-only completeness report for a persisted canonical AFL season")
     _add_operation_argument(metadata_group, "report_stats_absence_candidates", type=int, metavar="YEAR",
@@ -163,11 +166,11 @@ def create_parser() -> argparse.ArgumentParser:
                            help="With --collect-match-player-stats: numeric AFL ID for canonical status resolution")
     sync_group = parser.add_argument_group("Whole-season persistent synchronisation")
     sync_group.add_argument("--round", type=non_negative_round, metavar="ROUND",
-                            help="With --sync-afl-season: process one round")
+                            help="With --sync-afl-season or --sync-match-rosters: process one round")
     sync_group.add_argument("--round-from", type=non_negative_round, metavar="ROUND",
-                            help="With --sync-afl-season: first round in an inclusive range")
+                            help="With a season sync command: first round in an inclusive range")
     sync_group.add_argument("--round-to", type=non_negative_round, metavar="ROUND",
-                            help="With --sync-afl-season: last round in an inclusive range")
+                            help="With a season sync command: last round in an inclusive range")
     sync_group.add_argument("--match-id", type=positive_match_id, action="append", default=[], metavar="AFL_MATCH_ID",
                             help=("With --sync-afl-season: process a canonical AFL match ID "
                                   "(repeatable; intersects round filters)"))
@@ -176,7 +179,7 @@ def create_parser() -> argparse.ArgumentParser:
 
     output_group = parser.add_argument_group("Output and JSON diagnostics")
     output_group.add_argument("--print-json", action="store_true",
-                              help=("With --sync-afl-season: emit the complete machine readable result "
+                              help=("With --sync-afl-season or --sync-match-rosters: emit the complete machine readable result "
                                     "including match details; with --bootstrap-afl-season: emit the full "
                                     "structured bootstrap result instead of the default concise human summary; "
                                     "with --report-afl-season emit the complete structured report; "
@@ -248,10 +251,11 @@ def handle_args(argv=None):
         parser.error("collection output/filter options require --collect-afl-data")
     if args.collect_afl_data and args.collection_output is None:
         parser.error("--collect-afl-data requires --collection-output PATH")
-    sync_options = (args.round is not None or args.round_from is not None
-                    or args.round_to is not None or args.match_id or args.refresh_complete)
-    if sync_options and not args.sync_afl_season:
-        parser.error("--round, --round-from/--round-to, --match-id and --refresh-complete require --sync-afl-season")
+    round_options = args.round is not None or args.round_from is not None or args.round_to is not None
+    if round_options and not (args.sync_afl_season or args.sync_match_rosters):
+        parser.error("--round and --round-from/--round-to require --sync-afl-season or --sync-match-rosters")
+    if (args.match_id or args.refresh_complete) and not args.sync_afl_season:
+        parser.error("--match-id and --refresh-complete require --sync-afl-season")
     if args.round is not None and (args.round_from is not None or args.round_to is not None):
         parser.error("--round cannot be combined with --round-from or --round-to")
     if (args.round_from is None) != (args.round_to is None):
