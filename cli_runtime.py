@@ -142,6 +142,62 @@ def handle_collect_afl_data(args):
         raise SystemExit(1)
 
 
+def _print_statspro_report(report):
+    print(
+        f"StatsPro {report.source_context} {report.provider_id}: success\n"
+        f"players: returned={report.players_returned} resolved={report.players_resolved} "
+        f"unresolved={report.players_unresolved} zero_game={report.zero_game_players}\n"
+        f"rows: inserted={report.inserted} updated={report.updated} unchanged={report.unchanged}\n"
+        f"collected_at: {report.collected_at}"
+    )
+
+
+def handle_collect_statspro_season(args):
+    from afl_json.client import AflJsonClient
+    from afl_json.statspro import StatsProCollector, persist_season
+    from db.connection import get_db_connection
+    conn = get_db_connection()
+    try:
+        season = conn.execute("SELECT afl_id,provider_id FROM afl_seasons WHERE year=?", (args.collect_statspro_season,)).fetchone()
+        if season is None or not season["provider_id"]:
+            raise ValueError("season is not persisted or has no provider ID")
+        with AflJsonClient() as client:
+            records, collected_at = StatsProCollector(client).fetch_season(season["provider_id"])
+        report = persist_season(conn, records, season_id=season["afl_id"],
+                                season_provider_id=season["provider_id"], collected_at=collected_at)
+        conn.commit()
+    except Exception as exc:
+        conn.rollback()
+        print(f"StatsPro SEASON_TOTAL collection failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        raise SystemExit(1) from None
+    finally:
+        conn.close()
+    _print_statspro_report(report)
+
+
+def handle_collect_statspro_round(args):
+    from afl_json.client import AflJsonClient
+    from afl_json.statspro import StatsProCollector, persist_round
+    from db.connection import get_db_connection
+    conn = get_db_connection()
+    try:
+        round_row = conn.execute("SELECT round_id,season_id FROM rounds WHERE provider_id=?", (args.collect_statspro_round,)).fetchone()
+        if round_row is None:
+            raise ValueError("round provider ID is not persisted")
+        with AflJsonClient() as client:
+            records, collected_at = StatsProCollector(client).fetch_round(args.collect_statspro_round)
+        report = persist_round(conn, records, season_id=round_row["season_id"], round_id=round_row["round_id"],
+                               round_provider_id=args.collect_statspro_round, collected_at=collected_at)
+        conn.commit()
+    except Exception as exc:
+        conn.rollback()
+        print(f"StatsPro LEAGUE_ROUND_TOTAL collection failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        raise SystemExit(1) from None
+    finally:
+        conn.close()
+    _print_statspro_report(report)
+
+
 def handle_scrape_club(args):
     from scraper.scrape_afl_clubs import save_club_players_to_json
     from utils.club_lookup import get_club
@@ -707,6 +763,8 @@ HANDLERS = {
     "scrape_round": handle_scrape_round, "scrape_all_rounds": handle_scrape_all_rounds,
     "scrape_match": handle_scrape_match,
     "collect_match_player_stats": handle_collect_match_player_stats,
+    "collect_statspro_season": handle_collect_statspro_season,
+    "collect_statspro_round": handle_collect_statspro_round,
     "collect_match_rosters": handle_collect_match_rosters,
     "bootstrap_afl_season": handle_bootstrap_afl_season,
     "sync_afl_season": handle_sync_afl_season,

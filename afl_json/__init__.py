@@ -23,6 +23,7 @@ from .client import (
     HttpPolicy,
     WMCTokenProvider,
 )
+from .statspro import StatsProCollector
 from .collectors import (
     CollectionError,
     CollectionDiagnostic,

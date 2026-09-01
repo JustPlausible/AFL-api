@@ -56,6 +56,58 @@ class SeasonsResponse(BaseModel):
     seasons: list[Season]
 
 
+class StatsProPlayer(BaseModel):
+    canonical_player_id: int
+    champion_data_id: str | None = None
+
+
+class StatsProSeasonRef(BaseModel):
+    season_id: int
+    provider_id: str | None = None
+
+
+class StatsProTeamRef(BaseModel):
+    team_id: int
+    name: str | None = None
+    provider_id: str | None = None
+
+
+class PlayerStatSummary(BaseModel):
+    player: StatsProPlayer
+    season: StatsProSeasonRef
+    team: StatsProTeamRef | None
+    scope: Literal["full_season"]
+    source: Literal["AFL_STATSPRO"]
+    source_context: Literal["SEASON_TOTAL"]
+    games_played: int
+    totals: dict
+    averages: dict
+    updated_at: str | None
+    collected_at: str
+
+
+class PlayerStatSummariesResponse(BaseModel):
+    summaries: list[PlayerStatSummary]
+    limit: int
+    offset: int
+
+
+def _statspro_projection(row, advanced: bool) -> PlayerStatSummary:
+    return PlayerStatSummary(
+        player=StatsProPlayer(canonical_player_id=row["canonical_player_id"],
+            champion_data_id=row["player_provider_id"] if advanced else None),
+        season=StatsProSeasonRef(season_id=row["season_id"],
+            provider_id=row["season_provider_id"] if advanced else None),
+        team=(StatsProTeamRef(team_id=row["team_id"], name=row["team_name"],
+            provider_id=row["team_provider_id"] if advanced else None)
+              if row["team_id"] is not None else None),
+        scope="full_season", source="AFL_STATSPRO", source_context="SEASON_TOTAL",
+        games_played=row["games_played"], totals=json.loads(row["published_totals"]),
+        averages=json.loads(row["published_averages"]), updated_at=row["source_updated_at"],
+        collected_at=row["collected_at"],
+    )
+
+
 class ByeTeam(BaseModel):
     """Canonical identity for a team known to have a bye."""
 
@@ -1666,3 +1718,62 @@ def get_injuries(
             current=bool(row["current"]),
         ))
     return InjuriesResponse(injuries=injuries)
+
+
+_STATSPRO_SELECT = (
+    "SELECT s.*, t.name AS team_name FROM statspro_player_season_summaries s "
+    "LEFT JOIN afl_teams t ON t.afl_id=s.team_id "
+)
+
+
+@router.get("/api/v1/seasons/{season_id}/player-stat-summaries",
+    response_model=PlayerStatSummariesResponse,
+    summary="List AFL-published full-season player summaries")
+def get_player_stat_summaries(
+    season_id: int,
+    scope: Literal["full_season"] = Query("full_season"),
+    team_id: int | None = Query(None),
+    canonical_player_id: int | None = Query(None),
+    limit: int = Query(100, ge=1, le=250), offset: int = Query(0, ge=0),
+    advanced: bool = Query(False),
+    credential: AuthenticatedCredential = Depends(authenticate_api_key),
+):
+    """Return finals-inclusive StatsPro SEASON_TOTAL facts, preserving null and zero."""
+    if advanced and not credential.has_capability(ADVANCED_READ):
+        return application_error(403, "advanced_access_required",
+            "This API key does not permit access to advanced metadata.")
+    filters = ["s.season_id=?", "s.source_context='SEASON_TOTAL'", "s.canonical_player_id IS NOT NULL"]
+    values: list[object] = [season_id]
+    if team_id is not None:
+        filters.append("s.team_id=?"); values.append(team_id)
+    if canonical_player_id is not None:
+        filters.append("s.canonical_player_id=?"); values.append(canonical_player_id)
+    conn = get_db_connection()
+    try:
+        season = conn.execute("SELECT 1 FROM afl_seasons WHERE afl_id=?", (season_id,)).fetchone()
+        if season is None:
+            return application_error(404, "season_not_found", "Season not found.")
+        rows = conn.execute(_STATSPRO_SELECT + f"WHERE {' AND '.join(filters)} ORDER BY s.canonical_player_id LIMIT ? OFFSET ?", (*values,limit,offset)).fetchall()
+    finally:
+        conn.close()
+    return PlayerStatSummariesResponse(summaries=[_statspro_projection(r,advanced) for r in rows], limit=limit, offset=offset)
+
+
+@router.get("/api/v1/players/{canonical_player_id}/seasons/{season_id}/player-stat-summary",
+    response_model=PlayerStatSummary,
+    responses={404: {"model": ApplicationErrorResponse}},
+    summary="Get one canonical player's full-season AFL summary")
+def get_player_stat_summary(canonical_player_id: int, season_id: int,
+    scope: Literal["full_season"] = Query("full_season"), advanced: bool = Query(False),
+    credential: AuthenticatedCredential = Depends(authenticate_api_key)):
+    if advanced and not credential.has_capability(ADVANCED_READ):
+        return application_error(403, "advanced_access_required",
+            "This API key does not permit access to advanced metadata.")
+    conn = get_db_connection()
+    try:
+        row = conn.execute(_STATSPRO_SELECT + "WHERE s.season_id=? AND s.canonical_player_id=? AND s.source_context='SEASON_TOTAL'", (season_id,canonical_player_id)).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return application_error(404, "player_stat_summary_not_found", "Player season summary not found.")
+    return _statspro_projection(row,advanced)

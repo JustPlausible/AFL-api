@@ -1,0 +1,13 @@
+{
+  "playerStats": [
+    {
+      "playerProviderId": "CD_I100",
+      "teamProviderId": "CD_T10",
+      "opponentProviderId": "CD_T20",
+      "gamesPlayed": 1,
+      "result": "W",
+      "totals": {"kicks": 14, "handballs": 9, "disposals": 23},
+      "averages": {}
+    }
+  ]
+}

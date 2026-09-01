@@ -75,3 +75,11 @@ explicit per-domain contract; collection failure does not authorise either.
 - [Post-v0.5.0 engineering status review](project_status_post_v0_5_0.md) — the
   active current-state review; the v0.5.0 architectural review is a pre-release
   historical assessment
+# StatsPro published summaries
+
+AFL StatsPro `SEASON_TOTAL` is the analytical authority for AFL-published,
+finals-inclusive full-season player summaries. `LEAGUE_ROUND_TOTAL` provides
+post-round reconciliation/history facts. Neither replaces CFS match player
+statistics as the live operational authority, and embedded StatsPro profile
+fields do not override the canonical identity system. See
+[`docs/statspro.md`](../statspro.md).
