@@ -806,6 +806,25 @@ def handle_collect_afl_metadata(args):
                           "season": result.season["name"], "rounds": len(result.rounds),
                           "teams": len(result.teams), "matches": len(result.matches)}))
 
+def handle_import_player_movements(args):
+    from dataclasses import asdict
+    from db.connection import get_db_connection
+    from scraper.player_movements.acquisition import MovementAcquirer, LIVE_URL
+    from scraper.player_movements.orchestration import import_player_movements
+    acquirer=MovementAcquirer()
+    source_url=args.movement_source_url or LIVE_URL
+    document=(acquirer.acquire_file(args.movement_source_file,source_url=source_url,source_archived_at=args.source_archived_at) if args.movement_source_file else acquirer.acquire_url(source_url))
+    conn=get_db_connection()
+    try: outcome=import_player_movements(conn,document,movement_season_year=args.import_player_movements)
+    finally: conn.close()
+    if args.print_json: print(json.dumps(asdict(outcome),indent=2))
+    else:
+        print(f"AFL editorial movements {outcome.movement_season_year} -> {outcome.movement_season_year+1}")
+        print(f"Source: {outcome.source_url}\nAs of: {outcome.source_archived_at or 'live observation'}")
+        print(f"Rows: parsed={outcome.rows_parsed} resolved={outcome.rows_resolved} unresolved={outcome.rows_unresolved} ambiguous={outcome.rows_ambiguous}")
+        print(f"Persistence: inserted={outcome.inserted} updated={outcome.updated} unchanged={outcome.unchanged}")
+        print("Movement types: "+", ".join(f"{k}={v}" for k,v in outcome.counts_by_type.items()))
+        print("Canonical membership mutations = 0")
 
 HANDLERS = {
     "collect_afl_data": handle_collect_afl_data,
@@ -824,6 +843,7 @@ HANDLERS = {
     "collect_statspro_season": handle_collect_statspro_season,
     "collect_statspro_round": handle_collect_statspro_round,
     "build_player_stat_summaries": handle_build_player_stat_summaries,
+    "import_player_movements": handle_import_player_movements,
     "collect_match_rosters": handle_collect_match_rosters,
     "bootstrap_afl_season": handle_bootstrap_afl_season,
     "sync_afl_season": handle_sync_afl_season,

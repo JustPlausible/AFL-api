@@ -51,3 +51,4 @@ for the reusable release summary and upgrade cautions.
 
 - [Post-v0.5.0 engineering status review](architecture/project_status_post_v0_5_0.md) — current baseline and candidate planning themes; not an approved v0.6.0 roadmap
 - [Architectural reviews](architecture/README.md)
+- [AFL editorial player movements](player_movements.md) — supplemental snapshot ingestion, strict previous-season resolution, API history, and read-only replay reconciliation (Issue #240)
