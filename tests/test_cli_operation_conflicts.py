@@ -149,3 +149,31 @@ def test_every_authoritative_operation_is_registered_by_the_parser():
     for destination, flag in cli.OPERATION_FLAGS.items():
         assert flag in actions[destination].option_strings
     assert set(cli_runtime.HANDLERS) == set(cli.OPERATION_FLAGS) - {"version"}
+
+
+@pytest.mark.parametrize("source_args", [
+    ["--movement-source-file", "snapshot.html"],
+    ["--movement-source-url", "https://www.afl.com.au/news/retirements-and-delistings"],
+    ["--movement-source-file", "snapshot.html", "--movement-source-url",
+     "https://web.archive.org/web/20260201000614/https://www.afl.com.au/news/retirements-and-delistings"],
+])
+def test_player_movement_import_accepts_each_transport_provenance_combination(source_args):
+    args = cli.handle_args(["--import-player-movements", "2025", *source_args])
+    assert cli.selected_operation_flags(args) == ["--import-player-movements"]
+
+
+def test_player_movement_import_requires_at_least_one_source(capsys):
+    with pytest.raises(SystemExit, match="2"):
+        cli.handle_args(["--import-player-movements", "2025"])
+    assert "requires --movement-source-file or --movement-source-url" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("source_args", [
+    ["--movement-source-file", "snapshot.html"],
+    ["--movement-source-url", "https://example.test/source"],
+    ["--source-archived-at", "2026-02-01T00:06:14Z"],
+])
+def test_player_movement_source_options_require_import_operation(source_args, capsys):
+    with pytest.raises(SystemExit, match="2"):
+        cli.handle_args(source_args)
+    assert "movement source options require --import-player-movements" in capsys.readouterr().err

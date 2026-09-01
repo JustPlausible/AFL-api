@@ -39,6 +39,7 @@ OPERATION_FLAGS = {
     "collect_statspro_season": "--collect-statspro-season",
     "collect_statspro_round": "--collect-statspro-round",
     "build_player_stat_summaries": "--build-player-stat-summaries",
+    "import_player_movements": "--import-player-movements",
     "import_clubs": "--import-clubs",
     "export_clubs": "--export-clubs",
     "add_api_key": "--add-api-key",
@@ -170,6 +171,11 @@ def create_parser() -> argparse.ArgumentParser:
                             help="Collect and persist StatsPro LEAGUE_ROUND_TOTAL for a persisted round")
     _add_operation_argument(cfs_group, "build_player_stat_summaries", type=int, metavar="YEAR",
                             help="Build finalized local player summaries for a persisted season")
+    movement_group = parser.add_argument_group("Supplemental AFL editorial player movements")
+    _add_operation_argument(movement_group, "import_player_movements", type=int, metavar="PREVIOUS_SEASON", help="Import supplemental retirements/delistings/trades evidence")
+    movement_group.add_argument("--movement-source-file", type=Path)
+    movement_group.add_argument("--movement-source-url")
+    movement_group.add_argument("--source-archived-at")
     cfs_group.add_argument("--scope", choices=("home_and_away",),
                            help="With --build-player-stat-summaries: required summary scope")
     cfs_group.add_argument("--source-status", metavar="STATUS",
@@ -260,6 +266,10 @@ def handle_args(argv=None):
         parser.error("--build-player-stat-summaries requires --scope home_and_away")
     if args.scope and not args.build_player_stat_summaries:
         parser.error("--scope requires --build-player-stat-summaries")
+    if args.import_player_movements and not (args.movement_source_file or args.movement_source_url):
+        parser.error("--import-player-movements requires --movement-source-file or --movement-source-url")
+    if (args.movement_source_file or args.movement_source_url or args.source_archived_at) and not args.import_player_movements:
+        parser.error("movement source options require --import-player-movements")
     collection_options = (args.collection_output is not None or args.collection_round
                           or args.collection_match or args.collection_endpoints
                           or args.collection_overwrite or args.collection_resume or args.no_database)

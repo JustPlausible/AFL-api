@@ -34,7 +34,7 @@ def test_existing_database_upgrade_preserves_team_identity_memberships_and_fks(t
     conn.commit()
     conn.close()
 
-    assert migrate_database(path) == ["0025", "0026", "0027", "0028"]
+    assert migrate_database(path) == ["0025", "0026", "0027", "0028", "0029"]
     conn = sqlite3.connect(path)
     conn.execute("PRAGMA foreign_keys=ON")
 
