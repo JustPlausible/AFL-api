@@ -40,9 +40,31 @@ def database():
 def test_season_preserves_finals_zero_null_and_published_averages():
     records = normalise_statspro(payload("statspro_season_total_2025.json"), context=SEASON_TOTAL)
     assert records[0].games_played == 27
+    assert type(records[0].games_played) is int
     assert records[0].totals["kickins"] is None
     assert records[0].averages["kicks"] == 11.85
-    assert records[1].games_played == 0 and records[1].totals["kicks"] == 0
+    assert records[1].games_played == 0 and type(records[1].games_played) is int
+    assert records[1].totals["kicks"] == 0
+
+
+@pytest.mark.parametrize("games_played", [0, 0.0, 1, 1.0, 25.0, 27.0])
+def test_season_accepts_and_normalises_integral_games_played(games_played):
+    source = payload("statspro_season_total_2025.json")
+    source["players"][0]["gamesPlayed"] = games_played
+
+    record = normalise_statspro(source, context=SEASON_TOTAL)[0]
+
+    assert record.games_played == int(games_played)
+    assert type(record.games_played) is int
+
+
+@pytest.mark.parametrize("games_played", [1.5, -1, -1.0, True, False, "27", None])
+def test_season_rejects_invalid_games_played(games_played):
+    source = payload("statspro_season_total_2025.json")
+    source["players"][0]["gamesPlayed"] = games_played
+
+    with pytest.raises(AflJsonInvalidResponse, match="invalid gamesPlayed"):
+        normalise_statspro(source, context=SEASON_TOTAL)
 
 
 def test_round_total_parses_corresponding_match_fields_without_derivation():
@@ -100,10 +122,32 @@ def test_incomplete_refresh_retains_previously_persisted_summary():
     assert after == before
 
 
+def test_invalid_games_refresh_retains_previously_persisted_summary():
+    conn = database()
+    source = payload("statspro_season_total_2025.json")
+    records = normalise_statspro(source, context=SEASON_TOTAL)
+    persist_season(conn, records, season_id=85, season_provider_id="CD_S2025014", collected_at="good")
+    before = tuple(conn.execute(
+        "SELECT games_played,published_totals,published_averages,collected_at "
+        "FROM statspro_player_season_summaries WHERE player_provider_id='CD_I100'"
+    ).fetchone())
+    source["players"][0]["gamesPlayed"] = 1.5
+
+    with pytest.raises(AflJsonInvalidResponse, match="invalid gamesPlayed"):
+        normalise_statspro(source, context=SEASON_TOTAL)
+
+    after = tuple(conn.execute(
+        "SELECT games_played,published_totals,published_averages,collected_at "
+        "FROM statspro_player_season_summaries WHERE player_provider_id='CD_I100'"
+    ).fetchone())
+    assert after == before
+
+
 def test_zero_game_season_player_parses_and_persists():
     conn = database()
     records = normalise_statspro(payload("statspro_season_total_2025.json"), context=SEASON_TOTAL)
     zero_game = [record for record in records if record.games_played == 0]
+    assert type(zero_game[0].games_played) is int
     report = persist_season(conn, zero_game, season_id=85,
                             season_provider_id="CD_S2025014", collected_at="zero")
     assert report.inserted == report.zero_game_players == 1

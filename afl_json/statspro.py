@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -73,6 +74,16 @@ def _provider_id(entry: Mapping[str, Any], field: str, nested: str) -> str | Non
     return value.strip() if isinstance(value, str) and value.strip() else None
 
 
+def _games_played(value: Any, *, index: int) -> int:
+    if isinstance(value, bool):
+        raise AflJsonInvalidResponse(f"StatsPro player[{index}] has invalid gamesPlayed", endpoint="statspro")
+    if isinstance(value, int) and value >= 0:
+        return value
+    if isinstance(value, float) and math.isfinite(value) and value >= 0 and value.is_integer():
+        return int(value)
+    raise AflJsonInvalidResponse(f"StatsPro player[{index}] has invalid gamesPlayed", endpoint="statspro")
+
+
 def normalise_statspro(payload: Any, *, context: str) -> list[StatsProPlayerSummary]:
     if context not in {SEASON_TOTAL, LEAGUE_ROUND_TOTAL}:
         raise ValueError("unsupported StatsPro context")
@@ -101,8 +112,7 @@ def normalise_statspro(payload: Any, *, context: str) -> list[StatsProPlayerSumm
                 endpoint="statspro",
             )
         games = entry.get("gamesPlayed", totals.get("gamesPlayed", entry.get("games", 0)))
-        if isinstance(games, bool) or not isinstance(games, int) or games < 0:
-            raise AflJsonInvalidResponse(f"StatsPro player[{index}] has invalid gamesPlayed", endpoint="statspro")
+        games = _games_played(games, index=index)
         result.append(StatsProPlayerSummary(
             player_provider_id=player_id,
             team_provider_id=_provider_id(entry, "teamProviderId", "team"),
