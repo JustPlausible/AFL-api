@@ -224,6 +224,38 @@ def handle_collect_statspro_round(args):
     _print_statspro_report(report)
 
 
+def handle_build_player_stat_summaries(args):
+    from afl_json.home_away_summaries import (SummaryNotReady,
+        build_home_and_away_player_summaries)
+    from db.connection import get_db_connection
+    conn = get_db_connection()
+    try:
+        season = _resolve_statspro_season(
+            conn, year=args.build_player_stat_summaries,
+            competition_code=args.afl_competition_code,
+            competition_provider_id=args.afl_competition_provider_id,
+        )
+        report = build_home_and_away_player_summaries(conn, season["afl_id"])
+    except SummaryNotReady as exc:
+        conn.rollback()
+        print(f"Season: {args.build_player_stat_summaries}\nScope: home_and_away\n"
+              f"Status: NOT READY\n{exc}", file=sys.stderr)
+        raise SystemExit(1) from None
+    finally:
+        conn.close()
+    print(
+        f"Season: {args.build_player_stat_summaries}\nScope: {report.scope}\n"
+        f"H&A matches selected: {report.matches_selected}\n"
+        f"Authoritative match-stat snapshots included: {report.authoritative_snapshots}\n"
+        f"Reviewed stats-not-expected fixtures: {report.reviewed_exceptions}\n"
+        f"Season player population: {report.population}\nPlayers with >= 1 H&A game: {report.players_with_games}\n"
+        f"Zero-game players retained: {report.zero_game_players}\n"
+        f"Rows: inserted={report.inserted} updated={report.updated} unchanged={report.unchanged}\n"
+        f"Unsupported aggregation fields: {', '.join(report.unsupported_fields)}\n"
+        f"Source max updated-at: {report.source_max_updated_at}\nStatus: {report.status}"
+    )
+
+
 def handle_scrape_club(args):
     from scraper.scrape_afl_clubs import save_club_players_to_json
     from utils.club_lookup import get_club
@@ -791,6 +823,7 @@ HANDLERS = {
     "collect_match_player_stats": handle_collect_match_player_stats,
     "collect_statspro_season": handle_collect_statspro_season,
     "collect_statspro_round": handle_collect_statspro_round,
+    "build_player_stat_summaries": handle_build_player_stat_summaries,
     "collect_match_rosters": handle_collect_match_rosters,
     "bootstrap_afl_season": handle_bootstrap_afl_season,
     "sync_afl_season": handle_sync_afl_season,

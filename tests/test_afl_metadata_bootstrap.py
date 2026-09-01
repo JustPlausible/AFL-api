@@ -24,7 +24,8 @@ def collected(*, venue="MCG", status="SCHEDULED", provider_ids=True, current_sea
                 "source": {"id": 10}}],
         rounds=[{"afl_id": 100, "provider_id": provider("CD_R100"), "name": "Opening Round",
                  "abbreviation": "OR", "round_number": 0, "start_time": None, "end_time": None,
-                 "byes": [{"id": 10}], "metadata": None, "source": {"id": 100}}],
+                 "byes": [{"id": 10}], "metadata": None, "source": {"id": 100},
+                 "competition_phase": "HOME_AND_AWAY"}],
         matches=[{"afl_id": 1000, "provider_id": provider("CD_M1000"), "status": status,
                   "round": {"id": 100}, "home": {"team": {"id": 10, "abbreviation": "HOM"},
                                                      "score": {"totalScore": 12}},
@@ -53,7 +54,8 @@ def collected_season(season_afl_id, year, *, current_season_afl_id, team_id, rou
                 "source": {"id": team_id}}],
         rounds=[{"afl_id": round_id, "provider_id": f"CD_R{round_id}", "name": "Opening Round",
                  "abbreviation": "OR", "round_number": 0, "start_time": None, "end_time": None,
-                 "byes": [], "metadata": None, "source": {"id": round_id}}],
+                 "byes": [], "metadata": None, "source": {"id": round_id},
+                 "competition_phase": "HOME_AND_AWAY"}],
         matches=[{"afl_id": match_id, "provider_id": f"CD_M{match_id}", "status": status,
                   "round": {"id": round_id}, "home": {"team": {"id": team_id, "abbreviation": "HOM"},
                                                        "score": {"totalScore": 12}},
@@ -81,7 +83,8 @@ def test_clean_bootstrap_persists_hierarchy_and_opening_round(database):
 
     assert (summary.records_read, summary.inserted, summary.updated, summary.unchanged, summary.failed) == (5, 5, 0, 0, 0)
     assert database.execute("SELECT provider_id, year FROM afl_seasons").fetchone() == ("CD_S2026014", 2026)
-    assert database.execute("SELECT round_number, byes_json FROM rounds").fetchone() == (0, '[{"id":10}]')
+    assert database.execute("SELECT round_number, byes_json, competition_phase FROM rounds").fetchone() == (
+        0, '[{"id":10}]', "HOME_AND_AWAY")
     assert database.execute("SELECT match_provider_id, venue, score_home, status FROM matches").fetchone() == (
         "CD_M1000", "MCG", 12, "SCHEDULED")
 

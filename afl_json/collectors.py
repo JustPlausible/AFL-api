@@ -356,6 +356,22 @@ class PublicAflCollector:
                         "providerId": round_record.get("provider_id"),
                         "roundNumber": round_record.get("round_number"),
                     }
+            # The supported AFL fixture payload marks finals matches with the
+            # source-owned metadata.finals_match_label field.  Classify the
+            # canonical round from that semantic marker, never its number/name.
+            finals_flags = {
+                bool(isinstance(match.get("metadata"), Mapping)
+                     and match["metadata"].get("finals_match_label"))
+                for match in round_matches
+            }
+            if len(finals_flags) > 1:
+                raise CollectionError(
+                    f"Round {round_record['afl_id']} mixes finals and Home & Away fixture semantics"
+                )
+            round_record["competition_phase"] = (
+                "FINALS" if finals_flags == {True} else
+                "HOME_AND_AWAY" if finals_flags == {False} else None
+            )
             matches.extend(round_matches)
         current = resolve_current_season(all_seasons, selected, rounds,
                                          configured_year=current_season_year,
@@ -731,7 +747,7 @@ def _normalise_round(item: dict[str, Any]) -> dict[str, Any]:
     return {**_base(item), "name": item.get("name"), "abbreviation": item.get("abbreviation"),
             "round_number": item.get("roundNumber"), "start_time": item.get("utcStartTime"),
             "end_time": item.get("utcEndTime"), "byes": deepcopy(item.get("byes", [])),
-            "metadata": item.get("metadata")}
+            "metadata": item.get("metadata"), "competition_phase": None}
 
 
 def _normalise_team(item: dict[str, Any]) -> dict[str, Any]:
