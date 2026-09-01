@@ -76,9 +76,10 @@ class PlayerStatSummary(BaseModel):
     player: StatsProPlayer
     season: StatsProSeasonRef
     team: StatsProTeamRef | None
-    scope: Literal["full_season"]
-    source: Literal["AFL_STATSPRO"]
-    source_context: Literal["SEASON_TOTAL"]
+    scope: Literal["full_season", "home_and_away"]
+    source: Literal["AFL_STATSPRO", "DERIVED_MATCH_STATS"]
+    source_context: Literal["SEASON_TOTAL"] | None = None
+    population_source: str | None = None
     games_played: int
     totals: dict
     averages: dict
@@ -105,6 +106,20 @@ def _statspro_projection(row, advanced: bool) -> PlayerStatSummary:
         games_played=row["games_played"], totals=json.loads(row["published_totals"]),
         averages=json.loads(row["published_averages"]), updated_at=row["source_updated_at"],
         collected_at=row["collected_at"],
+    )
+
+
+def _derived_projection(row, advanced: bool) -> PlayerStatSummary:
+    return PlayerStatSummary(
+        player=StatsProPlayer(canonical_player_id=row["canonical_player_id"],
+            champion_data_id=row["champion_data_id"] if advanced else None),
+        season=StatsProSeasonRef(season_id=row["season_id"]),
+        team=(StatsProTeamRef(team_id=row["team_id"], name=row["team_name"])
+              if row["team_id"] is not None else None),
+        scope="home_and_away", source="DERIVED_MATCH_STATS",
+        population_source=row["population_source"], games_played=row["games_played"],
+        totals=json.loads(row["totals"]), averages=json.loads(row["derived_rates"]),
+        updated_at=row["source_max_updated_at"], collected_at=row["built_at"],
     )
 
 
@@ -1724,6 +1739,11 @@ _STATSPRO_SELECT = (
     "SELECT s.*, t.name AS team_name FROM statspro_player_season_summaries s "
     "LEFT JOIN afl_teams t ON t.afl_id=s.team_id "
 )
+_DERIVED_SELECT = (
+    "SELECT s.*,t.name AS team_name,p.provider_player_id AS champion_data_id "
+    "FROM derived_player_season_summaries s LEFT JOIN afl_teams t ON t.afl_id=s.team_id "
+    "LEFT JOIN player_provider_ids p ON p.player_id=s.canonical_player_id AND p.provider='champion_data' "
+)
 
 
 @router.get("/api/v1/seasons/{season_id}/player-stat-summaries",
@@ -1731,7 +1751,7 @@ _STATSPRO_SELECT = (
     summary="List AFL-published full-season player summaries")
 def get_player_stat_summaries(
     season_id: int,
-    scope: Literal["full_season"] = Query("full_season"),
+    scope: Literal["full_season", "home_and_away"] = Query("full_season"),
     team_id: int | None = Query(None),
     canonical_player_id: int | None = Query(None),
     limit: int = Query(100, ge=1, le=250), offset: int = Query(0, ge=0),
@@ -1742,7 +1762,9 @@ def get_player_stat_summaries(
     if advanced and not credential.has_capability(ADVANCED_READ):
         return application_error(403, "advanced_access_required",
             "This API key does not permit access to advanced metadata.")
-    filters = ["s.season_id=?", "s.source_context='SEASON_TOTAL'", "s.canonical_player_id IS NOT NULL"]
+    filters = ["s.season_id=?", "s.canonical_player_id IS NOT NULL"]
+    if scope == "full_season":
+        filters.append("s.source_context='SEASON_TOTAL'")
     values: list[object] = [season_id]
     if team_id is not None:
         filters.append("s.team_id=?"); values.append(team_id)
@@ -1753,10 +1775,12 @@ def get_player_stat_summaries(
         season = conn.execute("SELECT 1 FROM afl_seasons WHERE afl_id=?", (season_id,)).fetchone()
         if season is None:
             return application_error(404, "season_not_found", "Season not found.")
-        rows = conn.execute(_STATSPRO_SELECT + f"WHERE {' AND '.join(filters)} ORDER BY s.canonical_player_id LIMIT ? OFFSET ?", (*values,limit,offset)).fetchall()
+        select = _STATSPRO_SELECT if scope == "full_season" else _DERIVED_SELECT
+        rows = conn.execute(select + f"WHERE {' AND '.join(filters)} ORDER BY s.canonical_player_id LIMIT ? OFFSET ?", (*values,limit,offset)).fetchall()
     finally:
         conn.close()
-    return PlayerStatSummariesResponse(summaries=[_statspro_projection(r,advanced) for r in rows], limit=limit, offset=offset)
+    project = _statspro_projection if scope == "full_season" else _derived_projection
+    return PlayerStatSummariesResponse(summaries=[project(r,advanced) for r in rows], limit=limit, offset=offset)
 
 
 @router.get("/api/v1/players/{canonical_player_id}/seasons/{season_id}/player-stat-summary",
@@ -1764,16 +1788,19 @@ def get_player_stat_summaries(
     responses={404: {"model": ApplicationErrorResponse}},
     summary="Get one canonical player's full-season AFL summary")
 def get_player_stat_summary(canonical_player_id: int, season_id: int,
-    scope: Literal["full_season"] = Query("full_season"), advanced: bool = Query(False),
+    scope: Literal["full_season", "home_and_away"] = Query("full_season"), advanced: bool = Query(False),
     credential: AuthenticatedCredential = Depends(authenticate_api_key)):
     if advanced and not credential.has_capability(ADVANCED_READ):
         return application_error(403, "advanced_access_required",
             "This API key does not permit access to advanced metadata.")
     conn = get_db_connection()
     try:
-        row = conn.execute(_STATSPRO_SELECT + "WHERE s.season_id=? AND s.canonical_player_id=? AND s.source_context='SEASON_TOTAL'", (season_id,canonical_player_id)).fetchone()
+        if scope == "full_season":
+            row = conn.execute(_STATSPRO_SELECT + "WHERE s.season_id=? AND s.canonical_player_id=? AND s.source_context='SEASON_TOTAL'", (season_id,canonical_player_id)).fetchone()
+        else:
+            row = conn.execute(_DERIVED_SELECT + "WHERE s.season_id=? AND s.canonical_player_id=? AND s.scope='home_and_away'", (season_id,canonical_player_id)).fetchone()
     finally:
         conn.close()
     if row is None:
         return application_error(404, "player_stat_summary_not_found", "Player season summary not found.")
-    return _statspro_projection(row,advanced)
+    return (_statspro_projection if scope == "full_season" else _derived_projection)(row,advanced)

@@ -728,10 +728,16 @@ def _season_year(item: Mapping[str, Any]) -> int | None:
 
 
 def _normalise_round(item: dict[str, Any]) -> dict[str, Any]:
+    # Preserve an upstream competition semantic when supplied.  Unknown values
+    # stay unclassified and deliberately block finalized derived products.
+    phase_value = item.get("competitionPhase", item.get("roundType"))
+    phase = ({"HOME_AND_AWAY": "HOME_AND_AWAY", "PREMIERSHIP": "HOME_AND_AWAY",
+              "FINALS": "FINALS"}.get(str(phase_value).upper())
+             if phase_value is not None else None)
     return {**_base(item), "name": item.get("name"), "abbreviation": item.get("abbreviation"),
             "round_number": item.get("roundNumber"), "start_time": item.get("utcStartTime"),
             "end_time": item.get("utcEndTime"), "byes": deepcopy(item.get("byes", [])),
-            "metadata": item.get("metadata")}
+            "metadata": item.get("metadata"), "competition_phase": phase}
 
 
 def _normalise_team(item: dict[str, Any]) -> dict[str, Any]:

@@ -52,6 +52,49 @@ GET /api/v1/seasons/{season_id}/player-stat-summaries?scope=full_season&limit=10
 GET /api/v1/players/{canonical_player_id}/seasons/{season_id}/player-stat-summary?scope=full_season
 ```
 
+## Derived Home & Away scope
+
+The same resource family also serves finalized local summaries with
+`scope=home_and_away` and `source=DERIVED_MATCH_STATS`. These are not StatsPro
+records: the authority chain is canonical CFS match player statistics → derived
+Home & Away artifact. StatsPro `SEASON_TOTAL` remains AFL-published and includes
+finals (`scope=full_season`, `source=AFL_STATSPRO`,
+`source_context=SEASON_TOTAL`).
+
+Round selection uses only `rounds.competition_phase`: `HOME_AND_AWAY` is
+included and `FINALS` excluded. Round numbers and labels have no role. A null
+or unknown classification blocks finalization rather than guessing; this makes
+Opening Round and historical/nonstandard numbering safe when their canonical
+phase is persisted.
+
+Build locally (there is no HTTP collector or upstream request in this path):
+
+```bash
+python cli.py --build-player-stat-summaries 2025 --scope home_and_away
+```
+
+The population is `competition_season_players LEFT JOIN H&A appearances`, so
+historical season-team membership is retained and a valid member with no
+appearance receives `games_played=0` and zero additive totals. The explicit
+additive contract is goals, behinds, kicks, handballs, disposals, marks,
+tackles, and hitouts. Goal accuracy is the sole reproduced rate and is computed
+as aggregate goals divided by aggregate scoring shots; a zero denominator is
+null. Match percentages lacking proven numerator/denominator semantics and
+opaque `ratingPoints`/`ranking` are intentionally absent, never averaged or
+summed.
+
+Every concluded H&A fixture must have satisfactory two-sided, concluded CFS
+authority or an active reviewed `stats_not_expected` disposition. Real facts
+take precedence over a stale review. A review permits finalization but creates
+no appearances. Calculation completes before a transactional scope replacement;
+rebuilds are deterministic, update corrected facts, and preserve the last valid
+summary when validation fails.
+
+```http
+GET /api/v1/seasons/{season_id}/player-stat-summaries?scope=home_and_away
+GET /api/v1/players/{canonical_player_id}/seasons/{season_id}/player-stat-summary?scope=home_and_away
+```
+
 The collection supports optional `team_id` and `canonical_player_id` filters;
 `limit` is bounded to 1–250. Normal responses expose canonical identity,
 source/context/scope, published facts and timestamps. `advanced=true` requires

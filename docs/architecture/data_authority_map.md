@@ -83,3 +83,14 @@ post-round reconciliation/history facts. Neither replaces CFS match player
 statistics as the live operational authority, and embedded StatsPro profile
 fields do not override the canonical identity system. See
 [`docs/statspro.md`](../statspro.md).
+
+# Derived Home & Away player summaries
+
+Finalized `HOME_AND_AWAY` player summaries are reproducible AFL-api analytical
+artifacts whose fact authority is the settled (`snapshot_authority=2`),
+satisfactory canonical `cfs_player_stats` snapshot for each semantically
+classified H&A match. Their population and historical team context come from
+`competition_season_players`, independently of appearances. They neither
+replace nor reinterpret StatsPro `SEASON_TOTAL`; consumers distinguish them by
+`source=DERIVED_MATCH_STATS` versus `source=AFL_STATSPRO`. See
+[`docs/statspro.md`](../statspro.md#derived-home--away-scope).

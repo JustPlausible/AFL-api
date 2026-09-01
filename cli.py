@@ -38,6 +38,7 @@ OPERATION_FLAGS = {
     "collect_match_player_stats": "--collect-match-player-stats",
     "collect_statspro_season": "--collect-statspro-season",
     "collect_statspro_round": "--collect-statspro-round",
+    "build_player_stat_summaries": "--build-player-stat-summaries",
     "import_clubs": "--import-clubs",
     "export_clubs": "--export-clubs",
     "add_api_key": "--add-api-key",
@@ -167,6 +168,10 @@ def create_parser() -> argparse.ArgumentParser:
     _add_operation_argument(cfs_group, "collect_statspro_round", type=cfs_round_provider_id,
                             metavar="ROUND_PROVIDER_ID",
                             help="Collect and persist StatsPro LEAGUE_ROUND_TOTAL for a persisted round")
+    _add_operation_argument(cfs_group, "build_player_stat_summaries", type=int, metavar="YEAR",
+                            help="Build finalized local player summaries for a persisted season")
+    cfs_group.add_argument("--scope", choices=("home_and_away",),
+                           help="With --build-player-stat-summaries: required summary scope")
     cfs_group.add_argument("--source-status", metavar="STATUS",
                            help="With --collect-match-player-stats: explicit canonical status fallback")
     cfs_group.add_argument("--afl-match-id", type=int, metavar="AFL_MATCH_ID",
@@ -251,6 +256,10 @@ def handle_args(argv=None):
         )
     if (args.source_status or args.afl_match_id is not None) and not args.collect_match_player_stats:
         parser.error("--source-status and --afl-match-id require --collect-match-player-stats CD_M...")
+    if args.build_player_stat_summaries and args.scope != "home_and_away":
+        parser.error("--build-player-stat-summaries requires --scope home_and_away")
+    if args.scope and not args.build_player_stat_summaries:
+        parser.error("--scope requires --build-player-stat-summaries")
     collection_options = (args.collection_output is not None or args.collection_round
                           or args.collection_match or args.collection_endpoints
                           or args.collection_overwrite or args.collection_resume or args.no_database)

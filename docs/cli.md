@@ -712,3 +712,14 @@ idempotent collection; the single-match command targets one concluded gap.
 Reporting itself never repairs, backfills, collects, updates snapshot authority,
 uses HTML fallback, or writes an audit. It does not validate injuries, CFS roster
 persistence, consumer scoring, or require every season member to record a stat.
+# Build finalized Home & Away player summaries
+
+```bash
+python cli.py --build-player-stat-summaries 2025 --scope home_and_away
+```
+
+This is an offline database build. It validates canonical round phase and
+authoritative concluded CFS coverage (honouring active reviewed
+`stats_not_expected` fixtures), then transactionally replaces only the derived
+Home & Away scope and reports selection, population, row-change, unsupported
+field, and reproducibility counts. It never refreshes StatsPro or calls AFL.

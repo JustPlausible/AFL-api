@@ -141,6 +141,7 @@ def persist_afl_metadata(conn: sqlite3.Connection, result: CollectionResult) -> 
                 "season_id": season["afl_id"], "competition_id": competition["afl_id"],
                 "scraped_at": now, "provider_id": round_record.get("provider_id"),
                 "round_number": round_record.get("round_number"),
+                "competition_phase": round_record.get("competition_phase"),
                 "abbreviation": round_record.get("abbreviation"),
                 "start_time": round_record.get("start_time"), "end_time": round_record.get("end_time"),
                 "byes_json": _json(round_record.get("byes")),
