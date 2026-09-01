@@ -36,6 +36,8 @@ OPERATION_FLAGS = {
     "revoke_stats_not_expected": "--revoke-stats-not-expected",
     "collect_match_rosters": "--collect-match-rosters",
     "collect_match_player_stats": "--collect-match-player-stats",
+    "collect_statspro_season": "--collect-statspro-season",
+    "collect_statspro_round": "--collect-statspro-round",
     "import_clubs": "--import-clubs",
     "export_clubs": "--export-clubs",
     "add_api_key": "--add-api-key",
@@ -160,6 +162,11 @@ def create_parser() -> argparse.ArgumentParser:
     _add_operation_argument(cfs_group, "collect_match_player_stats", metavar="MATCH_PROVIDER_ID",
                                 type=cfs_match_provider_id,
                                 help="Collect CFS stats into cfs_player_stats; requires CD_M... (example: CD_M20260142001)")
+    _add_operation_argument(cfs_group, "collect_statspro_season", type=int, metavar="YEAR",
+                            help="Collect and persist finals-inclusive StatsPro SEASON_TOTAL for a persisted season")
+    _add_operation_argument(cfs_group, "collect_statspro_round", type=cfs_round_provider_id,
+                            metavar="ROUND_PROVIDER_ID",
+                            help="Collect and persist StatsPro LEAGUE_ROUND_TOTAL for a persisted round")
     cfs_group.add_argument("--source-status", metavar="STATUS",
                            help="With --collect-match-player-stats: explicit canonical status fallback")
     cfs_group.add_argument("--afl-match-id", type=int, metavar="AFL_MATCH_ID",

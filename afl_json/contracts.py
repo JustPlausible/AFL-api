@@ -21,6 +21,7 @@ PUBLIC_API_BASE: Final = "https://aflapi.afl.com.au/afl/v2"
 # directly under this root, not under "/afl") resolve correctly without a
 # per-endpoint base-URL override or string-manipulation workaround.
 CFS_SERVICE_ROOT: Final = "https://api.afl.com.au/cfs"
+STATSPRO_SERVICE_ROOT: Final = "https://api.afl.com.au/statspro"
 CFS_TOKEN_HEADER: Final = "x-media-mis-token"
 CFS_ERROR_AUTH: Final = "CFSAPI001"
 CFS_ERROR_NOT_PUBLISHED: Final = "CFSSDS001"
@@ -31,6 +32,7 @@ RETRYABLE_HTTP_STATUSES: Final = (429, 500, 502, 503, 504)
 class SourceSystem(str, Enum):
     PUBLIC = "public_api"
     CFS = "cfs"
+    STATSPRO = "statspro"
 
 
 class HttpMethod(str, Enum):
@@ -66,7 +68,11 @@ class EndpointDefinition:
 
     @property
     def base_url(self) -> str:
-        return CFS_SERVICE_ROOT if self.source is SourceSystem.CFS else PUBLIC_API_BASE
+        if self.source is SourceSystem.CFS:
+            return CFS_SERVICE_ROOT
+        if self.source is SourceSystem.STATSPRO:
+            return STATSPRO_SERVICE_ROOT
+        return PUBLIC_API_BASE
 
     @property
     def url_template(self) -> str:
@@ -123,6 +129,15 @@ _ENDPOINTS = {
         collection_paths=("homeTeamPlayerStats", "awayTeamPlayerStats"), identifier_type="player",
         required_path_parameters=("match_provider_id",),
         unverified_fields=("time-on-ground path", "dreamTeamPoints fantasy-score semantics")),
+    "statspro_season_total": _endpoint("statspro_season_total", "/playersStats/seasons/{season_provider_id}",
+        "statspro_season_total", source=SourceSystem.STATSPRO, method=HttpMethod.GET,
+        requires_auth=True, collection_paths=("players",), identifier_type="player",
+        required_path_parameters=("season_provider_id",),
+        required_query_parameters=("includeBenchmarks", "playerNameLike", "playerPosition", "teamId")),
+    "statspro_round_total": _endpoint("statspro_round_total", "/playersStats/rounds/{round_provider_id}",
+        "statspro_round_total", source=SourceSystem.STATSPRO, method=HttpMethod.GET,
+        requires_auth=True, collection_paths=("players",), identifier_type="player",
+        required_path_parameters=("round_provider_id",), required_query_parameters=("teamId",)),
 }
 
 ENDPOINTS: Final[Mapping[str, EndpointDefinition]] = MappingProxyType(_ENDPOINTS)

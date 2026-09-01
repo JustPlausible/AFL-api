@@ -20,6 +20,7 @@ from afl_json.contracts import (
 EXPECTED_NAMES = {
     "wmc_token", "competitions", "competition_seasons", "rounds", "teams", "matches",
     "match_detail", "player_id_map", "season_players", "match_rosters", "match_player_statistics",
+    "statspro_season_total", "statspro_round_total",
 }
 
 
@@ -45,6 +46,7 @@ def test_required_query_parameters_and_authentication_flags():
     assert ENDPOINTS["season_players"].required_query_parameters == ("seasonId",)
     assert {item.name for item in ENDPOINTS.values() if item.requires_auth} == {
         "season_players", "match_rosters", "match_player_statistics",
+        "statspro_season_total", "statspro_round_total",
     }
     assert ENDPOINTS["wmc_token"].method is HttpMethod.POST
 

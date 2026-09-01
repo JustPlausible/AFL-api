@@ -673,3 +673,12 @@ Initial implementation should build collection and normalisation infrastructure 
 - optional persistence adapter behind an interface.
 
 This keeps source discovery, collection, normalisation and database migration independently testable.
+# Maintained StatsPro endpoints
+
+* `/statspro/playersStats/seasons/{season_provider_id}` — authenticated
+  `SEASON_TOTAL`, finals-inclusive published totals and averages.
+* `/statspro/playersStats/rounds/{round_provider_id}` — authenticated
+  `LEAGUE_ROUND_TOTAL`, post-round bulk facts.
+
+Both reuse the transient `AflJsonClient`/WMCTok authentication boundary. See
+`docs/statspro.md` for authority and operator semantics.

@@ -156,6 +156,26 @@
       ],
       "contract_test_module": "tests/test_afl_json_fixture_contracts.py",
       "intentionally_unsupported": "Pagination is not part of the verified match-scoped response. HTTP 401 and CFSSDS001 use shared CFS error fixtures."
+    },
+    {
+      "name": "statspro_season_total",
+      "production_module": "afl_json.statspro.StatsProCollector",
+      "fixture_directory": "tests/fixtures/afl_json",
+      "covered_scenarios": [
+        "normal"
+      ],
+      "contract_test_module": "tests/test_statspro.py",
+      "intentionally_unsupported": "Live polling and browser-captured credentials are intentionally unsupported."
+    },
+    {
+      "name": "statspro_round_total",
+      "production_module": "afl_json.statspro.StatsProCollector",
+      "fixture_directory": "tests/fixtures/afl_json",
+      "covered_scenarios": [
+        "normal"
+      ],
+      "contract_test_module": "tests/test_statspro.py",
+      "intentionally_unsupported": "Live polling and browser-captured credentials are intentionally unsupported."
     }
   ],
   "fixtures": [
@@ -1054,6 +1074,34 @@
       ],
       "reduction": "Intentionally reduced to the smallest established payload shape that retains parsing, validation, pagination, status and diagnostic structure.",
       "production_module": "afl_json.collectors.PublicAflCollector"
+    },
+    {
+      "capture_date": "2026-09-01",
+      "scenario": "normal",
+      "full": false,
+      "sanitisation": [
+        "synthetic deterministic fixture; contains no credentials or request headers"
+      ],
+      "reduction": "Reduced offline contract fixture retaining published totals, averages, identity, null and zero semantics.",
+      "production_module": "afl_json.statspro",
+      "id": "statspro-season-total-2025",
+      "path": "statspro_season_total_2025.json",
+      "endpoint_family": "statspro_season_total",
+      "source_url_pattern": "https://api.afl.com.au/statspro/playersStats/seasons/{season_provider_id}"
+    },
+    {
+      "capture_date": "2026-09-01",
+      "scenario": "normal",
+      "full": false,
+      "sanitisation": [
+        "synthetic deterministic fixture; contains no credentials or request headers"
+      ],
+      "reduction": "Reduced offline contract fixture retaining published totals, averages, identity, null and zero semantics.",
+      "production_module": "afl_json.statspro",
+      "id": "statspro-round-total-2026-07",
+      "path": "statspro_round_07_2026.json",
+      "endpoint_family": "statspro_round_total",
+      "source_url_pattern": "https://api.afl.com.au/statspro/playersStats/rounds/{round_provider_id}"
     }
   ]
 }
