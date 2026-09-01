@@ -813,7 +813,7 @@ def handle_import_player_movements(args):
     from scraper.player_movements.orchestration import import_player_movements
     acquirer=MovementAcquirer()
     source_url=args.movement_source_url or LIVE_URL
-    document=(acquirer.acquire_file(args.movement_source_file,source_url=source_url,source_archived_at=args.source_archived_at) if args.movement_source_file else acquirer.acquire_url(source_url))
+    document=(acquirer.acquire_file(args.movement_source_file,source_url=source_url,source_archived_at=args.source_archived_at) if args.movement_source_file else acquirer.acquire_url(source_url,source_archived_at=args.source_archived_at))
     conn=get_db_connection()
     try: outcome=import_player_movements(conn,document,movement_season_year=args.import_player_movements)
     finally: conn.close()

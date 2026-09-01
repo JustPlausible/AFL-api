@@ -122,3 +122,94 @@ def test_direct_wayback_and_live_url_archive_semantics():
         wayback, "2026-02-01T00:06:14Z"
     )
     assert (live.source_url, live.source_archived_at) == (LIVE_URL, None)
+
+
+def test_url_acquisition_prefers_explicit_archive_timestamp():
+    explicit = "2026-02-02T03:04:05Z"
+    acquirer = MovementAcquirer(_HttpClient())
+    inferable = ("https://web.archive.org/web/20260201000614/"
+                 "https://www.afl.com.au/news/retirements-and-delistings")
+    unrecognised_archive = "https://archive.example.test/afl/movements"
+    assert acquirer.acquire_url(
+        inferable, source_archived_at=explicit
+    ).source_archived_at == explicit
+    assert acquirer.acquire_url(
+        unrecognised_archive, source_archived_at=explicit
+    ).source_archived_at == explicit
+
+
+def test_reconciliation_uses_only_afl_seasons_and_preserves_archive_filter():
+    from scraper.player_movements.orchestration import reconcile_player_movements
+
+    conn = _movement_connection()
+    try:
+        conn.executemany(
+            "INSERT INTO afl_seasons VALUES(?,?,?)",
+            ((101, 1, 2026), (201, 2, 2026)),
+        )
+        conn.executemany(
+            "INSERT INTO afl_teams VALUES(?,?)",
+            ((2, "Brisbane Lions"), (3, "AFLW Club")),
+        )
+        # AFL changes club. Conflicting AFLW membership stays at a third club in
+        # 2025 and is absent in 2026; neither may duplicate/change the result.
+        conn.executemany(
+            "INSERT INTO competition_season_players VALUES(?,?,?)",
+            ((10, 101, 2), (10, 200, 3)),
+        )
+        common = (
+            10, 2025, 1, "TRADED", "trd", "Chris Burgess", "Adelaide",
+            "AFL_EDITORIAL", "https://example.test/source", "resolved",
+            "2026-09-01T00:00:00Z", "2026-09-01T00:00:00Z",
+            "2026-09-01T00:00:00Z",
+        )
+        conn.executemany("""
+            INSERT INTO player_movement_observations(
+                canonical_player_id,movement_season_year,from_team_id,movement_type,
+                source_label,source_player_name,source_team_name,source_family,
+                source_url,source_archived_at,resolution_status,observed_at,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """, ((*common[:9], "2026-02-01T00:06:14Z", *common[9:]),
+               (*common[:9], "2026-09-01T00:00:00Z", *common[9:])))
+        rows = reconcile_player_movements(
+            conn, movement_season_year=2025, next_season_year=2026,
+            source_archived_at="2026-02-01T00:06:14Z",
+        )
+    finally:
+        conn.close()
+    assert len(rows) == 1
+    assert rows[0]["canonical_player_id"] == 10
+    assert rows[0]["transition"] == "changed_club"
+
+
+def test_url_explicit_archive_timestamp_matches_persisted_outcome():
+    class FixtureHttpClient:
+        def get(self, url, timeout=None):
+            response = _Response()
+            response.text = (
+                F / "afl_retirements_and_delistings_wayback_2026-02-01.html"
+            ).read_text()
+            return response
+
+    explicit = "2026-02-01T00:06:14Z"
+    url = "https://archive.example.test/afl/retirements-and-delistings"
+    document = MovementAcquirer(FixtureHttpClient()).acquire_url(
+        url, source_archived_at=explicit,
+        observed_at="2026-09-01T00:00:00Z",
+    )
+    parsed = parse_player_movements_html(document.html)
+    conn = _movement_connection()
+    try:
+        resolved = MovementResolver(conn).resolve(parsed, movement_season_year=2025)
+        outcome = MovementPersistenceAdapter(conn).persist(
+            resolved, document, movement_season_year=2025,
+            counts_by_type=parsed.counts_by_type,
+        )
+        stored = conn.execute(
+            "SELECT source_archived_at FROM player_movement_observations "
+            "WHERE source_player_name='Chris Burgess'"
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    assert outcome.source_archived_at == explicit
+    assert stored == explicit

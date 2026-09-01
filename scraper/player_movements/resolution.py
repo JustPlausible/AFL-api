@@ -5,16 +5,21 @@ from .models import MovementResolutionResult, ResolvedMovementRecord
 
 def _name(value): return re.sub(r"[^a-z0-9]", "", unicodedata.normalize("NFKC",value).casefold())
 
+def resolve_canonical_afl_season_id(conn, year: int) -> int | None:
+    """Resolve exactly one persisted AFL season, never another same-year competition."""
+    seasons = conn.execute(
+        "SELECT s.afl_id FROM afl_seasons s JOIN afl_competitions c "
+        "ON c.afl_id=s.competition_id WHERE s.year=? "
+        "AND (c.code=? OR c.provider_id=?)",
+        (year, AFL_COMPETITION_CODE, AFL_COMPETITION_PROVIDER_ID),
+    ).fetchall()
+    return seasons[0][0] if len(seasons) == 1 else None
+
+
 class MovementResolver:
     def __init__(self, conn): self.conn=conn
     def resolve(self, parsed, *, movement_season_year: int):
-        seasons=self.conn.execute(
-            "SELECT s.afl_id FROM afl_seasons s JOIN afl_competitions c "
-            "ON c.afl_id=s.competition_id WHERE s.year=? "
-            "AND (c.code=? OR c.provider_id=?)",
-            (movement_season_year, AFL_COMPETITION_CODE, AFL_COMPETITION_PROVIDER_ID),
-        ).fetchall()
-        season_id=seasons[0][0] if len(seasons) == 1 else None
+        season_id = resolve_canonical_afl_season_id(self.conn, movement_season_year)
         output=[]
         for source in parsed.records:
             club=get_canonical_club(source.team_name)

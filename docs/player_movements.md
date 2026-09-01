@@ -14,7 +14,7 @@ The 1 February fixture has 18 clubs and 146 rows: `del` 83, `ret` 29, `trd` 27, 
 
 ## Acquisition and provenance
 
-Use a saved file or an explicit live/archive URL. Wayback timestamps are parsed from the URL, so `20260201000614` is persisted as `2026-02-01T00:06:14Z`; observation/import time remains separate. A saved file may be imported alone, while supplying its original URL alongside it records that URL as provenance (and `--source-archived-at` may be explicit). With both options, the file is the HTML transport and the URL is provenance; it is not fetched. Snapshot identity includes URL and archive time, allowing February and later observations to coexist and same-snapshot imports to be idempotent.
+Use a saved file or an explicit live/archive URL. Wayback timestamps are parsed from the URL, so `20260201000614` is persisted as `2026-02-01T00:06:14Z`; observation/import time remains separate. A saved file may be imported alone, while supplying its original URL alongside it records that URL as provenance (and `--source-archived-at` may be explicit). With both options, the file is the HTML transport and the URL is provenance; it is not fetched. An explicit operator-supplied archive timestamp takes precedence over timestamp inference for both file and URL acquisition; live AFL URLs otherwise retain a null archive time. Snapshot identity includes URL and archive time, allowing February and later observations to coexist and same-snapshot imports to be idempotent.
 
 ```bash
 python cli.py --import-player-movements 2025 \
@@ -30,4 +30,4 @@ Resolution is exact-name only within the named canonical club's applicable previ
 
 `GET /api/v1/players/{canonical_player_id}/movements` returns resolved supplemental observations, including the originating team, original label/detail, AFL article link, snapshot source URL, archive timestamp, and observation time. A known player with no movement history returns an empty `movements` list; an unknown canonical ID returns the normal 404 application error.
 
-`reconcile_player_movements` is a read-only operator building block for previous/current membership comparison. It reports `same_club`, `changed_club`, `absent_from_next_population`, or `unresolved`; a movement may explain a factual transition but never causes or guesses one.
+`reconcile_player_movements` is a read-only operator building block for previous/current membership comparison. Both adjacent seasons are constrained to the canonical AFL competition, so same-year AFLW or other competition memberships cannot duplicate or alter transitions. It reports `same_club`, `changed_club`, `absent_from_next_population`, or `unresolved`; a movement may explain a factual transition but never causes or guesses one.

@@ -18,13 +18,13 @@ class MovementAcquirer:
         self.http_client = http_client or get_scraper_http_client()
         self.timeout = timeout
 
-    def acquire_url(self, url: str = LIVE_URL, *, observed_at: str | None = None):
+    def acquire_url(self, url: str = LIVE_URL, *, source_archived_at: str | None = None, observed_at: str | None = None):
         response = self.http_client.get(url, timeout=self.timeout)
         html = response.text
         if not html or "retirements-and-delistings" not in html.lower():
             raise ValueError("Player-movement source returned no required editorial content")
-        return MovementSourceDocument(html, url, observed_at or datetime.now(timezone.utc).isoformat(), archived_at_from_url(url))
+        return MovementSourceDocument(html, url, observed_at or datetime.now(timezone.utc).isoformat(), source_archived_at if source_archived_at is not None else archived_at_from_url(url))
 
     def acquire_file(self, path, *, source_url: str, source_archived_at: str | None = None, observed_at: str | None = None):
         html = Path(path).read_text(encoding="utf-8")
-        return MovementSourceDocument(html, source_url, observed_at or datetime.now(timezone.utc).isoformat(), source_archived_at or archived_at_from_url(source_url))
+        return MovementSourceDocument(html, source_url, observed_at or datetime.now(timezone.utc).isoformat(), source_archived_at if source_archived_at is not None else archived_at_from_url(source_url))
