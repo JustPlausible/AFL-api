@@ -152,15 +152,41 @@ def _print_statspro_report(report):
     )
 
 
+def _resolve_statspro_season(conn, *, year, competition_code, competition_provider_id):
+    """Resolve one persisted season through the configured AFL competition identity."""
+    competitions = conn.execute(
+        "SELECT afl_id FROM afl_competitions WHERE code=? AND provider_id=? ORDER BY afl_id",
+        (competition_code, competition_provider_id),
+    ).fetchall()
+    if len(competitions) != 1:
+        raise ValueError(
+            "configured AFL competition could not be resolved uniquely "
+            f"(code={competition_code!r}, provider_id={competition_provider_id!r})"
+        )
+    seasons = conn.execute(
+        "SELECT afl_id,provider_id FROM afl_seasons WHERE competition_id=? AND year=? ORDER BY afl_id",
+        (competitions[0]["afl_id"], year),
+    ).fetchall()
+    if len(seasons) != 1:
+        raise ValueError(
+            f"AFL season {year} could not be resolved uniquely for the configured competition"
+        )
+    if not seasons[0]["provider_id"]:
+        raise ValueError("season is persisted but has no provider ID")
+    return seasons[0]
+
+
 def handle_collect_statspro_season(args):
     from afl_json.client import AflJsonClient
     from afl_json.statspro import StatsProCollector, persist_season
     from db.connection import get_db_connection
     conn = get_db_connection()
     try:
-        season = conn.execute("SELECT afl_id,provider_id FROM afl_seasons WHERE year=?", (args.collect_statspro_season,)).fetchone()
-        if season is None or not season["provider_id"]:
-            raise ValueError("season is not persisted or has no provider ID")
+        season = _resolve_statspro_season(
+            conn, year=args.collect_statspro_season,
+            competition_code=args.afl_competition_code,
+            competition_provider_id=args.afl_competition_provider_id,
+        )
         with AflJsonClient() as client:
             records, collected_at = StatsProCollector(client).fetch_season(season["provider_id"])
         report = persist_season(conn, records, season_id=season["afl_id"],
