@@ -113,8 +113,10 @@ def _derived_projection(row, advanced: bool) -> PlayerStatSummary:
     return PlayerStatSummary(
         player=StatsProPlayer(canonical_player_id=row["canonical_player_id"],
             champion_data_id=row["champion_data_id"] if advanced else None),
-        season=StatsProSeasonRef(season_id=row["season_id"]),
-        team=(StatsProTeamRef(team_id=row["team_id"], name=row["team_name"])
+        season=StatsProSeasonRef(season_id=row["season_id"],
+            provider_id=row["season_provider_id"] if advanced else None),
+        team=(StatsProTeamRef(team_id=row["team_id"], name=row["team_name"],
+            provider_id=row["team_provider_id"] if advanced else None)
               if row["team_id"] is not None else None),
         scope="home_and_away", source="DERIVED_MATCH_STATS",
         population_source=row["population_source"], games_played=row["games_played"],
@@ -1740,8 +1742,10 @@ _STATSPRO_SELECT = (
     "LEFT JOIN afl_teams t ON t.afl_id=s.team_id "
 )
 _DERIVED_SELECT = (
-    "SELECT s.*,t.name AS team_name,p.provider_player_id AS champion_data_id "
+    "SELECT s.*,t.name AS team_name,t.provider_id AS team_provider_id,"
+    "cs.provider_id AS season_provider_id,p.provider_player_id AS champion_data_id "
     "FROM derived_player_season_summaries s LEFT JOIN afl_teams t ON t.afl_id=s.team_id "
+    "JOIN afl_seasons cs ON cs.afl_id=s.season_id "
     "LEFT JOIN player_provider_ids p ON p.player_id=s.canonical_player_id AND p.provider='champion_data' "
 )
 
@@ -1765,6 +1769,8 @@ def get_player_stat_summaries(
     filters = ["s.season_id=?", "s.canonical_player_id IS NOT NULL"]
     if scope == "full_season":
         filters.append("s.source_context='SEASON_TOTAL'")
+    else:
+        filters.append("s.finalized=1")
     values: list[object] = [season_id]
     if team_id is not None:
         filters.append("s.team_id=?"); values.append(team_id)
@@ -1798,7 +1804,8 @@ def get_player_stat_summary(canonical_player_id: int, season_id: int,
         if scope == "full_season":
             row = conn.execute(_STATSPRO_SELECT + "WHERE s.season_id=? AND s.canonical_player_id=? AND s.source_context='SEASON_TOTAL'", (season_id,canonical_player_id)).fetchone()
         else:
-            row = conn.execute(_DERIVED_SELECT + "WHERE s.season_id=? AND s.canonical_player_id=? AND s.scope='home_and_away'", (season_id,canonical_player_id)).fetchone()
+            row = conn.execute(_DERIVED_SELECT + "WHERE s.season_id=? AND s.canonical_player_id=? "
+                "AND s.scope='home_and_away' AND s.finalized=1", (season_id,canonical_player_id)).fetchone()
     finally:
         conn.close()
     if row is None:

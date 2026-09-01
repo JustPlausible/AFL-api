@@ -5,7 +5,7 @@ import json
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Callable
 
 from .match_data_exceptions import active_stats_exception
@@ -61,8 +61,27 @@ def select_home_and_away_matches(conn: sqlite3.Connection, season_id: int):
     ).fetchall()
 
 
-def _number(value) -> Decimal:
-    return Decimal(str(value or 0))
+def _required_number(value, *, match_provider_id: str, player_provider_id: str,
+                     field: str) -> Decimal:
+    """Return a finite source number; an appearance's missing fact is not zero."""
+    if value is None or isinstance(value, bool):
+        raise SummaryNotReady(
+            f"authoritative player fact has invalid {field}: match={match_provider_id} "
+            f"player={player_provider_id} value={value!r}"
+        )
+    try:
+        number = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        raise SummaryNotReady(
+            f"authoritative player fact has invalid {field}: match={match_provider_id} "
+            f"player={player_provider_id} value={value!r}"
+        ) from None
+    if not number.is_finite():
+        raise SummaryNotReady(
+            f"authoritative player fact has invalid {field}: match={match_provider_id} "
+            f"player={player_provider_id} value={value!r}"
+        )
+    return number
 
 
 def build_home_and_away_player_summaries(conn: sqlite3.Connection, season_id: int, *,
@@ -101,18 +120,31 @@ def build_home_and_away_player_summaries(conn: sqlite3.Connection, season_id: in
     if included:
         placeholders = ",".join("?" for _ in included)
         facts = conn.execute(
-            f"SELECT canonical_player_id,collected_at,{','.join(ADDITIVE_FIELDS)} "
+            f"SELECT match_provider_id,champion_data_player_id,canonical_player_id,collected_at,"
+            f"{','.join(ADDITIVE_FIELDS)} "
             f"FROM cfs_player_stats WHERE snapshot_authority=2 AND match_provider_id IN ({placeholders})",
             included,
         ).fetchall()
         appearances: dict[int, int] = {}
         for fact in facts:
             player_id = fact["canonical_player_id"]
-            if player_id not in totals:  # membership is authoritative; never create from a fact/name
-                continue
+            if player_id is None:
+                raise SummaryNotReady(
+                    "authoritative player fact has unresolved canonical identity: "
+                    f"match={fact['match_provider_id']} player={fact['champion_data_player_id']}"
+                )
+            if player_id not in totals:
+                raise SummaryNotReady(
+                    "authoritative player fact is absent from season population: "
+                    f"match={fact['match_provider_id']} player={fact['champion_data_player_id']} "
+                    f"canonical_player_id={player_id} season_id={season_id}"
+                )
             appearances[player_id] = appearances.get(player_id, 0) + 1
             for field in ADDITIVE_FIELDS:
-                totals[player_id][field] += _number(fact[field])
+                totals[player_id][field] += _required_number(
+                    fact[field], match_provider_id=fact["match_provider_id"],
+                    player_provider_id=fact["champion_data_player_id"], field=field,
+                )
             source_max = max(filter(None, (source_max, fact["collected_at"])), default=None)
         games.update(appearances)
 

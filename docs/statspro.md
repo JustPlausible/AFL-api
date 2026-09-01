@@ -62,7 +62,9 @@ finals (`scope=full_season`, `source=AFL_STATSPRO`,
 `source_context=SEASON_TOTAL`).
 
 Round selection uses only `rounds.competition_phase`: `HOME_AND_AWAY` is
-included and `FINALS` excluded. Round numbers and labels have no role. A null
+included and `FINALS` excluded. During the supported fixture collection flow,
+that phase is classified from AFL match fixture metadata's explicit
+`finals_match_label` semantic marker; neither round numbers nor labels have a role. A null
 or unknown classification blocks finalization rather than guessing; this makes
 Opening Round and historical/nonstandard numbering safe when their canonical
 phase is persisted.

@@ -69,6 +69,32 @@ def test_collects_complete_hierarchy_and_resolves_stable_identifiers():
     assert scheduled["home_team"]["providerId"] == "CD_T10"
     assert concluded["home_score"]["totalScore"] == 65
     assert concluded["away_score"]["totalScore"] == 55
+    assert [item["competition_phase"] for item in result.rounds] == [
+        "HOME_AND_AWAY", "HOME_AND_AWAY"]
+
+
+def test_supported_fixture_metadata_semantically_classifies_finals_without_round_rules():
+    rounds = fixture("rounds.json")
+    rounds["rounds"] = [rounds["rounds"][0], {
+        "id": 1399, "providerId": "CD_RX", "name": "Opaque stage",
+        "abbreviation": "X", "roundNumber": 99, "byes": [],
+        "utcStartTime": "2026-09-01T00:00:00Z", "utcEndTime": "2026-09-02T00:00:00Z",
+    }]
+    client = FixtureClient({
+        "competitions": fixture("competitions.json"),
+        "competition_seasons": fixture("seasons.json"), "rounds": rounds,
+        "teams": fixture("teams.json"),
+        "matches": lambda _path, params: (
+            fixture("matches_round_0.json") if params["roundNumber"] == 0 else
+            {"matches": [{"id": 8999, "providerId": "CD_MX", "status": "CONCLUDED",
+              "round": {"id": 1399, "providerId": "CD_RX", "roundNumber": 99},
+              "home": {"team": {"id": 1}}, "away": {"team": {"id": 2}},
+              "metadata": {"finals_match_label": "Source-defined championship stage"}}]}
+        ),
+    })
+    result = PublicAflCollector(client).collect(season=2026)
+    assert [(item["round_number"], item["competition_phase"]) for item in result.rounds] == [
+        (0, "HOME_AND_AWAY"), (99, "FINALS")]
 
 
 def competition_records():
