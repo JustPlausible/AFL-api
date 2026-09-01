@@ -3,7 +3,7 @@
     {
       "player": {"providerId": "CD_I100"},
       "team": {"providerId": "CD_T10"},
-      "gamesPlayed": 27,
+      "gamesPlayed": 27.0,
       "totals": {"gamesPlayed": 27, "kicks": 320, "ratingPoints": 401.5, "kickins": null},
       "averages": {"kicks": 11.85, "ratingPoints": 14.87},
       "updatedAt": "2025-10-02T01:00:00Z"
@@ -11,7 +11,7 @@
     {
       "player": {"providerId": "CD_I101"},
       "team": {"providerId": "CD_T10"},
-      "gamesPlayed": 0,
+      "gamesPlayed": 0.0,
       "totals": {"gamesPlayed": 0, "kicks": 0, "ranking": null},
       "averages": {"kicks": null}
     },
