@@ -86,9 +86,20 @@ def normalise_statspro(payload: Any, *, context: str) -> list[StatsProPlayerSumm
         if player_id in seen:
             raise AflJsonInvalidResponse("StatsPro response contains duplicate player IDs", endpoint="statspro")
         seen.add(player_id)
+        if context == SEASON_TOTAL:
+            missing = [field for field in ("gamesPlayed", "totals", "averages") if field not in entry]
+            if missing:
+                raise AflJsonInvalidResponse(
+                    f"StatsPro player[{index}] is missing required {', '.join(missing)}",
+                    endpoint="statspro",
+                )
         totals = _object(entry.get("totals", {}), f"player[{index}].totals")
-        averages_value = entry.get("averages", {})
-        averages = _object(averages_value, f"player[{index}].averages")
+        averages = _object(entry.get("averages", {}), f"player[{index}].averages")
+        if context == SEASON_TOTAL and (not totals or not averages):
+            raise AflJsonInvalidResponse(
+                f"StatsPro player[{index}] has an empty authoritative summary",
+                endpoint="statspro",
+            )
         games = entry.get("gamesPlayed", totals.get("gamesPlayed", entry.get("games", 0)))
         if isinstance(games, bool) or not isinstance(games, int) or games < 0:
             raise AflJsonInvalidResponse(f"StatsPro player[{index}] has invalid gamesPlayed", endpoint="statspro")
@@ -131,7 +142,11 @@ def _resolve(conn: sqlite3.Connection, table: str, provider_id: str | None) -> i
     if provider_id is None:
         return None
     if table == "player_provider_ids":
-        row = conn.execute("SELECT player_id FROM player_provider_ids WHERE provider_player_id = ?", (provider_id,)).fetchone()
+        row = conn.execute(
+            "SELECT player_id FROM player_provider_ids "
+            "WHERE provider = 'champion_data' AND provider_player_id = ?",
+            (provider_id,),
+        ).fetchone()
     else:
         row = conn.execute("SELECT afl_id FROM afl_teams WHERE provider_id = ?", (provider_id,)).fetchone()
     return row[0] if row else None
