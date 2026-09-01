@@ -14,7 +14,7 @@ The 1 February fixture has 18 clubs and 146 rows: `del` 83, `ret` 29, `trd` 27, 
 
 ## Acquisition and provenance
 
-Use a saved file or an explicit live/archive URL. Wayback timestamps are parsed from the URL, so `20260201000614` is persisted as `2026-02-01T00:06:14Z`; observation/import time remains separate. A local historical file must be supplied its original URL (and may explicitly supply `--source-archived-at`). Snapshot identity includes URL and archive time, allowing February and later observations to coexist and same-snapshot imports to be idempotent.
+Use a saved file or an explicit live/archive URL. Wayback timestamps are parsed from the URL, so `20260201000614` is persisted as `2026-02-01T00:06:14Z`; observation/import time remains separate. A saved file may be imported alone, while supplying its original URL alongside it records that URL as provenance (and `--source-archived-at` may be explicit). With both options, the file is the HTML transport and the URL is provenance; it is not fetched. Snapshot identity includes URL and archive time, allowing February and later observations to coexist and same-snapshot imports to be idempotent.
 
 ```bash
 python cli.py --import-player-movements 2025 \
@@ -24,7 +24,7 @@ python cli.py --import-player-movements 2026 \
   --movement-source-url https://www.afl.com.au/news/retirements-and-delistings --print-json
 ```
 
-Resolution is exact-name only within the named canonical club's applicable previous-season membership. Unknown team/player evidence stays unresolved; duplicate exact members stay ambiguous. There is no global or fuzzy fallback and provider crosswalks are read neither written nor invented.
+Resolution is exact-name only within the named canonical club's applicable previous-season membership, and the season lookup is explicitly constrained to canonical AFL competition identity (`AFL` / `CD_C014`) even when another competition has the same year. Unknown team/player evidence stays unresolved; duplicate exact members stay ambiguous. There is no global or fuzzy fallback and provider crosswalks are read neither written nor invented.
 
 ## Consumer and replay
 

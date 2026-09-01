@@ -266,8 +266,8 @@ def handle_args(argv=None):
         parser.error("--build-player-stat-summaries requires --scope home_and_away")
     if args.scope and not args.build_player_stat_summaries:
         parser.error("--scope requires --build-player-stat-summaries")
-    if args.import_player_movements and bool(args.movement_source_file) == bool(args.movement_source_url):
-        parser.error("--import-player-movements requires exactly one of --movement-source-file or --movement-source-url")
+    if args.import_player_movements and not (args.movement_source_file or args.movement_source_url):
+        parser.error("--import-player-movements requires --movement-source-file or --movement-source-url")
     if (args.movement_source_file or args.movement_source_url or args.source_archived_at) and not args.import_player_movements:
         parser.error("movement source options require --import-player-movements")
     collection_options = (args.collection_output is not None or args.collection_round

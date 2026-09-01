@@ -1,4 +1,5 @@
 import re, unicodedata
+from config import AFL_COMPETITION_CODE, AFL_COMPETITION_PROVIDER_ID
 from utils.club_lookup import get_canonical_club
 from .models import MovementResolutionResult, ResolvedMovementRecord
 
@@ -7,13 +8,18 @@ def _name(value): return re.sub(r"[^a-z0-9]", "", unicodedata.normalize("NFKC",v
 class MovementResolver:
     def __init__(self, conn): self.conn=conn
     def resolve(self, parsed, *, movement_season_year: int):
-        season=self.conn.execute("SELECT afl_id FROM afl_seasons WHERE year=?",(movement_season_year,)).fetchone()
-        season_id=season[0] if season else None
+        seasons=self.conn.execute(
+            "SELECT s.afl_id FROM afl_seasons s JOIN afl_competitions c "
+            "ON c.afl_id=s.competition_id WHERE s.year=? "
+            "AND (c.code=? OR c.provider_id=?)",
+            (movement_season_year, AFL_COMPETITION_CODE, AFL_COMPETITION_PROVIDER_ID),
+        ).fetchall()
+        season_id=seasons[0][0] if len(seasons) == 1 else None
         output=[]
         for source in parsed.records:
             club=get_canonical_club(source.team_name)
             if not club or season_id is None:
-                output.append(ResolvedMovementRecord(source,"unresolved",reason="source team or movement season is not canonical")); continue
+                output.append(ResolvedMovementRecord(source,"unresolved",reason="source team or canonical AFL movement season is missing or ambiguous")); continue
             rows=self.conn.execute("SELECT cp.id,cp.display_name,cp.given_name,cp.family_name FROM competition_season_players csp JOIN canonical_players cp ON cp.id=csp.player_id WHERE csp.competition_season_id=? AND csp.team_id=?",(season_id,club['teamId'])).fetchall()
             matches=[]
             for row in rows:
