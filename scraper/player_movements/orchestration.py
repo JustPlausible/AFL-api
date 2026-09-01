@@ -11,6 +11,10 @@ def reconcile_player_movements(conn,*,movement_season_year,next_season_year,sour
  """Read-only AFL membership comparison; editorial evidence never changes membership."""
  old_season_id = resolve_canonical_afl_season_id(conn, movement_season_year)
  new_season_id = resolve_canonical_afl_season_id(conn, next_season_year)
+ if old_season_id is None:
+  raise ValueError(f"canonical AFL season {movement_season_year} is missing or ambiguous")
+ if new_season_id is None:
+  raise ValueError(f"canonical AFL season {next_season_year} is missing or ambiguous")
  params=[old_season_id,new_season_id,movement_season_year]; archive=''
  if source_archived_at is not None: archive=' AND pmo.source_archived_at IS ?'; params.append(source_archived_at)
  rows=conn.execute(f'''SELECT pmo.*, old.team_id old_team_id, new.team_id new_team_id FROM player_movement_observations pmo LEFT JOIN competition_season_players old ON old.player_id=pmo.canonical_player_id AND old.competition_season_id=? LEFT JOIN competition_season_players new ON new.player_id=pmo.canonical_player_id AND new.competition_season_id=? WHERE pmo.movement_season_year=?{archive}''',params).fetchall()

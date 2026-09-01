@@ -167,10 +167,10 @@ def test_reconciliation_uses_only_afl_seasons_and_preserves_archive_filter():
             INSERT INTO player_movement_observations(
                 canonical_player_id,movement_season_year,from_team_id,movement_type,
                 source_label,source_player_name,source_team_name,source_family,
-                source_url,source_archived_at,resolution_status,observed_at,created_at,updated_at
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-        """, ((*common[:9], "2026-02-01T00:06:14Z", *common[9:]),
-               (*common[:9], "2026-09-01T00:00:00Z", *common[9:])))
+                source_url,source_archived_at,source_snapshot_at,resolution_status,observed_at,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """, ((*common[:9], "2026-02-01T00:06:14Z", "2026-02-01T00:06:14Z", *common[9:]),
+               (*common[:9], "2026-09-01T00:00:00Z", "2026-09-01T00:00:00Z", *common[9:])))
         rows = reconcile_player_movements(
             conn, movement_season_year=2025, next_season_year=2026,
             source_archived_at="2026-02-01T00:06:14Z",
@@ -213,3 +213,96 @@ def test_url_explicit_archive_timestamp_matches_persisted_outcome():
         conn.close()
     assert outcome.source_archived_at == explicit
     assert stored == explicit
+
+
+import pytest
+from scraper.player_movements.models import MovementSourceDocument
+from scraper.player_movements.orchestration import reconcile_player_movements
+
+
+def test_reconciliation_rejects_missing_previous_afl_season():
+    conn = _movement_connection()
+    try:
+        with pytest.raises(ValueError, match="canonical AFL season 2024 is missing or ambiguous"):
+            reconcile_player_movements(
+                conn, movement_season_year=2024, next_season_year=2025
+            )
+    finally:
+        conn.close()
+
+
+def test_reconciliation_rejects_missing_next_afl_season():
+    conn = _movement_connection()
+    try:
+        with pytest.raises(ValueError, match="canonical AFL season 2026 is missing or ambiguous"):
+            reconcile_player_movements(
+                conn, movement_season_year=2025, next_season_year=2026
+            )
+    finally:
+        conn.close()
+
+
+def test_reconciliation_rejects_ambiguous_afl_season():
+    conn = _movement_connection()
+    try:
+        conn.execute("INSERT INTO afl_competitions VALUES(3,'CD_C014_ALT','AFL')")
+        conn.execute("INSERT INTO afl_seasons VALUES(300,3,2025)")
+        with pytest.raises(ValueError, match="canonical AFL season 2025 is missing or ambiguous"):
+            reconcile_player_movements(
+                conn, movement_season_year=2025, next_season_year=2026
+            )
+    finally:
+        conn.close()
+
+
+def test_live_observations_are_distinct_but_archived_snapshot_is_idempotent():
+    html = (F / "afl_retirements_and_delistings_wayback_2026-02-01.html").read_text()
+    parsed = parse_player_movements_html(html)
+    conn = _movement_connection()
+    try:
+        resolved = MovementResolver(conn).resolve(parsed, movement_season_year=2025)
+        live_t1 = MovementSourceDocument(
+            html, LIVE_URL, "2026-08-01T00:00:00Z", None
+        )
+        live_t2 = MovementSourceDocument(
+            html, LIVE_URL, "2026-09-01T00:00:00Z", None
+        )
+        first = MovementPersistenceAdapter(conn).persist(
+            resolved, live_t1, movement_season_year=2025,
+            counts_by_type=parsed.counts_by_type,
+        )
+        second = MovementPersistenceAdapter(conn).persist(
+            resolved, live_t2, movement_season_year=2025,
+            counts_by_type=parsed.counts_by_type,
+        )
+        live_snapshots = conn.execute(
+            "SELECT DISTINCT source_snapshot_at FROM player_movement_observations "
+            "WHERE source_url=? ORDER BY source_snapshot_at", (LIVE_URL,)
+        ).fetchall()
+
+        archive_url = ("https://web.archive.org/web/20260201000614/"
+                       "https://www.afl.com.au/news/retirements-and-delistings")
+        archive_t1 = MovementSourceDocument(
+            html, archive_url, "2026-08-01T00:00:00Z", "2026-02-01T00:06:14Z"
+        )
+        archive_t2 = MovementSourceDocument(
+            html, archive_url, "2026-09-01T00:00:00Z", "2026-02-01T00:06:14Z"
+        )
+        archived_first = MovementPersistenceAdapter(conn).persist(
+            resolved, archive_t1, movement_season_year=2025,
+            counts_by_type=parsed.counts_by_type,
+        )
+        archived_second = MovementPersistenceAdapter(conn).persist(
+            resolved, archive_t2, movement_season_year=2025,
+            counts_by_type=parsed.counts_by_type,
+        )
+    finally:
+        conn.close()
+
+    assert first.inserted == second.inserted == 146
+    assert [row[0] for row in live_snapshots] == [
+        "2026-08-01T00:00:00Z", "2026-09-01T00:00:00Z"
+    ]
+    assert archived_first.inserted == 146
+    assert archived_second.inserted == 0
+    assert archived_second.unchanged == 146

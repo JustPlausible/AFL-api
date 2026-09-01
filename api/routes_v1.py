@@ -1826,6 +1826,7 @@ class PlayerMovement(BaseModel):
     source_url: str
     article_url: str | None
     source_archived_at: str | None
+    source_snapshot_at: str
     observed_at: str
 
 class PlayerMovementsResponse(BaseModel):
@@ -1838,6 +1839,6 @@ def get_player_movements(canonical_player_id:int, credential: AuthenticatedCrede
     try:
         if conn.execute('SELECT 1 FROM canonical_players WHERE id=?',(canonical_player_id,)).fetchone() is None:
             return application_error(404,'player_not_found','Player not found.')
-        rows=conn.execute('''SELECT p.*,t.name team_name FROM player_movement_observations p LEFT JOIN afl_teams t ON t.afl_id=p.from_team_id WHERE p.canonical_player_id=? AND p.resolution_status='resolved' ORDER BY p.movement_season_year DESC,p.source_archived_at DESC,p.id DESC''',(canonical_player_id,)).fetchall()
+        rows=conn.execute('''SELECT p.*,t.name team_name FROM player_movement_observations p LEFT JOIN afl_teams t ON t.afl_id=p.from_team_id WHERE p.canonical_player_id=? AND p.resolution_status='resolved' ORDER BY p.movement_season_year DESC,p.source_snapshot_at DESC,p.id DESC''',(canonical_player_id,)).fetchall()
     finally: conn.close()
-    return PlayerMovementsResponse(movements=[PlayerMovement(season_year=r['movement_season_year'],movement_type=r['movement_type'].lower(),from_team=PlayerMovementTeam(team_id=r['from_team_id'],name=r['team_name']) if r['from_team_id'] is not None else None,source_label=r['source_label'],source_detail=r['source_detail'],source_url=r['source_url'],article_url=r['article_url'],source_archived_at=r['source_archived_at'],observed_at=r['observed_at']) for r in rows])
+    return PlayerMovementsResponse(movements=[PlayerMovement(season_year=r['movement_season_year'],movement_type=r['movement_type'].lower(),from_team=PlayerMovementTeam(team_id=r['from_team_id'],name=r['team_name']) if r['from_team_id'] is not None else None,source_label=r['source_label'],source_detail=r['source_detail'],source_url=r['source_url'],article_url=r['article_url'],source_archived_at=r['source_archived_at'],source_snapshot_at=r['source_snapshot_at'],observed_at=r['observed_at']) for r in rows])
