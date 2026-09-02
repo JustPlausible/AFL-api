@@ -16,6 +16,13 @@ identity model:
   season/team membership for a known `canonical_player_id`, so a consumer can
   navigate a player's history across seasons and clubs (Issue #182).
 
+The reverse direction — every canonical player belonging to one season — is
+[`GET /api/v1/seasons/{season_id}/players`](api_v1_seasons.md#list-a-seasons-canonical-player-membership)
+(Issue #247), documented on the seasons page. Both directions read the same
+`competition_season_players` persistence and the same canonical identity
+projection described below; neither introduces a second player-identity
+model.
+
 ## Get a canonical player by ID
 
 ```text

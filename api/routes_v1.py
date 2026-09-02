@@ -12,7 +12,7 @@ import json
 from enum import Enum
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Path, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -907,6 +907,21 @@ class PlayerResponse(BaseModel):
     player: CanonicalPlayer
 
 
+def _identifiers_from_providers(providers: dict[str, str | None]) -> PlayerIdentifiers:
+    """Project a provider-name-keyed mapping into the public identifiers shape.
+
+    Shared by both the single-player lookup (queried by provider name) and
+    the season-membership collection (resolved via safe per-provider joins),
+    so an unresolved mapping stays ``null`` identically in both places rather
+    than being guessed or inferred from the other identifier.
+    """
+    afl_player_id = providers.get("afl")
+    return PlayerIdentifiers(
+        afl_player_id=int(afl_player_id) if afl_player_id is not None else None,
+        champion_data_player_id=providers.get("champion_data"),
+    )
+
+
 def _identifiers(conn, canonical_player_id: int) -> PlayerIdentifiers:
     """Resolve known provider-ID crosswalks for one canonical player.
 
@@ -920,11 +935,7 @@ def _identifiers(conn, canonical_player_id: int) -> PlayerIdentifiers:
             (canonical_player_id,),
         ).fetchall()
     }
-    afl_player_id = providers.get("afl")
-    return PlayerIdentifiers(
-        afl_player_id=int(afl_player_id) if afl_player_id is not None else None,
-        champion_data_player_id=providers.get("champion_data"),
-    )
+    return _identifiers_from_providers(providers)
 
 
 def _current_team(conn, canonical_player_id: int) -> MatchTeam | None:
@@ -1083,6 +1094,118 @@ def get_player_seasons(
         conn.close()
 
     return PlayerSeasonsResponse(canonical_player_id=canonical_player_id, seasons=seasons)
+
+
+class SeasonPlayer(BaseModel):
+    """One persisted competition-season membership, projected as canonical player identity."""
+
+    canonical_player_id: int = Field(
+        description="Stable internal canonical player identifier; the primary consumer identity."
+    )
+    display_name: str | None = Field(
+        description="Canonical display name, or null when not yet resolved -- same fallback as "
+        "GET /api/v1/players/{canonical_player_id}."
+    )
+    team: MatchTeam | None = Field(
+        description=(
+            "Canonical team identity for this membership's own competition_season_players.team_id, "
+            "or null when that row has no resolved team. This is always the requested season's own "
+            "team -- unlike current_team on the player resource, it never reflects a different "
+            "(e.g. current or later) season's club."
+        )
+    )
+    identifiers: PlayerIdentifiers = Field(
+        description="Known provider-ID crosswalks. Unresolved mappings are null, never guessed."
+    )
+
+
+class SeasonPlayersResponse(BaseModel):
+    players: list[SeasonPlayer] = Field(
+        description="This season's canonical_player_id-ascending page of persisted membership rows."
+    )
+    limit: int
+    offset: int
+
+
+MAX_SEASON_PLAYERS_LIMIT = 250
+
+
+@router.get(
+    "/api/v1/seasons/{season_id}/players",
+    response_model=SeasonPlayersResponse,
+    responses={404: {"model": ApplicationErrorResponse, "description": "Season not found"}},
+    summary="List a season's canonical player membership",
+    description=(
+        "Returns the canonical player membership persisted for one AFL season, enumerated directly "
+        "from competition_season_players -- the sole population authority for this resource. It is "
+        "never derived from StatsPro SEASON_TOTAL, derived Home & Away summaries, match player-stat "
+        "appearances, match rosters, injuries, editorial player-movement records, or the legacy "
+        "players table, so it can be served before the season has played a match or produced any "
+        "statistical summary, provided competition_season_players has already been populated. "
+        "Enrichment is limited to canonical player identity (display_name, using the identical "
+        "fallback as GET /api/v1/players/{canonical_player_id}), that membership's own "
+        "season-specific team, and existing player_provider_ids crosswalks -- current_team's "
+        "current-season projection is deliberately not used here, so a later season's club change "
+        "never appears against this season's membership. Results are ordered by canonical_player_id "
+        "ascending for stable pagination; limit defaults to and caps at 250 (minimum 1), offset "
+        "defaults to 0 (minimum 0). An unknown season_id returns 404 season_not_found. A valid "
+        "season with zero membership rows, or an offset beyond the population, returns 200 with an "
+        "empty players collection."
+    ),
+)
+def get_season_players(
+    season_id: int = Path(..., ge=_SQLITE_INTEGER_MIN, le=_SQLITE_INTEGER_MAX),
+    limit: int = Query(
+        MAX_SEASON_PLAYERS_LIMIT, ge=1, le=MAX_SEASON_PLAYERS_LIMIT,
+        description="Maximum membership rows to return (default and maximum 250, minimum 1).",
+    ),
+    offset: int = Query(
+        0, ge=0, le=_SQLITE_INTEGER_MAX,
+        description="Membership rows to skip, for pagination (default 0).",
+    ),
+    credential: AuthenticatedCredential = Depends(authenticate_api_key),
+) -> SeasonPlayersResponse | JSONResponse:
+    log(f"🧑‍🤝‍🧑 {credential.label} requested v1 season players for season {season_id}", "INFO")
+    conn = get_db_connection()
+    try:
+        season = conn.execute("SELECT 1 FROM afl_seasons WHERE afl_id = ?", (season_id,)).fetchone()
+        if season is None:
+            return application_error(404, "season_not_found", "Season not found.")
+        rows = conn.execute(
+            "SELECT csp.player_id AS canonical_player_id, cp.display_name, cp.given_name, "
+            "cp.family_name, csp.team_id, t.name AS team_name, "
+            "afl_pp.provider_player_id AS afl_player_id, "
+            "cd_pp.provider_player_id AS champion_data_player_id "
+            "FROM competition_season_players csp "
+            "JOIN canonical_players cp ON cp.id = csp.player_id "
+            "LEFT JOIN afl_teams t ON t.afl_id = csp.team_id "
+            "LEFT JOIN player_provider_ids afl_pp "
+            "ON afl_pp.provider = 'afl' AND afl_pp.player_id = csp.player_id "
+            "LEFT JOIN player_provider_ids cd_pp "
+            "ON cd_pp.provider = 'champion_data' AND cd_pp.player_id = csp.player_id "
+            "WHERE csp.competition_season_id = ? "
+            "ORDER BY csp.player_id ASC LIMIT ? OFFSET ?",
+            (season_id, limit, offset),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    players = [
+        SeasonPlayer(
+            canonical_player_id=row["canonical_player_id"],
+            display_name=_display_name(row),
+            team=(
+                MatchTeam(team_id=row["team_id"], name=row["team_name"])
+                if row["team_id"] is not None
+                else None
+            ),
+            identifiers=_identifiers_from_providers(
+                {"afl": row["afl_player_id"], "champion_data": row["champion_data_player_id"]}
+            ),
+        )
+        for row in rows
+    ]
+    return SeasonPlayersResponse(players=players, limit=limit, offset=offset)
 
 
 class PlayersResponse(BaseModel):

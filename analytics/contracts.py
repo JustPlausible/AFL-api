@@ -234,4 +234,5 @@ register_route("/api/v1/matches/{match_id}/interchanges/events", display_name="M
 register_route("/api/v1/players", display_name="Player search")
 register_route("/api/v1/players/{canonical_player_id}", display_name="Player detail")
 register_route("/api/v1/players/{canonical_player_id}/seasons", display_name="Player season history")
+register_route("/api/v1/seasons/{season_id}/players", display_name="Season player membership")
 register_route("/api/v1/injuries", display_name="Current injuries")
