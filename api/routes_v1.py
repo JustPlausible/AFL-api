@@ -12,7 +12,7 @@ import json
 from enum import Enum
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Path, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -1154,12 +1154,15 @@ MAX_SEASON_PLAYERS_LIMIT = 250
     ),
 )
 def get_season_players(
-    season_id: int,
+    season_id: int = Path(..., ge=_SQLITE_INTEGER_MIN, le=_SQLITE_INTEGER_MAX),
     limit: int = Query(
         MAX_SEASON_PLAYERS_LIMIT, ge=1, le=MAX_SEASON_PLAYERS_LIMIT,
         description="Maximum membership rows to return (default and maximum 250, minimum 1).",
     ),
-    offset: int = Query(0, ge=0, description="Membership rows to skip, for pagination (default 0)."),
+    offset: int = Query(
+        0, ge=0, le=_SQLITE_INTEGER_MAX,
+        description="Membership rows to skip, for pagination (default 0).",
+    ),
     credential: AuthenticatedCredential = Depends(authenticate_api_key),
 ) -> SeasonPlayersResponse | JSONResponse:
     log(f"🧑‍🤝‍🧑 {credential.label} requested v1 season players for season {season_id}", "INFO")

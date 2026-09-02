@@ -549,6 +549,37 @@ def test_negative_offset_returns_422(tmp_path, monkeypatch):
     assert response.status_code == 422
 
 
+def test_offset_beyond_sqlite_integer_range_returns_422_not_500(tmp_path, monkeypatch):
+    """A client-supplied offset outside SQLite's signed 64-bit range must be
+    rejected by validation, not reach sqlite3's parameter binding and raise
+    an unhandled OverflowError (500)."""
+
+    db_path = _make_db(tmp_path, seed=lambda conn: _seed_seasons(conn))
+    client = _client(db_path, monkeypatch)
+
+    response = _get(client, params={"offset": 2**63})
+
+    assert response.status_code == 422
+
+
+def test_season_id_beyond_sqlite_integer_range_returns_422_not_500(tmp_path, monkeypatch):
+    db_path = _make_db(tmp_path, seed=lambda conn: _seed_seasons(conn))
+    client = _client(db_path, monkeypatch)
+
+    response = _get(client, season_id=2**63)
+
+    assert response.status_code == 422
+
+
+def test_season_id_below_sqlite_integer_range_returns_422_not_500(tmp_path, monkeypatch):
+    db_path = _make_db(tmp_path, seed=lambda conn: _seed_seasons(conn))
+    client = _client(db_path, monkeypatch)
+
+    response = _get(client, season_id=-(2**63) - 1)
+
+    assert response.status_code == 422
+
+
 # --- Response shape / OpenAPI documentation ---------------------------------
 
 
