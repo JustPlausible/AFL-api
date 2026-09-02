@@ -34,7 +34,7 @@ for the reusable release summary and upgrade cautions.
 - [Consumer API workflow design](architecture/workflows/consumer_api_design.md) — human-led target for the complete versioned consumer surface
 - [Canonical CFS player-stat read API design](architecture/api/player_stats_api_design.md) — endpoint-specific implementation design for the first versioned player-stat resource
 - [Canonical player-stat API (`/api/v1`) — consumer reference](api_v1_player_stats.md) — `GET /api/v1/matches/{match_id}/player-stats`, Stage 1 of the design above
-- [API v1 discovery and canonical seasons — consumer reference](api_v1_seasons.md) — start at `GET /api/v1` and discover persisted seasons through `GET /api/v1/seasons`
+- [API v1 discovery and canonical seasons — consumer reference](api_v1_seasons.md) — start at `GET /api/v1`, discover persisted seasons through `GET /api/v1/seasons`, and list a season's persisted canonical player membership via `GET /api/v1/seasons/{season_id}/players` (Issue #247)
 - [Canonical v1 rounds — consumer reference](api_v1_rounds.md) — navigate persisted season rounds and typed bye-team context
 - [Canonical v1 matches — consumer reference](api_v1_matches.md) — complete the `/api/v1` season → round → match → player-stats navigation chain
 - [Canonical v1 player lookup and search — consumer reference](api_v1_players.md) — resolve a canonical player ID to identity, provider crosswalks, and current-season team context; discover a `canonical_player_id` via `GET /api/v1/players?search=`; or navigate a player's season/team history via `GET /api/v1/players/{canonical_player_id}/seasons`
