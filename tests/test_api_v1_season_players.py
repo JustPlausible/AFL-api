@@ -80,6 +80,8 @@ def test_known_season_returns_its_membership_population(tmp_path, monkeypatch):
             {
                 "canonical_player_id": PLAYER_ID,
                 "display_name": "Nick Daicos",
+                "given_name": None,
+                "family_name": None,
                 "team": {"team_id": TEAM_ID, "name": "Collingwood"},
                 "identifiers": {
                     "afl_player_id": 5501,
@@ -379,6 +381,43 @@ def test_requested_season_team_never_borrows_from_current_season(tmp_path, monke
 # --- 11/12. display-name and identifier projection --------------------------
 
 
+def test_returns_populated_structured_name_fields(tmp_path, monkeypatch):
+    def seed(conn):
+        _seed_seasons(conn)
+        _seed_player(
+            conn, PLAYER_ID, display_name="Aaron Cadman",
+            given_name="Aaron", family_name="Cadman",
+        )
+        _seed_membership(conn, PLAYER_ID, CURRENT_SEASON_ID, TEAM_ID)
+
+    db_path = _make_db(tmp_path, seed=seed)
+    client = _client(db_path, monkeypatch)
+
+    response = _get(client)
+
+    assert response.status_code == 200
+    player = response.json()["players"][0]
+    assert player["given_name"] == "Aaron"
+    assert player["family_name"] == "Cadman"
+
+
+def test_structured_name_fields_are_null_when_unresolved(tmp_path, monkeypatch):
+    def seed(conn):
+        _seed_seasons(conn)
+        _seed_player(conn, PLAYER_ID, display_name="Nick Daicos")
+        _seed_membership(conn, PLAYER_ID, CURRENT_SEASON_ID, TEAM_ID)
+
+    db_path = _make_db(tmp_path, seed=seed)
+    client = _client(db_path, monkeypatch)
+
+    response = _get(client)
+
+    assert response.status_code == 200
+    player = response.json()["players"][0]
+    assert player["given_name"] is None
+    assert player["family_name"] is None
+
+
 def test_display_name_falls_back_to_given_and_family_name(tmp_path, monkeypatch):
     def seed(conn):
         _seed_seasons(conn)
@@ -599,7 +638,10 @@ def test_response_shape_and_openapi_documentation(tmp_path, monkeypatch):
     body = response.json()
     assert set(body.keys()) == {"players", "limit", "offset"}
     player = body["players"][0]
-    assert set(player.keys()) == {"canonical_player_id", "display_name", "team", "identifiers"}
+    assert set(player.keys()) == {
+        "canonical_player_id", "display_name", "given_name", "family_name",
+        "team", "identifiers",
+    }
     assert set(player["team"].keys()) == {"team_id", "name"}
     assert set(player["identifiers"].keys()) == {"afl_player_id", "champion_data_player_id"}
 

@@ -128,9 +128,10 @@ addressed by this resource.
 
 Enrichment beyond the raw membership row is limited to three things: the
 player's canonical identity (`display_name`, using the identical fallback as
-[`GET /api/v1/players/{canonical_player_id}`](api_v1_players.md)), **that
-membership's own season-specific team**, and existing `player_provider_ids`
-crosswalks.
+[`GET /api/v1/players/{canonical_player_id}`](api_v1_players.md), plus the
+persisted `given_name`/`family_name` structured fields, returned directly and
+never derived by splitting `display_name` — Issue #249), **that membership's
+own season-specific team**, and existing `player_provider_ids` crosswalks.
 
 Send an API key in `X-Api-Key`; auth behaves identically to every other
 `/api/v1` route. No capability beyond standard authentication is required —
@@ -152,6 +153,8 @@ the same ordinary access level as the canonical player identity resource.
     {
       "canonical_player_id": 584,
       "display_name": "Nick Daicos",
+      "given_name": "Nick",
+      "family_name": "Daicos",
       "team": {"team_id": 3, "name": "Collingwood"},
       "identifiers": {
         "afl_player_id": 5501,
@@ -178,9 +181,13 @@ Field notes:
   which season is currently marked current. `team` is `null` only when that
   season's own membership row has no resolved `team_id` — never borrowed
   from another season.
-* `display_name` and `identifiers` follow exactly the same rules as
+* `display_name`, `given_name`, `family_name`, and `identifiers` follow
+  exactly the same rules as
   [`GET /api/v1/players/{canonical_player_id}`](api_v1_players.md#get-a-canonical-player-by-id) —
-  no parallel identity projection is introduced by this resource.
+  no parallel identity projection is introduced by this resource. `given_name`
+  and `family_name` (Issue #249) let a consumer (e.g. BBBFFL) sort a full
+  season population by family name, then given name, after retrieving it;
+  this resource does not itself sort by surname.
 
 ### Pagination
 
