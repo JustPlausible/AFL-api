@@ -127,6 +127,8 @@ def test_successful_lookup_returns_full_identity(tmp_path, monkeypatch):
         "player": {
             "canonical_player_id": PLAYER_ID,
             "display_name": "Nick Daicos",
+            "given_name": None,
+            "family_name": None,
             "current_team": {"team_id": TEAM_ID, "name": "Collingwood"},
             "identifiers": {
                 "afl_player_id": 5501,
@@ -134,6 +136,40 @@ def test_successful_lookup_returns_full_identity(tmp_path, monkeypatch):
             },
         }
     }
+
+
+def test_lookup_returns_populated_structured_name_fields(tmp_path, monkeypatch):
+    def seed(conn):
+        _seed_seasons(conn)
+        _seed_player(conn, display_name="Aaron Cadman", given_name="Aaron", family_name="Cadman")
+
+    db_path = _make_db(tmp_path, seed=seed)
+    client = _client(db_path, monkeypatch)
+
+    response = _get(client)
+
+    assert response.status_code == 200
+    body = response.json()["player"]
+    assert body["given_name"] == "Aaron"
+    assert body["family_name"] == "Cadman"
+    assert body["display_name"] == "Aaron Cadman"
+
+
+def test_lookup_structured_name_fields_are_null_when_unresolved(tmp_path, monkeypatch):
+    def seed(conn):
+        _seed_seasons(conn)
+        _seed_player(conn, display_name="No Structured Name")
+
+    db_path = _make_db(tmp_path, seed=seed)
+    client = _client(db_path, monkeypatch)
+
+    response = _get(client)
+
+    assert response.status_code == 200
+    body = response.json()["player"]
+    assert body["given_name"] is None
+    assert body["family_name"] is None
+    assert body["display_name"] == "No Structured Name"
 
 
 def test_unknown_canonical_player_returns_404(tmp_path, monkeypatch):
@@ -162,6 +198,8 @@ def test_missing_optional_provider_mappings_are_explicit_null(tmp_path, monkeypa
     assert response.status_code == 200
     body = response.json()["player"]
     assert body["display_name"] == "J Smith"
+    assert body["given_name"] == "J"
+    assert body["family_name"] == "Smith"
     assert body["current_team"] is None
     assert body["identifiers"] == {"afl_player_id": None, "champion_data_player_id": None}
 
@@ -283,7 +321,8 @@ def test_response_shape_regression(tmp_path, monkeypatch):
     body = response.json()
     assert set(body.keys()) == {"player"}
     assert set(body["player"].keys()) == {
-        "canonical_player_id", "display_name", "current_team", "identifiers",
+        "canonical_player_id", "display_name", "given_name", "family_name",
+        "current_team", "identifiers",
     }
     assert set(body["player"]["current_team"].keys()) == {"team_id", "name"}
     assert set(body["player"]["identifiers"].keys()) == {
@@ -438,6 +477,41 @@ def test_search_with_no_matches_returns_200_with_empty_collection(tmp_path, monk
     assert response.json() == {"players": []}
 
 
+def test_search_result_returns_populated_structured_name_fields(tmp_path, monkeypatch):
+    def seed(conn):
+        _seed_seasons(conn)
+        _seed_player(
+            conn, NICK_DAICOS_ID, display_name="Nick Daicos",
+            given_name="Nick", family_name="Daicos",
+        )
+
+    db_path = _make_db(tmp_path, seed=seed)
+    client = _client(db_path, monkeypatch)
+
+    response = _search(client, params={"search": "daicos"})
+
+    assert response.status_code == 200
+    player = response.json()["players"][0]
+    assert player["given_name"] == "Nick"
+    assert player["family_name"] == "Daicos"
+
+
+def test_search_result_structured_name_fields_are_null_when_unresolved(tmp_path, monkeypatch):
+    def seed(conn):
+        _seed_seasons(conn)
+        _seed_player(conn, NICK_DAICOS_ID, display_name="Nick Daicos")
+
+    db_path = _make_db(tmp_path, seed=seed)
+    client = _client(db_path, monkeypatch)
+
+    response = _search(client, params={"search": "daicos"})
+
+    assert response.status_code == 200
+    player = response.json()["players"][0]
+    assert player["given_name"] is None
+    assert player["family_name"] is None
+
+
 def test_search_result_reflects_missing_provider_mappings(tmp_path, monkeypatch):
     def seed(conn):
         _seed_seasons(conn)
@@ -568,7 +642,8 @@ def test_search_response_shape_and_openapi_documentation(tmp_path, monkeypatch):
     assert set(body.keys()) == {"players"}
     player = body["players"][0]
     assert set(player.keys()) == {
-        "canonical_player_id", "display_name", "current_team", "identifiers",
+        "canonical_player_id", "display_name", "given_name", "family_name",
+        "current_team", "identifiers",
     }
 
     operation = client.get("/openapi.json").json()["paths"]["/api/v1/players"]["get"]
@@ -773,6 +848,8 @@ def test_seasons_endpoint_does_not_change_existing_player_resource_contract(tmp_
         "player": {
             "canonical_player_id": PLAYER_ID,
             "display_name": "Nick Daicos",
+            "given_name": None,
+            "family_name": None,
             "current_team": {"team_id": TEAM_ID, "name": "Collingwood"},
             "identifiers": {
                 "afl_player_id": 5501,

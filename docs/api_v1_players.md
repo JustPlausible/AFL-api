@@ -51,6 +51,8 @@ route. No capability beyond standard authentication is required.
   "player": {
     "canonical_player_id": 584,
     "display_name": "Nick Daicos",
+    "given_name": "Nick",
+    "family_name": "Daicos",
     "current_team": {"team_id": 3, "name": "Collingwood"},
     "identifiers": {
       "afl_player_id": 5501,
@@ -69,6 +71,13 @@ Field notes:
   `given_name`/`family_name` when only those are populated (the same fallback
   already used by the match player-stats resource). It is `null` when no name
   is resolved yet.
+* `given_name` and `family_name` (Issue #249) are the persisted
+  `canonical_players.given_name`/`canonical_players.family_name` structured
+  name fields, returned directly alongside `display_name` — never derived by
+  splitting `display_name`. Either is `null` when that structured component is
+  not resolved, independently of whether `display_name` itself is resolved.
+  Consumers such as BBBFFL that need reliable family-name sorting should use
+  these fields rather than parsing `display_name`.
 * `identifiers` is a typed crosswalk object, not a guess. `afl_player_id` and
   `champion_data_player_id` are resolved from `player_provider_ids` by
   `provider`; an unresolved mapping is `null`, never inferred or synthesised
@@ -205,10 +214,10 @@ missing or invalid key). No capability beyond standard authentication is
 required.
 
 Each result uses the **same** `CanonicalPlayer` projection documented above
-— `canonical_player_id`, `display_name`, `current_team`, and `identifiers`
-all follow the identical rules described in the Field notes section. This
-endpoint intentionally does not introduce a second representation of player
-identity.
+— `canonical_player_id`, `display_name`, `given_name`, `family_name`,
+`current_team`, and `identifiers` all follow the identical rules described in
+the Field notes section. This endpoint intentionally does not introduce a
+second representation of player identity.
 
 ### Parameters
 
@@ -260,6 +269,8 @@ must be non-blank**:
     {
       "canonical_player_id": 396,
       "display_name": "Josh Daicos",
+      "given_name": "Josh",
+      "family_name": "Daicos",
       "current_team": {"team_id": 3, "name": "Collingwood"},
       "identifiers": {
         "afl_player_id": 1321,
@@ -269,6 +280,8 @@ must be non-blank**:
     {
       "canonical_player_id": 584,
       "display_name": "Nick Daicos",
+      "given_name": "Nick",
+      "family_name": "Daicos",
       "current_team": {"team_id": 3, "name": "Collingwood"},
       "identifiers": {
         "afl_player_id": 5501,

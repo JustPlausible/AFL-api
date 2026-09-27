@@ -891,6 +891,18 @@ class CanonicalPlayer(BaseModel):
     display_name: str | None = Field(
         description="Canonical display name, or null when not yet resolved."
     )
+    given_name: str | None = Field(
+        description=(
+            "Persisted canonical_players.given_name, or null when not resolved. Never "
+            "derived by splitting display_name."
+        )
+    )
+    family_name: str | None = Field(
+        description=(
+            "Persisted canonical_players.family_name, or null when not resolved. Never "
+            "derived by splitting display_name."
+        )
+    )
     current_team: MatchTeam | None = Field(
         description=(
             "Canonical team identity for the player's current-season membership, or null "
@@ -970,7 +982,10 @@ def _current_team(conn, canonical_player_id: int) -> MatchTeam | None:
         "table. canonical_player_id is the primary consumer identity; identifiers exposes "
         "known AFL and Champion Data crosswalks, which are null rather than guessed when "
         "unresolved. current_team reflects the player's competition-season membership for "
-        "the current season only, and is null when that cannot be resolved cleanly."
+        "the current season only, and is null when that cannot be resolved cleanly. "
+        "given_name and family_name are the persisted canonical_players structured name "
+        "fields (never derived by splitting display_name); either is null when not "
+        "resolved."
     ),
 )
 def get_player(
@@ -996,6 +1011,8 @@ def get_player(
         player=CanonicalPlayer(
             canonical_player_id=row["id"],
             display_name=_display_name(row),
+            given_name=row["given_name"],
+            family_name=row["family_name"],
             current_team=current_team,
             identifiers=identifiers,
         )
@@ -1106,6 +1123,18 @@ class SeasonPlayer(BaseModel):
         description="Canonical display name, or null when not yet resolved -- same fallback as "
         "GET /api/v1/players/{canonical_player_id}."
     )
+    given_name: str | None = Field(
+        description=(
+            "Persisted canonical_players.given_name, or null when not resolved. Never "
+            "derived by splitting display_name."
+        )
+    )
+    family_name: str | None = Field(
+        description=(
+            "Persisted canonical_players.family_name, or null when not resolved. Never "
+            "derived by splitting display_name."
+        )
+    )
     team: MatchTeam | None = Field(
         description=(
             "Canonical team identity for this membership's own competition_season_players.team_id, "
@@ -1143,7 +1172,9 @@ MAX_SEASON_PLAYERS_LIMIT = 250
         "players table, so it can be served before the season has played a match or produced any "
         "statistical summary, provided competition_season_players has already been populated. "
         "Enrichment is limited to canonical player identity (display_name, using the identical "
-        "fallback as GET /api/v1/players/{canonical_player_id}), that membership's own "
+        "fallback as GET /api/v1/players/{canonical_player_id}, plus the persisted given_name "
+        "and family_name structured fields, each null when not resolved and never derived by "
+        "splitting display_name), that membership's own "
         "season-specific team, and existing player_provider_ids crosswalks -- current_team's "
         "current-season projection is deliberately not used here, so a later season's club change "
         "never appears against this season's membership. Results are ordered by canonical_player_id "
@@ -1194,6 +1225,8 @@ def get_season_players(
         SeasonPlayer(
             canonical_player_id=row["canonical_player_id"],
             display_name=_display_name(row),
+            given_name=row["given_name"],
+            family_name=row["family_name"],
             team=(
                 MatchTeam(team_id=row["team_id"], name=row["team_name"])
                 if row["team_id"] is not None
@@ -1231,7 +1264,9 @@ MAX_PLAYER_SEARCH_RESULTS = 100
         "case-insensitive and partial against each player's resolved display name "
         "(canonical_players.display_name, falling back to given_name/family_name — "
         "the same fallback used by the single-player resource), with no fuzzy, "
-        "phonetic, or provider-ID inference. Results are ordered by display name "
+        "phonetic, or provider-ID inference. Each result also exposes the persisted "
+        "given_name and family_name structured fields directly (null when not "
+        "resolved; never derived by splitting display_name). Results are ordered by display name "
         "then canonical_player_id for determinism, and capped at "
         f"{MAX_PLAYER_SEARCH_RESULTS} rows. The `search` query parameter is required "
         "and must be non-blank; an unfiltered player collection is out of scope for "
@@ -1277,6 +1312,8 @@ def search_players(
             CanonicalPlayer(
                 canonical_player_id=row["id"],
                 display_name=name,
+                given_name=row["given_name"],
+                family_name=row["family_name"],
                 current_team=_current_team(conn, row["id"]),
                 identifiers=_identifiers(conn, row["id"]),
             )
